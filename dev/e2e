@@ -6,7 +6,7 @@
 #
 #   suites   — the EXISTING hermetic tests, invoked through nextest filters. Where a contract leg is
 #              already covered offline (the git plane through real git and the real remote helper,
-#              the M5 lifecycle, credential capture, the agent plane, the axis-2 boundary) this
+#              the lifecycle, credential capture, the agent plane, the axis-2 boundary) this
 #              harness runs that suite rather than writing a second, weaker version of it.
 #
 #   contract — the part no hermetic test can reach: a REAL cermetd process, serving real sockets,
@@ -119,11 +119,11 @@ printf 'dev/e2e — product contract, end to end\n'
 # whose whole point is to be cheap enough to run constantly, so it is excluded HERE and said out
 # loud in the report below. Nothing else is filtered out.
 SUITE_SLOW_TEST=a_stalled_client_releases_its_connection_slot_instead_of_wedging_the_plane
-SUITE_FILTER="(binary(git_plane) - test($SUITE_SLOW_TEST)) + binary(git_remote_e2e) + binary(cli_m5_lifecycle) + binary(cli_connect) + binary(agent_socket) + binary(grant_revalidation) + binary(invariant_boundary)"
+SUITE_FILTER="(binary(git_plane) - test($SUITE_SLOW_TEST)) + binary(git_remote_e2e) + binary(cli_lifecycle) + binary(cli_connect) + binary(agent_socket) + binary(grant_revalidation) + binary(invariant_boundary)"
 declare -a SUITE_CLAIMS=(
   "git_plane|git plane: real git, real remote helper, real update hook"
   "git_remote_e2e|git remote: plain \`git push\` reaches the broker"
-  "cli_m5_lifecycle|lifecycle: operator + agent + broker + recovery"
+  "cli_lifecycle|lifecycle: operator + agent + broker + recovery"
   "cli_connect|connect: the token routes to the vault and is never echoed"
   "agent_socket|agent plane: derive-don't-enroll peer-uid dispatch"
   "grant_revalidation|grants: authority revoked mid-flight refuses at execute"
