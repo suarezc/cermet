@@ -108,11 +108,6 @@ can do:
 
 ## Guarantees
 
-*The adversaries these guarantees are scoped to are named in
-[`docs/REFERENCE.md`](docs/REFERENCE.md) (Named adversaries); the provider integration
-doctrine — the honest answer to "isn't this just another proxy?" — is
-[`docs/provider_design_principles.md`](docs/provider_design_principles.md).*
-
 - **Deny by default.** A request that doesn't parse into a known verb with typed
   fields does not exist. Access requires a definite allow; absence is never permission.
 - **Approved fields are executed fields.** Every executed field is frozen and
