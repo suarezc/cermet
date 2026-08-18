@@ -150,8 +150,7 @@ mod linux {
         /// is a short-lived interactive CLI, not a hot loop, so the retained mapping is fine.
         fn load() -> Result<Pam, String> {
             unsafe {
-                let handle =
-                    libc::dlopen(b"libpam.so.0\0".as_ptr() as *const c_char, libc::RTLD_NOW);
+                let handle = libc::dlopen(c"libpam.so.0".as_ptr(), libc::RTLD_NOW);
                 if handle.is_null() {
                     return Err("libpam.so.0 could not be loaded; PAM presence unavailable".into());
                 }
