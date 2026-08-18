@@ -1,0 +1,22 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_pull_request
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: f0b4d5be702376aceedff93a0d502c9cb978413672e2f580028bb25493094c6b
+semantics:
+  resource_family: pull_request
+  provider_operation: pull_request_read
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read one pull request by exact number, projecting base/head refs, SHAs, and stable repository IDs.
+  cautions:
+    - Base/head SHAs are point-in-time; a moving branch changes head between reads.
+    - Author identity is personal data.
+sources:
+  - GH-REST-PULL-REQUESTS
+  - GH-REST-BEST-PRACTICES

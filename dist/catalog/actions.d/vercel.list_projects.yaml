@@ -1,0 +1,25 @@
+# Action template for vercel.list_projects — read: enumerate the account's projects,
+# optionally narrowed by Vercel's server-side `search` filter (request-frozen; omitted when absent,
+# matching the native `vercel project ls` default). `scope: account` — the pin is the verb: the
+# credential is the resource, `allow vercel.list_projects` is the whole authority quantum.
+# One page at the API max (100) with a LOUD completeness assertion: `pagination.next` must be null,
+# so a result that would truncate FAILS instead of silently dropping projects (the stripe list
+# `has_more` pattern); an account beyond 100 projects narrows with `search`.
+provider: vercel
+action: list_projects
+fields:
+  - { name: search, type: str, required: false, class: read_filter, binding: unbound }
+consumes: [search]
+execution_targets: []
+scope: account
+http:
+  steps:
+    - id: list
+      method: GET
+      path: /v9/projects
+      success_statuses: [200]
+      query:
+        search: "{search?}"
+        limit: "100"
+      require: [projects, pagination]
+      expect_literal: { pagination.next: null }

@@ -1,0 +1,27 @@
+schema: cermet.grounded-ontology/v1
+provider: vercel
+action: deploy
+binds:
+  provider_descriptor_sha256: 117444101b16b5b8dc83be5e1b894fed9316457312fac1e380e7aad3296f4382
+  action_template_sha256: 47853eee28bac74d6deb14692c77c1d729f53f7ae57e6f113f4f136ed4972255
+semantics:
+  resource_family: deployment
+  provider_operation: relay_deploy
+  risk_class: external_state_change
+  sensitivity: source_code
+  reversibility: compensatable
+  completion: asynchronous
+  idempotency: non_idempotent
+review:
+  summary: Credential one native-CLI deploy of a pinned project at a frozen, sentence-adjudicated target, in a frozen Vercel scope, through the loopback relay.
+  cautions:
+    - The Vercel scope is frozen by the sentence; team is required and personal names a personal account.
+    - team accepts the team_ id, the literal personal, or the team slug; a slug is resolved once at request time with the vaulted token and the resolved team_ id is what freezes, so sentences keep pinning ids and an unresolvable name denies.
+    - Deploy content is execute-time and unbound; approval is content-blind by design.
+    - A deployment URL is public until the deployment is deleted, so review it after publication.
+    - target is sentence-adjudicated; a bare allow of this verb includes production deploys.
+    - The grant handle is a live loopback bearer in agent space for the session TTL.
+    - CLI traffic drift fails closed; the predicate needs a human update, never a widening.
+sources:
+  - VERCEL-API-CREATE-DEPLOYMENT
+  - VERCEL-CLI-GLOBAL-OPTIONS

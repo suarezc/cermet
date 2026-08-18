@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: request_workflow_cancel
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 1a82fcc324bc5cede0bef60fbc2411855bf41123db26521345e69b5865d90636
+semantics:
+  resource_family: workflow_run
+  provider_operation: workflow_run_cancel_request
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: irreversible
+  completion: accepted
+  idempotency: non_idempotent
+review:
+  summary: Request cancellation of one Actions workflow run, guarded by a verified match of the run's observed head SHA to the approved pin.
+  cautions:
+    - Step 1 GETs the run and fails closed unless head_sha equals the approved pin (run/head mismatch).
+    - HTTP 202 is accepted, not terminal; an already-terminal run returns 409 and fails closed.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-WORKFLOW-RUNS
+  - GH-REST-BEST-PRACTICES

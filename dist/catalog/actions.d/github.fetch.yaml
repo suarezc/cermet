@@ -1,0 +1,45 @@
+# Action template for github.fetch — a fetch that cannot get the actual remote is broken by
+# construction, which is why this verb exists.
+#
+# ONE effect: refresh THIS HOST'S mirror of the repository from the upstream. It is the read side of
+# the same picture `github.push` is the write side of, reversed — and it exists because a read
+# stream must never serve silently stale refs.
+#
+# This verb is NOT requestable. Its door is the read stream itself: the daemon decides it at
+# `git.sock` stream-open for `upload-pack`, and the agent-facing request path refuses it. An agent
+# reaches it by running plain `git fetch` / `git clone` against a `cermet::` remote — the installed
+# `git-remote-cermet` helper carries it — exactly as it reaches `push` by running plain `git push`.
+#
+# The envelope (docs/provider_design_principles.md, Part I — The canonical action envelope):
+# - authority  = owner/name, frozen identity execution targets. The upstream URL is
+#                `<descriptor git.origin>/{owner}/{name}.git`: a template carries PATHS only.
+# - state      = NONE. A refresh is idempotent and total: `+refs/heads/*:refs/heads/*--prune` makes
+#                the mirror's branch namespace equal the upstream's, so there is nothing to pin and
+#                nothing to compare against.
+# - payload    = NONE, in either direction. Git moves the objects.
+# - limits     = there is deliberately no per-branch vocabulary. WHICH REPOS may be refreshed is the
+#                sentence's business; a refresh of an allowed repo brings all of its branches,
+#                because a mirror that served a subset would be a mirror that lies about the remote.
+# - outcome    = the receipt is DERIVED from the mirror's own refs, snapshotted either side of the
+#                hop: every ref the refresh moved, with the mirror's previous tip and the upstream's
+#                current one (a pruned ref reports `to: null`). Failure is a REFUSAL, never a fall back to serving
+#                what the mirror already had — that fallback IS the bug this verb closes.
+#
+# Named adversaries (defense ↔ adversary, per doctrine):
+# - T2 accident: the hop runs through the hermetic runner (cleared environment,
+#   GIT_CONFIG_NOSYSTEM, neutralized global config, controlled HOME, absolute pinned binary,
+#   process-group timeout), so no box config can redirect the refresh.
+# - T3 peer uid: the stream plane is SO_PEERCRED-attested; mirrors are 0700; the credential rides
+#   `http.<url>.extraHeader` through environment config, never argv.
+# - T1: nothing of ours parses the upstream's response — `git fetch` does, and it is the same
+#   hardened code path every clone on earth uses.
+provider: github
+action: fetch
+fields:
+  - { name: owner, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,  type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [owner, name]
+execution_targets: [owner, name]
+git:
+  fetch:
+    remote_path: "/{owner}/{name}.git"

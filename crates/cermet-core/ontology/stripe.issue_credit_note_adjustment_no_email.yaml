@@ -1,0 +1,30 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: issue_credit_note_adjustment_no_email
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 28717341cf6fb46a1062f0ceba4cc13effa5682b1b648090f66ed79141feac79
+semantics:
+  resource_family: credit_note
+  provider_operation: credit_note_issue_pre_payment
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Issue one bounded pre-payment credit-note adjustment against an exact invoice without email, refund, ledger credit, out-of-band credit, or caller-selected line or shipping composition.
+  cautions:
+    - Only invoice, bounded amount, and frozen email_type none ride the wire; caller-selected refund_amount, refunds, credit_amount, out_of_band_amount, lines, shipping_cost, memo, reason, and effective_at are absent.
+    - Stripe may allocate the amount-level adjustment across invoice lines; omitting lines removes caller selection, not provider-side allocation.
+    - A separately authorized void may compensate only while eligible, which Stripe limits to an open invoice; this action neither performs nor implies compensation.
+    - A postcondition mismatch is reconciliation-required after mutation; the grant is spent, the broker does not auto-retry, and a new request/grant re-enters policy.
+    - Stripe live proof must establish that omitted allocation fields reject any post-payment amount rather than defaulting an effect; until then the action remains loaded but empirically unresolved.
+    - This create is non-idempotent; no automatic retry is safe after an ambiguous timeout or lost response.
+    - The LIKELY native ceiling is RAK Credit Notes Write and App credit_note_write; sandbox proof must determine whether invoice permission is additionally required.
+sources:
+  - STRIPE-CREDIT-NOTE-CREATE
+  - STRIPE-CREDIT-NOTE-GUIDE
+  - STRIPE-CREDIT-NOTE-VOID
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

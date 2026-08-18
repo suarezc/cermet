@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: list_active_prices
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 7a5a5bbed11d7451a54e68ef29878ac4794d4d357aa35a7e5eed5ffac0503b4e
+semantics:
+  resource_family: price
+  provider_operation: price_list_active_for_product
+  risk_class: observation
+  sensitivity: public_metadata
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: List the first twenty active prices for one exact product, projecting amount and recurrence summaries plus truncation.
+  cautions:
+    - Required product, literal active true, and literal limit 20 make inactive, account-wide, or agent-sized lists inexpressible.
+    - No cursor is accepted; has_more reports truncation without implying authority to fetch another page.
+    - The LIKELY native ceiling is RAK Prices Read or App plan_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-PRICE-LIST
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

@@ -1,0 +1,14 @@
+provider: stripe
+action: list_refunds
+fields:
+  - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [charge]
+execution_targets: [charge]
+http:
+  steps:
+    - id: list
+      method: GET
+      path: /v1/refunds
+      query: { charge: "{charge}", limit: "10" }
+      require: [data, has_more]
+      expect_literal: { has_more: false }

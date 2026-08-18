@@ -1,0 +1,75 @@
+# cermet-update-check — the daily update CHECK (Linux/systemd).
+#
+# IT CHECKS AND NOTICES. IT NEVER INSTALLS. One parameterless GET of
+# https://api.github.com/repos/suarezc/cermet/releases/latest — the same GitHub Releases this box
+# was installed from — the answer written down under the operator's own config directory, and that
+# is the whole of it. Only when that release is newer than this build does it make a second
+# parameterless GET, of that release's own SHA256SUMS, so it advertises nothing it could not
+# actually install. Applying an update stays the explicit, sudo-gated `cermet update`, with its
+# consent paragraph and a human at the keyboard.
+#
+# THIS UNIT IS NOT THE DAEMON. cermetd holds the vault and contains no update-check code at all;
+# `cermet update --daily-check` is an ordinary unprivileged process running as the HUMAN OPERATOR.
+# That is the custody statement, kept literally true: the credential-holding process has no
+# vendor-facing client, so a defect here has no path to a credential.
+#
+# It is a no-op unless the operator's own setting says so (~/.config/cermet/config.toml,
+# update_check = "on", the default). With it off this unit exits 0 having opened no socket at all.
+# Stopping it takes one command and no root: `cermet update --daily off`.
+#
+# What crosses the wire carries NO install id, no account, no query and no parameters of any kind —
+# the version comparison happens on this machine, on the answer. The one thing it does say about the
+# client is its RELEASE, in the user agent (cermet/<version>), which is the same string on every
+# install of that release: release adoption is visible in aggregate, which is what knowing who a
+# security notice still has to reach requires. It names a release, never an installation.
+#
+# Installed and enabled by `sudo cermet setup`, together with cermet-update-check.timer.
+# CERMET_APPROVER_USER below is substituted with the configured approver at install time.
+
+[Unit]
+Description=Cermet daily update check (local notice only; never installs)
+Documentation=file:///usr/share/cermet/docs/QUICKSTART.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# The OPERATOR's uid, not root and not cermet. The setting it honors is that human's own file, the
+# state it records is under that human's config dir, and nothing here needs privilege — which is
+# also why it CANNOT install anything even if it wanted to.
+User=CERMET_APPROVER_USER
+
+# ONE-BINARY: the operator CLI role, selected by the `cermet` basename in the dispatch table.
+ExecStart=/usr/local/bin/cermet update --daily-check
+
+# A run that finds the check disabled, a host that is down, or a release whose checksums have not
+# been uploaded yet during a rollout window all exit 0: none of those is a service failure, and a
+# timer that reports a bad afternoon as one teaches the operator to ignore it. The reason is
+# recorded in the state file and reported by `cermet check`.
+SuccessExitStatus=0
+
+# --- Sandboxing ------------------------------------------------------------------------
+# ProtectHome is deliberately NOT set: the setting it honors and the state it records both live
+# under the operator's own ~/.config/cermet, and this process must read one and write the other.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# AF_INET/AF_INET6 for the HTTPS GET. AF_UNIX and AF_NETLINK are here for the RESOLVER, not for us:
+# this command speaks to no daemon of ours, but glibc's getaddrinfo consults NSS over AF_UNIX
+# (/run/nscd/socket, systemd-resolved's varlink socket) and enumerates local addresses over
+# AF_NETLINK for RFC 3484 source selection. Omitting them makes name resolution fail on perfectly
+# ordinary boxes — the sandbox's own environmental contract, which is ours to meet.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+UMask=0077

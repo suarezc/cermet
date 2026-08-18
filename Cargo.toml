@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cermet-lang",
+    "crates/cermet-core",
+    "crates/cermet-ipc",
+    "crates/cermet-broker-core",
+    "crates/cermet-broker-actor",
+    "crates/cermet-ctl-client",
+    "crates/cermet-daemon",
+    "crates/cermet-cli",
+    "crates/cermet-bin",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+repository = "https://github.com/suarezc/cermet"
+homepage = "https://cermet.dev"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

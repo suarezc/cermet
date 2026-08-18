@@ -1,0 +1,22 @@
+# Action template for github.read_blob. Read one Git blob by its IMMUTABLE
+# OID on the frozen repository — the blob is selected by `file_sha`, an exact-pinned identity, never
+# by a mutable path/name. The response is GitHub's blob body VERBATIM — the blob's own
+# OID, byte size, encoding, and content (base64 as GitHub encodes it) — retained as an artifact
+# under the declared default. The content bound is GitHub's own blob-size ceiling, and
+# the runtime 2 MiB response cap is the backstop above it.
+#
+# `file_sha` carries `format: git_oid`, so a non-OID value (a ref/branch name) is refused at
+# admission — the "immutable OID" claim is enforced.
+provider: github
+action: read_blob
+fields:
+  - { name: owner,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: file_sha, type: str, required: true, class: identity, binding: exact_resource_pin, format: git_oid }
+consumes: [owner, name, file_sha]
+execution_targets: [owner, name, file_sha]
+http:
+  steps:
+    - id: get
+      method: GET
+      path: /repos/{owner}/{name}/git/blobs/{file_sha}

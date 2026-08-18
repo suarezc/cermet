@@ -1,0 +1,22 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_workflow_run
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 351fa2372746dd3fa7c9b808bf5dbe3bb3db8b61d54005b2d4fb1ca9c18aafc4
+semantics:
+  resource_family: workflow_run
+  provider_operation: workflow_run_read
+  risk_class: observation
+  sensitivity: operational
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read one Actions workflow run by exact run ID, projecting status, conclusion, and the immutable head SHA.
+  cautions:
+    - Status and conclusion are point-in-time; a running run changes them between reads.
+    - head_sha is the immutable trigger commit and safe to freeze; run status is not.
+sources:
+  - GH-REST-WORKFLOW-RUNS
+  - GH-REST-BEST-PRACTICES

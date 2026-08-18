@@ -1,0 +1,56 @@
+# Action template for github.push.
+#
+# This verb is NOT requestable. Its decision is git's own `update` hook — the sanctioned per-ref
+# policy seam — running on the daemon's persistent mirror, driven by an ordinary `git push`. The
+# agent-facing request path refuses it and says so. What lives here is the sentence VOCABULARY (the
+# fields a rule matches on) plus the one credentialed step.
+#
+# Cermet is authorization and receipt — nothing else. Git talks to git: the
+# daemon wires an attested stream to `git receive-pack` on the mirror, and git does the quarantine,
+# thin-pack completion, connectivity checking, ref transaction, and error rendering. There is no
+# carrier, staging area, wire format, or pack digest in this document, because none of that is
+# Cermet's to own.
+#
+# The envelope (docs/provider_design_principles.md, Part I — The canonical action envelope):
+# - authority  = owner/name/branch, frozen identity execution targets. The upstream URL is
+#                `<descriptor git.origin>/{owner}/{name}.git`: a template carries PATHS only.
+# - state      = NONE that we enforce. `mirror_old_oid` is git's `old` from the hook tuple, and it is
+#                named for what it actually is: THE MIRROR'S TIP. With no credentialed
+#                fetch refresh the mirror can lag the upstream, so this is not the upstream's tip and
+#                a rule pinning it pins the daemon's view, not GitHub's. It is not a compare-and-swap
+#                either — the upstream git server enforces fast-forward-only atomically, and that IS
+#                the concurrency control. An absent value means the mirror had no such ref; git has no
+#                bootstrap ceremony, so creating and advancing are the same effect.
+# - payload    = NONE. The objects reached the mirror through git's own wire protocol before this
+#                decision existed, so modes, merges, signatures, and non-UTF-8 paths ride
+#                byte-identical without Cermet re-encoding anything.
+# - outcome    = the receipt is DERIVED from the hook's frozen tuple plus the upstream's OWN account
+#                of the transition it performed, read out of `git push --porcelain`: it carries
+#                `upstream_old_oid` (what GitHub moved from) beside `mirror_old_oid` (what the daemon
+#                held), separately labelled because they legitimately differ. The hook confirms only
+#                on upstream success, so the mirror ref advances iff the upstream's did.
+#
+# Named adversaries (defense ↔ adversary, per doctrine):
+# - T1 hostile input: parsed by `git receive-pack`, git's most-hardened surface. The daemon never
+#   looks at a pack, so there is nothing of ours to harden.
+# - T2 accident/config bleed: the hop runs through the hermetic runner (cleared environment,
+#   GIT_CONFIG_NOSYSTEM, neutralized global config, controlled HOME, registered absolute binary,
+#   process-group timeout).
+# - T3 peer uid: the stream plane is SO_PEERCRED-attested; mirrors are 0700; the credential rides
+#   `http.<url>.extraHeader` through environment config, never argv.
+provider: github
+action: push
+fields:
+  - { name: owner,   type: str, required: true,  class: identity, binding: exact_resource_pin }
+  - { name: name,    type: str, required: true,  class: identity, binding: exact_resource_pin }
+  - { name: branch,  type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_branch_name }
+  - { name: new_oid, type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_oid }
+  - { name: mirror_old_oid, type: str, required: false, class: identity, binding: exact_resource_pin, format: git_oid }
+consumes: [owner, name, branch, new_oid, mirror_old_oid]
+execution_targets: [owner, name, branch]
+git:
+  push:
+    remote_path: "/{owner}/{name}.git"
+    branch: branch
+    new_oid: new_oid
+    mirror_old_oid: mirror_old_oid

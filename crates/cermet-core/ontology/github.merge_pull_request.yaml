@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: merge_pull_request
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: e2983e034304018e49cb2dbbe0a073dcafbdc77c6475068eab07f51abda25716
+semantics:
+  resource_family: pull_request
+  provider_operation: pull_request_merge
+  risk_class: external_state_change
+  sensitivity: source_code
+  reversibility: compensatable
+  completion: terminal
+  idempotency: provider_cas
+review:
+  summary: Merge one pull request by exact number under GitHub's own head-OID CAS, with the merge method frozen at approval.
+  cautions:
+    - The frozen sha is the provider-enforced CAS; a head that moved after approval returns 409 and merges nothing.
+    - A draft or otherwise unmergeable pull request returns 405 and fails closed; marking a pull request ready is not part of this verb.
+    - merge_method is not enum-checked at admission (the grammar has formats, not value sets); GitHub rejects an unknown method and a sentence pin is the narrowing control.
+    - A merge writes to the base branch and can trigger downstream automation; it is compensatable by revert, not by undo.
+sources:
+  - GH-REST-PULL-REQUESTS
+  - GH-REST-BEST-PRACTICES

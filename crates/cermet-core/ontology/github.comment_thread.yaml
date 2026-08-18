@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: comment_thread
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: cba2cd90b2ab1acd1142b221d34af4f0bbd2c133046198f3be872d9d0d1d53e7
+semantics:
+  resource_family: issue_thread
+  provider_operation: thread_comment_create
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Post one comment on a pinned issue or pull-request thread; body is request-time free_payload frozen at mint.
+  cautions:
+    - The exact thread number is frozen identity; a comment cannot fan across the tracker.
+    - body is agent-authored, size-capped, and audited verbatim; no post-mint fill.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-ISSUES
+  - GH-REST-BEST-PRACTICES

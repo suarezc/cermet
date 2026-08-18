@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+#
+# dev/e2e — the everyday product-contract harness. One command, one ✓/✗ line per claim.
+#
+# Two legs, and the split between them is deliberate:
+#
+#   suites   — the EXISTING hermetic tests, invoked through nextest filters. Where a contract leg is
+#              already covered offline (the git plane through real git and the real remote helper,
+#              the M5 lifecycle, credential capture, the agent plane, the axis-2 boundary) this
+#              harness runs that suite rather than writing a second, weaker version of it.
+#
+#   contract — the part no hermetic test can reach: a REAL cermetd process, serving real sockets,
+#              holding a real vault, driven by the real CLI, across a real restart, with every
+#              provider request landing on a fixture server that records what arrived.
+#
+# Why `contract` runs in a container. The operator plane is uid-gated by design:
+# `ctl_authorized` (crates/cermet-daemon/src/ctl.rs) requires peer == approver AND peer != daemon,
+# and refuses outright when approver == daemon. A single-uid box therefore cannot drive `connect` or
+# `rules allow` against a daemon it also owns — that is the human-rooted-approval invariant working,
+# not a gap. Rather than mutate this box's accounts to manufacture a second uid, the leg installs
+# into a throwaway systemd container with `cermet setup` — the real installer, the real service
+# uid, the real approver uid, the real systemd credential — and then swaps ONE thing: a drop-in
+# pointing ExecStart at the harness binary, whose `test-egress` build lets
+# `CERMET_STRIPE_BASE_URL` aim the daemon at the local fixture. That binary is deliberately not
+# installable: `cermet setup` scans for its contamination marker and refuses it.
+#
+# The oracle is what makes the deny claims real. Asserting an allowed effect arrived is the easy
+# half; the half that matters is that a denied effect produced ZERO CONTACT — that the broker did
+# not call Stripe and discard the answer, but never called at all. Only a server that can be asked
+# "how many requests have you seen, ever?" can tell those apart.
+#
+# Usage:
+#   dev/e2e                  # both legs
+#   dev/e2e --leg suites     # one leg only (suites|contract|both)
+#   dev/e2e --keep           # leave the container up for post-mortem
+#   dev/e2e --no-build       # reuse whatever is already built
+#   dev/e2e --self-test      # offline proof of the evidence record; no engine, no container
+#
+# EVERY run leaves a durable evidence record: one row per claim as it resolves, then a final block
+# carrying the run id, commit, context, per-leg summaries, wall clock and the verdict line. A run
+# that dies mid-flight leaves its rows and no final block, which is how an incomplete run is told
+# from a complete one. Default ON, into /var/tmp/cermet-dev-runs/<UTC timestamp>-e2e/.
+#   CERMET_DEV_EVIDENCE=0        — write no evidence at all.
+#   CERMET_DEV_EVIDENCE_DIR=<d>  — write the per-run directory under <d> instead.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=dev/lib/harness.sh
+. "$REPO_ROOT/dev/lib/harness.sh"
+
+IMAGE="${CERMET_E2E_IMAGE:-docker.io/jrei/systemd-ubuntu:24.04}"
+LEG=both
+BUILD=1
+STAMP="$(date -u +%Y%m%d%H%M%S)-$$"
+CONTAINER="cermet-e2e-$STAMP"
+STAGE="$REPO_ROOT/target/e2e-stage"
+
+# The synthetic credential. It never leaves this box: it is minted here, piped to `cermet connect`
+# on stdin, and the only server that ever sees it is the fixture in the container.
+FIXTURE_TOKEN="sk_test_e2e_fixture_do_not_use"
+SENTENCE='allow stripe.refund where charge = "ch_alpha" and amount <= 5000'
+
+SELF_TEST=0
+
+usage() {
+  printf 'usage: %s [--leg suites|contract|both] [--no-build] [--keep] [--image <ref>] [--self-test]\n' "$0"
+  printf 'evidence: every run writes ${CERMET_DEV_EVIDENCE_DIR:-/var/tmp/cermet-dev-runs}/<UTC timestamp>-e2e/ (CERMET_DEV_EVIDENCE=0 disables it)\n'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --leg) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; LEG="$2"; shift 2 ;;
+    --no-build) BUILD=0; shift ;;
+    --keep) HARNESS_KEEP=1; shift ;;
+    --image) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; IMAGE="$2"; shift 2 ;;
+    --self-test) SELF_TEST=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+case "$LEG" in suites|contract|both) ;; *) usage >&2; exit 2 ;; esac
+
+# ------------------------------------------------------------------------------------ self-test --
+# Offline: the shared emitter's own proofs, then THIS harness really emitting. The second half uses
+# the contract leg with no engine, which needs no container and still resolves a claim (a skip) and
+# finalizes — open → row → final block, end to end.
+if [ "$SELF_TEST" -eq 1 ]; then
+  bash -n "$REPO_ROOT/dev/e2e"
+  harness_evidence_self_test
+  probe="$(mktemp -d "${TMPDIR:-/tmp}/cermet-e2e-selftest.XXXXXX")"
+  trap 'rm -rf -- "$probe"' EXIT
+  CERMET_DEV_EVIDENCE_DIR="$probe" CONTAINER_ENGINE=cermet-no-such-engine \
+    "$REPO_ROOT/dev/e2e" --leg contract --no-build >/dev/null 2>&1
+  run_dir="$(find "$probe" -mindepth 1 -maxdepth 1 -type d -name '*-e2e' | head -1)"
+  [ -n "$run_dir" ] && [ -f "$run_dir/run.json" ] \
+    || { printf 'SELF-TEST FAIL: an engine-absent dev/e2e run left no finalized evidence\n' >&2; exit 1; }
+  for field in '"harness": "dev/e2e"' '"status": "skipped-by-design"' '"legs"'; do
+    grep -Fq "$field" "$run_dir/run.json" \
+      || { printf 'SELF-TEST FAIL: the dev/e2e record is missing %s\n' "$field" >&2; exit 1; }
+  done
+  grep -Fq '"status": "skipped-by-design"' "$run_dir/claims.jsonl" \
+    || { printf 'SELF-TEST FAIL: the engine-absent run recorded no claim row\n' >&2; exit 1; }
+  printf 'SELF-TEST PROOF: dev/e2e leaves a finalized record even when it can claim nothing\n'
+  exit 0
+fi
+
+harness_evidence_open dev/e2e
+harness_engine_init
+trap harness_cleanup EXIT
+
+printf 'dev/e2e — product contract, end to end\n'
+
+# =================================================================================== leg: suites ==
+# One nextest invocation, filtered to the binaries that already own a contract leg. Reported per
+# binary so a ✓ line names the contract, not the tool.
+# One test in git_plane deliberately spends 60s proving a stalled client releases its connection
+# slot. That is a real claim and the workspace suite runs it — it just does not belong in a harness
+# whose whole point is to be cheap enough to run constantly, so it is excluded HERE and said out
+# loud in the report below. Nothing else is filtered out.
+SUITE_SLOW_TEST=a_stalled_client_releases_its_connection_slot_instead_of_wedging_the_plane
+SUITE_FILTER="(binary(git_plane) - test($SUITE_SLOW_TEST)) + binary(git_remote_e2e) + binary(cli_m5_lifecycle) + binary(cli_connect) + binary(agent_socket) + binary(grant_revalidation) + binary(invariant_boundary)"
+declare -a SUITE_CLAIMS=(
+  "git_plane|git plane: real git, real remote helper, real update hook"
+  "git_remote_e2e|git remote: plain \`git push\` reaches the broker"
+  "cli_m5_lifecycle|lifecycle: operator + agent + broker + recovery"
+  "cli_connect|connect: the token routes to the vault and is never echoed"
+  "agent_socket|agent plane: derive-don't-enroll peer-uid dispatch"
+  "grant_revalidation|grants: authority revoked mid-flight refuses at execute"
+  "invariant_boundary|axis-2: approved fields == executed fields"
+)
+
+run_suites_leg() {
+  leg_header "suites: the contract legs already covered hermetically"
+  local log="$REPO_ROOT/target/e2e-nextest.log"
+  set +e
+  cargo nextest run --workspace --no-fail-fast -E "$SUITE_FILTER" >"$log" 2>&1
+  local status=$?
+  set -e
+
+  local entry binary claim passed failed
+  for entry in "${SUITE_CLAIMS[@]}"; do
+    binary="${entry%%|*}"
+    claim="${entry#*|}"
+    passed="$(grep -cE "^ *PASS \[[^]]*\] *\([^)]*\) [^ ]*::$binary " "$log" || true)"
+    failed="$(grep -cE "^ *(FAIL|TIMEOUT|SIGSEGV|ABORT) \[[^]]*\] *\([^)]*\) [^ ]*::$binary " "$log" || true)"
+    if [ "$passed" -gt 0 ] && [ "$failed" -eq 0 ]; then
+      ok "$claim" "$passed test$([ "$passed" -eq 1 ] || printf s)"
+    else
+      bad "$claim" "every test in $binary passes" \
+        "$passed passed, $failed failed (nextest exit $status; log: $log)"
+    fi
+  done
+  skip "git plane: the 60s stalled-client slot-release test" \
+    "$SUITE_SLOW_TEST costs 60s by design; the workspace suite is where it runs"
+}
+
+# ================================================================================= leg: contract ==
+
+build_binaries() {
+  printf '\nbuilding…\n'
+  # The INSTALLABLE binary: default features, no test-only doors, so `cermet setup` accepts it.
+  # Its OWN target dir, not the shared `target/debug`: cargo unifies dev-dependency
+  # features into the normal graph, so the suites leg's `cargo nextest run` REWRITES
+  # `target/debug/cermet` with the egress override and the mock providers compiled in. Staging from
+  # there handed this harness a contaminated binary and called it clean.
+  cargo build -p cermet-bin --target-dir "$REPO_ROOT/target/e2e-clean" >/dev/null
+  # The HARNESS binary: test-presence satisfies the client-side ceremony `rules allow` demands, and
+  # test-egress lets CERMET_STRIPE_BASE_URL aim the daemon at the fixture. Its own target dir, so
+  # flipping features never thrashes the normal one, and `cermet setup` refuses to install it.
+  cargo build -p cermet-bin --features test-presence,test-egress --target-dir "$REPO_ROOT/target/e2e" >/dev/null
+  ( cd "$REPO_ROOT/dev/fixture" && cargo build --target-dir "$REPO_ROOT/target/e2e-fixture" >/dev/null )
+}
+
+stage_binaries() {
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE/clean" "$STAGE/harness"
+  cp "$REPO_ROOT/target/e2e-clean/debug/cermet" "$STAGE/clean/cermet"
+  cp "$REPO_ROOT/target/e2e/debug/cermet" "$STAGE/harness/cermet"
+  cp "$REPO_ROOT/target/e2e-fixture/debug/cermet-stripe-fixture" "$STAGE/harness/cermet-stripe-fixture"
+  # ONE-BINARY: the daemon role is selected by argv[0] basename, so `cermetd` is a relative symlink
+  # to the same file here exactly as it is on an installed box.
+  ln -sfn cermet "$STAGE/harness/cermetd"
+  chmod -R a+rX "$STAGE"
+}
+
+# Run a command in the container as the approver. `sg` because cermet-approvers was created during
+# this very install and alice's exec session predates it — the same re-log-in note setup prints.
+as_alice() { engine exec -u alice "$CONTAINER" sg cermet-approvers -c "$1"; }
+
+oracle() { engine exec "$CONTAINER" cat /var/tmp/e2e-oracle.json; }
+oracle_total() { oracle | sed -n 's/.*"total_requests": \([0-9]*\).*/\1/p' | head -1; }
+
+run_contract_leg() {
+  leg_header "contract: a real daemon, a real vault, a real restart, and a request oracle"
+
+  harness_ensure_base_image "$IMAGE"
+  harness_boot_systemd_container "$CONTAINER" "$HARNESS_BASE_IMAGE" -v "$STAGE:/opt/e2e:ro"
+  engine exec "$CONTAINER" useradd -m -s /bin/bash alice
+  local alice_uid
+  alice_uid="$(engine exec "$CONTAINER" id -u alice)"
+
+  # --- empty state → installed box -------------------------------------------------------------
+  # The real installer does the whole structural job: service uid, approver uid, groups, runtime
+  # dirs, the sealed master key, the catalog. CERMET_APPROVER_UID is how a non-sudo caller names the
+  # human (setup otherwise infers it from SUDO_UID).
+  local setup_out
+  set +e
+  setup_out="$(engine exec -e "CERMET_APPROVER_UID=$alice_uid" "$CONTAINER" /opt/e2e/clean/cermet setup 2>&1)"
+  local setup_rc=$?
+  set -e
+  if [ "$setup_rc" -ne 0 ]; then
+    bad "install: cermet setup configures an empty box" "exit 0" "exit $setup_rc — $(printf '%s' "$setup_out" | tail -3 | tr '\n' ' ')"
+    return
+  fi
+  ok "install: cermet setup configures an empty box" "approver_uid=$alice_uid"
+
+  # One claim: the binary this harness stages as installable carries no test-only door.
+  # THE STRIP: a real install says nothing about a decision-trace
+  # program, because there is not one. Asserted on the REAL setup run's own output — the surface an
+  # operator actually reads — rather than on a source-tree grep.
+  assert_absent "install: setup says nothing about a research program" "research" \
+    "the setup output" "$setup_out"
+  if engine exec "$CONTAINER" test -e /etc/systemd/system/cermet-research.timer; then
+    bad "install: no upload timer is installed" "no cermet-research.timer" "one is on disk"
+  else
+    ok "install: no upload timer is installed" "the program is gone, not dormant"
+  fi
+
+  # It is asserted from OUTSIDE the container, on the staged bytes, because the failure mode was the
+  # harness staging a contaminated binary and never noticing.
+  local staged_tells=""
+  for word in EGRESS DOUBLE PRESENCE; do
+    if grep -qa "CERMET_TEST_${word}_COMPILED_IN_DO_NOT_INSTALL" "$STAGE/clean/cermet"; then
+      staged_tells="$staged_tells $word"
+    fi
+  done
+  if [ -z "$staged_tells" ]; then
+    ok "install: the staged installable binary is clean" "no test-only door compiled in"
+  else
+    bad "install: the staged installable binary is clean" "no contamination marker" "carries:$staged_tells"
+  fi
+
+  # The scan we would otherwise be trusting on faith: the harness binary is NOT installable.
+  local refusal
+  set +e
+  refusal="$(engine exec "$CONTAINER" /opt/e2e/harness/cermet setup 2>&1)"
+  set -e
+  assert_contains "install: the harness binary is refused" "compiled with test-" "setup's refusal" "$refusal"
+
+  # --- the fixture, and the daemon aimed at it -------------------------------------------------
+  engine exec -d "$CONTAINER" /opt/e2e/harness/cermet-stripe-fixture \
+    --oracle /var/tmp/e2e-oracle.json --ready /var/tmp/e2e-port >/dev/null
+  local waited=0 port=""
+  while [ -z "$port" ]; do
+    port="$(engine exec "$CONTAINER" cat /var/tmp/e2e-port 2>/dev/null | tr -d '[:space:]' || true)"
+    waited=$((waited + 1))
+    [ "$waited" -lt 50 ] || { bad "fixture: the stripe fixture is listening" "a bound port" "the fixture never announced one"; return; }
+    [ -n "$port" ] || sleep 0.2
+  done
+  ok "fixture: the stripe fixture is listening" "127.0.0.1:$port"
+
+  # ONE drop-in, two lines of intent: run the harness daemon, and point its stripe egress at the
+  # fixture. Everything else about the unit — uid, hardening, the sealed credential — is untouched.
+  engine exec "$CONTAINER" bash -c "
+    set -e
+    mkdir -p /etc/systemd/system/cermetd.service.d
+    cat > /etc/systemd/system/cermetd.service.d/e2e.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=/opt/e2e/harness/cermetd
+Environment=CERMET_STRIPE_BASE_URL=http://127.0.0.1:$port
+EOF
+    systemctl daemon-reload
+    systemctl restart cermetd
+  "
+  sleep 1
+  assert_eq "daemon: the harness daemon is serving" active \
+    "$(engine exec "$CONTAINER" systemctl is-active cermetd 2>/dev/null || true)"
+
+  # --- connect: a credential enters the vault and never comes back out -------------------------
+  local connect_out
+  set +e
+  connect_out="$(engine exec -i -u alice "$CONTAINER" sg cermet-approvers -c "/opt/e2e/harness/cermet connect stripe" <<<"$FIXTURE_TOKEN" 2>&1)"
+  local connect_rc=$?
+  set -e
+  if [ "$connect_rc" -eq 0 ]; then
+    ok "connect: the stripe credential is vaulted"
+  else
+    bad "connect: the stripe credential is vaulted" "exit 0" "exit $connect_rc — $(printf '%s' "$connect_out" | tr '\n' ' ')"
+  fi
+  assert_absent "connect: the token is never echoed back" "$FIXTURE_TOKEN" "connect's output" "$connect_out"
+
+  # --- one sentence, installed through the presence ceremony ------------------------------------
+  local rules_out
+  set +e
+  rules_out="$(engine exec -u alice -e CERMET_TEST_PRESENCE=1 "$CONTAINER" \
+    sg cermet-approvers -c "/opt/e2e/harness/cermet rules allow '$SENTENCE' --yes" 2>&1)"
+  local rules_rc=$?
+  set -e
+  if [ "$rules_rc" -eq 0 ]; then
+    ok "authority: one sentence is standing" "$SENTENCE"
+  else
+    bad "authority: one sentence is standing" "exit 0" "exit $rules_rc — $(printf '%s' "$rules_out" | tr '\n' ' ')"
+  fi
+
+  # --- the allowed effect, and what the provider actually received ------------------------------
+  local allowed_out
+  set +e
+  allowed_out="$(as_alice "/opt/e2e/harness/cermet run stripe.refund --resource '{\"charge\":\"ch_alpha\",\"amount\":500}'" 2>&1)"
+  local allowed_rc=$?
+  set -e
+  if [ "$allowed_rc" -eq 0 ]; then
+    ok "effect: an in-bounds stripe.refund executes"
+  else
+    bad "effect: an in-bounds stripe.refund executes" "exit 0" "exit $allowed_rc — $(printf '%s' "$allowed_out" | tr '\n' ' ')"
+  fi
+
+  local seen
+  seen="$(oracle)"
+  assert_eq "oracle: exactly one provider request arrived" 1 "$(oracle_total)"
+  assert_contains "oracle: it was POST /v1/refunds" '"method": "POST", "path": "/v1/refunds"' "the oracle" "$seen"
+  assert_contains "oracle: it carried the vaulted credential" "\"authorization\": \"Bearer $FIXTURE_TOKEN\"" "the oracle" "$seen"
+  assert_contains "oracle: the frozen fields arrived verbatim" '"amount": "500", "charge": "ch_alpha"' "the oracle" "$seen"
+
+  # --- the neighbours: denied, and the provider never hears about it -----------------------------
+  local denied_out denied_rc
+  set +e
+  denied_out="$(as_alice "/opt/e2e/harness/cermet run stripe.refund --resource '{\"charge\":\"ch_beta\",\"amount\":500}'" 2>&1)"
+  denied_rc=$?
+  set -e
+  assert_contains "deny: a charge outside the sentence is refused" "denied" "the run output" "$denied_out"
+  [ "$denied_rc" -ne 0 ] && ok "deny: the refused charge exits nonzero" "exit $denied_rc" \
+    || bad "deny: the refused charge exits nonzero" "a nonzero exit" "exit 0"
+  # A deny is never a dead end: it carries the sentence that would admit it (`no ask mode; deny widens`).
+  assert_contains "deny: the refusal suggests a widening" "to allow: cermet rules allow" "the run output" "$denied_out"
+  assert_eq "oracle: the denied charge made ZERO contact" 1 "$(oracle_total)"
+
+  set +e
+  denied_out="$(as_alice "/opt/e2e/harness/cermet run stripe.refund --resource '{\"charge\":\"ch_alpha\",\"amount\":50000}'" 2>&1)"
+  denied_rc=$?
+  set -e
+  assert_contains "deny: an amount over the bound is refused" "denied" "the run output" "$denied_out"
+  [ "$denied_rc" -ne 0 ] && ok "deny: the over-bound amount exits nonzero" "exit $denied_rc" \
+    || bad "deny: the over-bound amount exits nonzero" "a nonzero exit" "exit 0"
+  assert_eq "oracle: the over-bound amount made ZERO contact" 1 "$(oracle_total)"
+
+  # --- the receipts say all of it ----------------------------------------------------------------
+  local log_out
+  log_out="$(as_alice "/opt/e2e/harness/cermet log" 2>&1 || true)"
+  assert_contains "receipts: the denials are in the log" "DENIED stripe.refund" "the receipt log" "$log_out"
+  assert_contains "receipts: the executed refund is in the log" "refund" "the receipt log" "$log_out"
+
+  local audit_out
+  set +e
+  audit_out="$(as_alice "/opt/e2e/harness/cermet audit-verify" 2>&1)"
+  local audit_rc=$?
+  set -e
+  if [ "$audit_rc" -eq 0 ]; then
+    assert_contains "audit: audit-verify is green" '"verified": true' "audit-verify's output" "$(printf '%s' "$audit_out" | tr -d ' ' | sed 's/"verified":true/"verified": true/')"
+  else
+    bad "audit: audit-verify is green" "exit 0 and verified" "exit $audit_rc — $(printf '%s' "$audit_out" | tr '\n' ' ')"
+  fi
+
+  # --- restart: the box remembers ----------------------------------------------------------------
+  engine exec "$CONTAINER" systemctl restart cermetd
+  sleep 1
+  assert_eq "restart: the daemon comes back" active \
+    "$(engine exec "$CONTAINER" systemctl is-active cermetd 2>/dev/null || true)"
+  assert_contains "restart: the sentence survived" "stripe.refund" "the standing rules" \
+    "$(as_alice "/opt/e2e/harness/cermet rules" 2>&1 || true)"
+  assert_contains "restart: the receipts survived" "refund" "the receipt log" \
+    "$(as_alice "/opt/e2e/harness/cermet log" 2>&1 || true)"
+  assert_eq "restart: the oracle still shows one request" 1 "$(oracle_total)"
+}
+
+# ========================================================================================= drive ==
+if [ "$BUILD" -eq 1 ]; then build_binaries; fi
+
+if [ "$LEG" = suites ] || [ "$LEG" = both ]; then run_suites_leg; fi
+
+if [ "$LEG" = contract ] || [ "$LEG" = both ]; then
+  if harness_engine_available; then
+    stage_binaries
+    run_contract_leg
+  else
+    leg_header "contract: a real daemon, a real vault, a real restart, and a request oracle"
+    skip "contract: the whole leg" \
+      "no container engine (looked for $ENGINE); the operator plane needs a second uid this box will not manufacture"
+  fi
+fi
+
+harness_report "dev/e2e" "leg=$LEG"

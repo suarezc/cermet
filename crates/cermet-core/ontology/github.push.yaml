@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: push
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 460eaaa064f59bc8ded50ecef2a27ec17de67c19cb94637c6a52cd14075059cc
+semantics:
+  resource_family: repository
+  provider_operation: ref_update
+  risk_class: external_state_change
+  sensitivity: source_code
+  reversibility: compensatable
+  completion: terminal
+  idempotency: provider_cas
+review:
+  summary: Advance one branch on a pinned repository, decided by git's update hook on the mirror.
+  cautions:
+    - Not requestable; the decision is git's update hook, driven by an ordinary git push.
+    - The upstream's own fast-forward rule is the concurrency control, so a moved head is a refusal.
+    - mirror_old_oid is the daemon mirror's tip, not the upstream's; the receipt carries both.
+    - Deletion and force pushes are deliberately absent vocabulary.
+sources:
+  - GH-GIT-HTTPS-REMOTES
+  - GH-PERSONAL-ACCESS-TOKENS

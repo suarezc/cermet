@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  dev.cermet.cermetd — the cermetd LaunchDaemon (macOS separate-uid boundary).
+
+  The macOS counterpart of dist/linux/cermetd.service. cermetd runs as the dedicated, non-login
+  `_cermet` role account — a DIFFERENT uid from the human operator and from the `cermet-agent` uid
+  the model-driven bridge runs as. vault.db / state.db / audit.db and the master key live under
+  /var/lib/cermetd (0700 _cermet:_cermet); an agent under ANOTHER uid gets a hard EACCES on both.
+  That is the kernel enforcing the boundary, not cooperation.
+
+  Installed to /Library/LaunchDaemons/ by `sudo cermet setup`, then loaded with
+      sudo launchctl bootstrap system /Library/LaunchDaemons/dev.cermet.cermetd.plist
+
+  ProgramArguments points into /opt/cermet/bin, a prefix setup creates and root owns — NOT
+  /usr/local/bin, which on a Homebrew Mac is writable by the operator's own uid. root launches this
+  program at every boot, so it must not sit anywhere a T1-steered model running as that uid could
+  replace it.
+
+  ONE plist. A socket dir under /var/run would need a second, root-running LaunchDaemon to
+  recreate it after macOS wipes /var/run at boot; `cermet setup` converges persistent runtime
+  dirs (/var/cermetd, /var/cermetd-agents) instead, so there is nothing left for a boot helper
+  to do.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.cermet.cermetd</string>
+
+  <!-- Identity: the dedicated non-login service account (`cermet setup` provisions it). The
+       DELIBERATE omission mirrors the systemd unit's: `_cermet` is NEVER in cermet-approvers, or
+       the daemon's own uid would satisfy the approver check and the human-only split collapses.
+       The installer asserts that and fails loudly. -->
+  <key>UserName</key>
+  <string>_cermet</string>
+  <key>GroupName</key>
+  <string>_cermet</string>
+
+  <!-- ONE-BINARY: `cermetd` is a root-owned RELATIVE SYMLINK to /opt/cermet/bin/cermet, the single
+       executable this project ships. launchd uses the first element as both the program and
+       argv[0], and that name is what selects the daemon role in the binary's dispatch table. It is
+       role identification, not a privilege boundary: launchd picks UserName/GroupName above BEFORE
+       exec, and symlink resolution does not change that choice. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/cermet/bin/cermetd</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- The EXPLICIT service-mode signal, never inferred from a config field. With it
+         set the daemon asserts config.service_uid == getuid(), approver_uid != getuid(), and
+         agent_uid distinct from both, all nonzero — else it refuses to serve. -->
+    <key>CERMET_SERVICE_MODE</key>
+    <string>1</string>
+    <!-- The state dir holding the three DBs and the _cermet-owned 0600 master.key. macOS has no
+         systemd-creds analog and the daemon has no login session to hold a Keychain item, so the
+         key is a plain owner-only file: T3 (peer uids) is defeated by owner+mode, and root /
+         physical theft are not adversaries in this threat model. -->
+    <key>CERMET_HOME</key>
+    <string>/var/lib/cermetd</string>
+    <key>CERMET_CONFIG</key>
+    <string>/etc/cermetd/config.toml</string>
+    <!-- Deliberately NO CERMET_*_BASE_URL: provider origins are pinned in-core (Egress::allows)
+         and an override would be an egress-redirect surface. -->
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Fail-closed restart: every refuse path in cermetd exits non-zero, so KeepAlive brings it
+       back, throttled — a permanent misconfiguration restart-loops loudly in the log (watch the
+       log, not for a stopped service) and a transient blocker converges once it clears. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Adaptive</string>
+
+  <!-- The release binary aborts on panic; a core would carry the opened master key and a
+       decrypted credential (accidental disclosure). No core, ever. -->
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>Core</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/cermetd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/cermetd.log</string>
+</dict>
+</plist>

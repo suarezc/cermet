@@ -1,0 +1,33 @@
+# Create one standard payout from an exact source balance to one exact eligible bank destination.
+# Instant method, an implicit/default destination, destination mutation, transfer, and top-up are absent.
+provider: stripe
+action: create_standard_payout
+request_evidence: stripe.create_standard_payout.v1
+money:
+  preconditions: [payouts_enabled, balance_sufficient, destination_belongs_and_currency_matches]
+fields:
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: destination, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: source_type, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [amount, currency, destination, source_type]
+execution_targets: [destination, source_type, account, mode, currency]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/payouts
+      body_encoding: form
+      body:
+        amount: "{amount}"
+        currency: "{currency}"
+        destination: "{destination}"
+        source_type: "{source_type}"
+        method: standard
+      success_statuses: [200]
+      require: [id, object, amount, currency, destination, source_type, method, status, livemode]
+      expect_eq: { amount: amount, currency: currency, destination: destination, source_type: source_type, livemode: mode }
+      expect_literal: { object: payout, method: standard, status: pending }
+      retention: none

@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: stage_dispute_evidence
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 2e1b809da211d45f3196b7eeb47da85d5900f7061f5e7695e02481138748b6c7
+semantics:
+  resource_family: dispute
+  provider_operation: dispute_evidence_stage
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Stage a frozen subset of Stripe's 27 standard evidence strings on one exact dispute with submit fixed false and no evidence returned or retained.
+  cautions:
+    - All supplied evidence freezes in the original request; file/document and prior-charge IDs are optional exact-pinned identities, while text is unbound frozen payload.
+    - Enhanced evidence is absent. A conservative 20,000-character limit on every standard field and the 150,000-character aggregate are enforced locally before mint and on stored-resource revalidation.
+    - The LIKELY native ceiling is RAK Disputes Write or App dispute_write, with additional Files permission for referenced uploads; exact IAM and file-access behavior require sandbox live proof.
+    - The action is loaded for sandbox and design validation while those empirical limits remain unresolved.
+sources:
+  - STRIPE-DISPUTE-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

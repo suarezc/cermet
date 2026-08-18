@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: cancel_subscription_at_period_end
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 4361badac81606c7ddb54e65c7f15598fb1ba71efa82dc0d16f69597f7d2ddb7
+semantics:
+  resource_family: subscription
+  provider_operation: subscription_cancel_at_period_end
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Schedule cancellation of one exact subscription at its current period end without changing any other subscription setting.
+  cautions:
+    - The sole request option is the frozen cancel_at_period_end true literal; immediate cancellation, proration, repricing, and arbitrary updates are absent.
+    - The LIKELY native ceiling is RAK Subscriptions Write or App subscription_write; sandbox proof remains deferred.
+sources:
+  - STRIPE-SUBSCRIPTION-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

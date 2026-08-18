@@ -1,0 +1,26 @@
+[package]
+name = "cermet-lang"
+description = "Keyless Cermet language, contracts, sets, and client-visible types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "cermet_lang"
+path = "src/lib.rs"
+
+[features]
+default = []
+test-double = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+thiserror.workspace = true
+sha2 = "0.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+nix = { version = "0.26.4", features = ["user"] }

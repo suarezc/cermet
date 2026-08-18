@@ -1,0 +1,54 @@
+# Build output under dist/ is ignored; the tracked packaging sources are re-included explicitly.
+dist/*
+!dist/Makefile
+!dist/get-cermet.sh
+!dist/verify-multicall-payload.sh
+!dist/package
+dist/package/*
+!dist/package/postinstall.sh
+!dist/linux
+dist/linux/*
+!dist/linux/cermetd.service
+!dist/linux/cermetd.tmpfiles
+!dist/linux/cermet-credential-env.service
+!dist/linux/cermet-credential-env.sh
+!dist/linux/cermet-update-check.service
+!dist/linux/cermet-update-check.timer
+!dist/linux/config.toml
+!dist/linux/pam.cermet
+# The macOS service assets: the LaunchDaemon plists plus the platform config template.
+!dist/macos
+dist/macos/*
+!dist/macos/dev.cermet.cermetd.plist
+!dist/macos/dev.cermet.update-check.plist
+!dist/macos/config.toml
+
+# The vendored capability catalog: the descriptor set the installer seeds wholesale into a
+# fresh daemon's state dir.
+!dist/catalog
+dist/catalog/*
+!dist/catalog/actions.d
+!dist/catalog/providers.d
+dist/catalog/actions.d/*
+dist/catalog/providers.d/*
+!dist/catalog/actions.d/*.yaml
+!dist/catalog/providers.d/*.yaml
+
+# Local environment / OS litter
+.env
+.DS_Store
+
+# Cermet runtime state / credential DBs — never commit
+*.db
+*.db-shm
+*.db-wal
+# stray dir from a run with an unexpanded $CERMET_HOME
+${CERMET_HOME}/
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Agent-harness local state (per-machine / transient)
+.claude/worktrees/
+.claude/settings.local.json

@@ -1,0 +1,29 @@
+# Attach Stripe's fixed pm_card_visa test PaymentMethod to one exact test customer.
+provider: stripe
+action: fixture_payment_method_attach
+fields:
+  - { name: account,  type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [account, customer]
+execution_targets: [account, customer]
+http:
+  steps:
+    - id: bind_account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      expect_eq: { id: account }
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      expect_literal: { object: balance, livemode: false }
+    - id: attach
+      method: POST
+      path: /v1/payment_methods/pm_card_visa/attach
+      body_encoding: form
+      body: { customer: "{customer}" }
+      success_statuses: [200]
+      require: [id, object, customer, type, livemode]
+      expect_eq: { customer: customer }
+      expect_literal: { object: payment_method, type: card, livemode: false }

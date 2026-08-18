@@ -1,0 +1,21 @@
+# A dev-tools crate, DELIBERATELY OUTSIDE the product workspace.
+#
+# `[workspace]` here makes this its own workspace root, so `cargo build --workspace`, workspace
+# clippy, and `cargo nextest run --workspace` never see it — and, in particular, the ONE-BINARY pin
+# in `crates/cermet-cli/tests/keyless.rs` (`the_workspace_ships_exactly_one_cermet_bin`) keeps
+# meaning exactly what it says. A test fixture is not something Cermet ships.
+#
+# Zero dependencies, on purpose: a std-only `TcpListener` builds in a couple of seconds from cold,
+# which is what keeps `dev/e2e` inside its wall-time budget, and it leaves the recording path with
+# no library between the wire and the oracle.
+[workspace]
+
+[package]
+name = "cermet-stripe-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "cermet-stripe-fixture"
+path = "src/main.rs"

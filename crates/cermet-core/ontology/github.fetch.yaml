@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: fetch
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 556d847ddad2a4834cbeb37198ba8ac0e066a01aae53b38bd3244370f2d0c883
+semantics:
+  resource_family: repository
+  provider_operation: mirror_refresh
+  risk_class: observation
+  sensitivity: source_code
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Refresh this host's mirror of a repository from the upstream so a read stream can serve it.
+  cautions:
+    - Not requestable; the read stream at git.sock is its door.
+    - A failed refresh REFUSES; a stale mirror is never served in its place.
+    - The refresh is total and pruning, so the mirror's branches equal the upstream's.
+sources:
+  - GH-GIT-HTTPS-REMOTES
+  - GH-PERSONAL-ACCESS-TOKENS

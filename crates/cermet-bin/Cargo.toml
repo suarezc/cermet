@@ -1,0 +1,47 @@
+[package]
+name = "cermet-bin"
+description = "cermet — the ONE shipped executable. A composition crate holding the workspace's sole [[bin]]: a closed dispatch table that selects a role (daemon / operator CLI+MCP / git remote helper / the daemon's own git update-hook client) and calls that role's library entry. It owns no logic of its own — the daemon spine lives in cermet-daemon, the operator/agent surfaces in cermet-cli. `cermetd` and `git-remote-cermet` are root-owned symlinks to this one target; role selection is by exact argv[0] basename, never current_exe() and never an environment variable."
+autobins = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cermet"
+path = "src/main.rs"
+
+[features]
+# TEST-ONLY, OFF by default: forwarded to cermet-cli so the test-presence client gate can be
+# selected for unattended rehearsals. The shipped build never enables it, and `cermet setup`
+# scans the one published target for the contamination marker below and refuses to install it.
+test-presence = ["cermet-cli/test-presence"]
+# Local dev only: opens the daemon's `CERMET_MASTER_KEY` env door. Never enabled for a release.
+dev-key = ["cermet-daemon/dev-key"]
+# TEST-ONLY, OFF by default: forwarded to cermet-core so `CERMET_<PROVIDER>_BASE_URL` can point a
+# real daemon process at a local fixture server. `dev/e2e` is the only caller, and it builds into
+# its own target dir; `cermet setup` scans for the contamination marker in main.rs and refuses it.
+test-egress = ["cermet-daemon/test-egress"]
+
+[dependencies]
+cermet-cli = { path = "../cermet-cli" }
+cermet-daemon = { path = "../cermet-daemon" }
+
+[dev-dependencies]
+tempfile = "3"
+# The installed-box (#[ignore]d, privileged-gate) legs read the cutover probe helpers.
+cermet-cli = { path = "../cermet-cli" }
+# Name every test-only door explicitly, so the binary built for THIS crate's tests always
+# carries all three and `tests/non_installable_markers.rs` is never vacuous. Resolver 2 keeps
+# dev-dependency features out of non-test builds, so `cargo build [--release] -p cermet-bin` — the
+# only build dist/Makefile packages — is unaffected.
+cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress"] }
+cermet-ctl-client = { path = "../cermet-ctl-client", features = ["test-presence"] }
+# The AGENT-SURFACE test class this crate is the only place to write — one real broker, the real
+# `agent.sock` dispatch, and the real MCP bridge in one process. Every other crate can see at most
+# one side of that seam, which is how an intentional refusal reached agents as "internal error"
+# with no test noticing.
+cermet-broker-actor = { path = "../cermet-broker-actor" }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+libc = "0.2"

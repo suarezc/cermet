@@ -1,0 +1,17 @@
+# `amount` uses Stripe's integer minor currency unit and is bounded by the sentence rule.
+provider: stripe
+action: refund
+fields:
+  - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+consumes: [charge, amount]
+execution_targets: [charge]
+http:
+  steps:
+    - id: refund
+      method: POST
+      path: /v1/refunds
+      body_encoding: form
+      body:
+        charge: "{charge}"
+        amount: "{amount}"

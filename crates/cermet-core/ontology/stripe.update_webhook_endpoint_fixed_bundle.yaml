@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: update_webhook_endpoint_fixed_bundle
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 5e0c4b71fa5f0a7577cdc7153a16e282a8230aed3480250edcb91cfd31815c27
+semantics:
+  resource_family: webhook_endpoint
+  provider_operation: webhook_endpoint_update_fixed_bundle
+  risk_class: provider_control_change
+  sensitivity: security
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Redirect one exact webhook endpoint to one exact HTTPS URL while fixing enabled events to charge.succeeded and charge.failed.
+  cautions:
+    - The exact bundle is a vendored literal in documented order; wildcard events, disabled state, descriptions, metadata, and API-version changes are absent.
+    - Response evidence must return the exact approved URL and ordered bundle or execution reports a terminal postcondition mismatch with scalar-only provider proof and no retained body.
+    - Stripe documents App webhook_write as sensitive; the LIKELY RAK ceiling is Webhook Endpoints Write, and exact IAM behavior requires sandbox live proof.
+    - The action is loaded for sandbox and design validation because this control-plane redirect can change future event egress.
+sources:
+  - STRIPE-WEBHOOK-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

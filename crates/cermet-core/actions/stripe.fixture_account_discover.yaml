@@ -1,0 +1,34 @@
+# Prove account identity and test mode with what a standard-account secret key can actually see:
+# account id, default currency, and payout eligibility, then livemode:false via /v1/balance.
+# External accounts are NOT discoverable with this key class under the pinned Stripe-Version
+# (more_permissions_required on both external-account endpoints; /v1/account omits the property
+# even under expand[], as probed live). The payout destination is therefore
+# pinned by the sitting engine as a declared synthetic value, never discovered here.
+provider: stripe
+action: fixture_account_discover
+fields: []
+consumes: []
+execution_targets: []
+scope: account
+http:
+  steps:
+    - id: account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      require: [id, object, default_currency, payouts_enabled]
+      expect_literal: { object: account }
+      capture:
+        account_id: "$.id"
+        currency: "$.default_currency"
+        payouts_enabled: "$.payouts_enabled"
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      require: [object, livemode]
+      expect_literal: { object: balance, livemode: false }
+      result_captures:
+        account_id: account_id
+        currency: currency
+        payouts_enabled: payouts_enabled

@@ -1,0 +1,35 @@
+# Confirm one exact PaymentIntent with one exact PaymentMethod. No platform routing, future-use,
+# method-level capture override, hooks, client-secret delivery, or compound create is authorized.
+provider: stripe
+action: confirm_payment_intent
+request_evidence: stripe.confirm_payment_intent.v1
+money:
+  preconditions: [pi_confirmable]
+fields:
+  - { name: payment_intent, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: payment_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: status, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: capture_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: confirmation_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [payment_intent, payment_method]
+execution_targets: [payment_intent, payment_method, account, mode, currency, customer, status, capture_method, confirmation_method]
+http:
+  steps:
+    - id: confirm
+      method: POST
+      path: /v1/payment_intents/{payment_intent}/confirm
+      body_encoding: form
+      body:
+        payment_method: "{payment_method}"
+        off_session: true
+        error_on_requires_action: true
+      success_statuses: [200]
+      require: [id, object, amount, currency, customer, payment_method, livemode, status, capture_method, confirmation_method]
+      expect_eq: { id: payment_intent, amount: amount, currency: currency, customer: customer, payment_method: payment_method, capture_method: capture_method, confirmation_method: confirmation_method, livemode: mode }
+      expect_literal: { object: payment_intent }
+      retention: none

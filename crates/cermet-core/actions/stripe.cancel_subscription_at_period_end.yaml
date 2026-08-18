@@ -1,0 +1,17 @@
+# Schedule cancellation of one exact subscription without changing any other subscription field.
+provider: stripe
+action: cancel_subscription_at_period_end
+fields:
+  - { name: subscription, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [subscription]
+execution_targets: [subscription]
+http:
+  steps:
+    - id: schedule_cancel
+      method: POST
+      path: /v1/subscriptions/{subscription}
+      body_encoding: form
+      body: { cancel_at_period_end: true }
+      success_statuses: [200]
+      require: [id, cancel_at_period_end]
+      expect_literal: { cancel_at_period_end: true }

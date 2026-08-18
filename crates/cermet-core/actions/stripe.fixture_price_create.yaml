@@ -1,0 +1,35 @@
+# Create one bounded monthly recurring test price for one exact product.
+provider: stripe
+action: fixture_price_create
+fields:
+  - { name: account,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: product,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: unit_amount, type: int, required: true, class: side_effect, binding: bounded, max_int: 100 }
+  - { name: currency,    type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [account, product, unit_amount, currency]
+execution_targets: [account, product, currency]
+http:
+  steps:
+    - id: bind_account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      expect_eq: { id: account }
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      expect_literal: { object: balance, livemode: false }
+    - id: create
+      method: POST
+      path: /v1/prices
+      body_encoding: form
+      body:
+        product: "{product}"
+        unit_amount: "{unit_amount}"
+        currency: "{currency}"
+        recurring: { interval: month }
+      success_statuses: [200]
+      require: [id, object, product, unit_amount, currency, active, type, recurring.interval, livemode]
+      expect_eq: { product: product, currency: currency }
+      expect_literal: { object: price, active: true, type: recurring, recurring.interval: month, livemode: false }

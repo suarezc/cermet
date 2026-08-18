@@ -1,0 +1,29 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: cancel_payment_intent
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 6ceb3dc29ec4f3a9eb7c8c20f2fb45ed00160dd5f3354a3546618bb3e4d3b166
+semantics:
+  resource_family: payment_intent
+  provider_operation: cancel_authorization
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: irreversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Cancel one exact PaymentIntent in a frozen cancelable state, conservatively metered by a positive canonical amount.
+  cautions:
+    - Evidence freezes account, mode, currency, customer, methods, status, and the positive intent or remaining capturable amount.
+    - Zero, fully captured, succeeded, canceled, or otherwise unknown states deny before mint or at the fresh precondition.
+    - Routing, future-use, hooks, and method-level capture overrides must remain absent across evidence and the fresh check.
+    - The only mutation is the exact PaymentIntent cancel endpoint; no refund, capture, or replacement intent is implied.
+    - Raw success proof requires the exact intent and frozen subset with status canceled and a non-null canceled_at.
+    - Sandbox proof must confirm every accepted cancelable status and the requires_capture amount shape.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-PAYMENT-INTENT-RETRIEVE
+  - STRIPE-PAYMENT-INTENT-CANCEL
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

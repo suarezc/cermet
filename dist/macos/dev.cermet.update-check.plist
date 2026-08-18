@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  dev.cermet.update-check — the daily update CHECK (macOS).
+
+  The macOS counterpart of dist/linux/cermet-update-check.timer + cermet-update-check.service, with
+  the identical contract: IT CHECKS AND NOTICES, IT NEVER INSTALLS. One
+  parameterless GET of https://api.github.com/repos/suarezc/cermet/releases/latest — the same
+  GitHub Releases this box was installed from — the answer written down under the operator's own
+  config directory, and that is all (a second parameterless GET, of that release's own SHA256SUMS,
+  only when the release is newer than this build). Applying an update stays the explicit,
+  sudo-gated `cermet update`.
+
+  A run is a NO-OP unless the operator's own setting says so (~/.config/cermet/config.toml,
+  update_check = "on", the default); with it off it exits having opened no socket. Stopping it takes
+  one command and no root: `cermet update --daily off`.
+
+  THIS IS NOT THE DAEMON. cermetd holds the vault and contains no update-check code;
+  `cermet update --daily-check` is an ordinary unprivileged process running as the HUMAN OPERATOR,
+  whose own config file it reads and whose own state it records. A defect here has no path to a
+  credential, because this is not where credentials live — and it has no privilege to install
+  anything with either.
+
+  Installed to /Library/LaunchDaemons/ by `sudo cermet setup` and loaded with
+      sudo launchctl bootstrap system /Library/LaunchDaemons/dev.cermet.update-check.plist
+
+  ProgramArguments points into /opt/cermet/bin, the root-owned prefix setup creates — NOT
+  /usr/local/bin, which on a Homebrew Mac is writable by the operator's own uid.
+
+  CERMET_APPROVER_USER below is substituted with the configured approver at install time.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.cermet.update-check</string>
+
+  <!-- The OPERATOR's account, not root and not _cermet. Nothing here needs privilege: the setting
+       it honors and the state it records are both that human's own files. -->
+  <key>UserName</key>
+  <string>CERMET_APPROVER_USER</string>
+
+  <!-- ONE-BINARY: the operator CLI role, selected by the `cermet` basename in the dispatch table. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/cermet/bin/cermet</string>
+    <string>update</string>
+    <string>--daily-check</string>
+  </array>
+
+  <!-- Daily, at an off-peak hour. launchd has no
+       randomized-delay knob, so the spread systemd gets from RandomizedDelaySec is not available
+       here; the minute is simply an odd one. launchd runs a missed StartCalendarInterval at the
+       next opportunity, so a laptop that was asleep catches up rather than silently skipping. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>43</integer>
+  </dict>
+
+  <!-- One-shot: it runs, it records, it exits. Never kept alive — a check that could not reach a
+       host is retried by the next day's firing, not by a restart loop. -->
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/cermet-update-check.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/cermet-update-check.log</string>
+</dict>
+</plist>

@@ -1,0 +1,67 @@
+[package]
+name = "cermet-core"
+description = "Trusted durable capability-broker core: owns broker-vault plaintext and provider execution."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cermet-lang = { path = "../cermet-lang" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+thiserror.workspace = true
+# audit hash-chain
+sha2 = "0.10"
+hmac = "0.12"
+# redaction
+regex = "1"
+# persistence (bundled = no system sqlite needed; helps single-wheel distribution).
+rusqlite = { version = "0.31", features = ["bundled"] }
+# secret hygiene (secrecy pulls zeroize; we don't use the derive macro directly)
+secrecy = "0.8"
+# credential encryption at rest
+aes-gcm = "0.10"
+rand = "0.8"
+# timestamps
+time = { version = "0.3", features = ["formatting", "macros"] }
+# resolve a stored `uid:N` principal to its OS username via the passwd db (getpwuid_r), for the
+# operator views — no secret, read-only.
+nix = { version = "0.26.4", features = ["user"] }
+libc = "0.2"
+# outbound provider calls happen *inside* the core so the token never leaves Rust.
+# blocking client (broker is synchronous); rustls avoids a system OpenSSL dependency.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# Stripe v1 request bodies are application/x-www-form-urlencoded.
+serde_urlencoded = "0.7"
+# the GitHub contents API takes file content base64-encoded
+base64 = "0.22"
+
+[features]
+default = []
+# Pull the audit/vault key from the OS keychain instead of a local key file.
+os-keychain = ["dep:keyring"]
+# Allow CERMET_*_BASE_URL to redirect provider egress (for pointing integration tests at a
+# stub). OFF in production so a stray env var cannot redirect provider traffic. Tests enable
+# the same override implicitly via cfg(test); external test crates ask for it with this feature.
+test-egress = []
+# Register the offline test-double providers (`mock-vercel`/`mock-github`) in `default_registry`.
+# OFF in production so no release binary ships a canned-response provider; this crate's own unit
+# tests get them implicitly via cfg(test), external test crates (and the dev PyO3 extension) ask for them.
+test-double = ["cermet-lang/test-double"]
+
+[dev-dependencies]
+# Self-reference so this crate's OWN integration tests (tests/*.rs — separate crates that link the
+# non-cfg(test) lib) see the `test-double` providers `Broker::open` registers. The lib target and
+# release binaries are unaffected.
+cermet-core = { path = ".", features = ["test-double"] }
+proptest = "1"
+tempfile = "3"
+
+[dependencies.keyring]
+version = "2"
+optional = true
+
+[lib]
+doctest = false

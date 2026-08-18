@@ -1,0 +1,31 @@
+# Create one convention-named active test product.
+provider: stripe
+action: fixture_product_create
+fields:
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,    type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [account, name]
+execution_targets: [account, name]
+http:
+  steps:
+    - id: bind_account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      expect_eq: { id: account }
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      expect_literal: { object: balance, livemode: false }
+    - id: create
+      method: POST
+      path: /v1/products
+      body_encoding: form
+      body:
+        name: "{name}"
+        description: "Cermet test fixture"
+      success_statuses: [200]
+      require: [id, object, name, active, livemode]
+      expect_eq: { name: name }
+      expect_literal: { object: product, active: true, livemode: false }

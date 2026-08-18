@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: create_issue
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 739bcbd2e6dd1e40bc51f009b85b5fe94ee071096fc7b6ecf3e0e41290178cca
+semantics:
+  resource_family: issue
+  provider_operation: issue_create
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Open one issue on a pinned repository; title and body are request-time free_payload frozen at mint.
+  cautions:
+    - title and body are agent-authored, size-capped, and audited verbatim; no post-mint fill.
+    - Each request creates a distinct issue; the grant is single-use.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-ISSUES
+  - GH-REST-BEST-PRACTICES

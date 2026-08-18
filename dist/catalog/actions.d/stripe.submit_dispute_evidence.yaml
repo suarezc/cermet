@@ -1,0 +1,17 @@
+# Submit whatever evidence is already staged provider-side on one exact dispute. This action does not
+# execute or prove a relation to a Cermet stage grant and cannot prevent out-of-band evidence drift.
+provider: stripe
+action: submit_dispute_evidence
+fields:
+  - { name: dispute, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [dispute]
+execution_targets: [dispute]
+http:
+  steps:
+    - id: submit
+      method: POST
+      path: /v1/disputes/{dispute}
+      body_encoding: form
+      body: { submit: true }
+      success_statuses: [200]
+      require: [id, status, evidence_details.submission_count]

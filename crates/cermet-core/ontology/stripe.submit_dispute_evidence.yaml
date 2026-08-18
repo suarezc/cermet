@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: submit_dispute_evidence
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 342deb59f650e5e99dd16c175c323fb454fd205832524c5340c70e3d137d39eb
+semantics:
+  resource_family: dispute
+  provider_operation: dispute_evidence_submit
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: irreversible
+  completion: accepted
+  idempotency: non_idempotent
+review:
+  summary: Submit provider-staged evidence on one exact dispute using only the frozen submit true control; this action stages no evidence itself.
+  cautions:
+    - 'Standalone semantic: this submits whatever evidence is already staged provider-side on the exact dispute.'
+    - Cermet does not prove a relation to a prior stage grant and cannot prevent out-of-band evidence drift between staging and submission.
+    - The action is loaded for sandbox and design validation; the provider-staged relation is not falsely claimed solved.
+    - The LIKELY native ceiling is RAK Disputes Write or App dispute_write; exact IAM and submission-count behavior require sandbox live proof.
+    - Submission is not automatically retried after an ambiguous timeout because the bank-facing effect is irreversible and non-idempotent.
+sources:
+  - STRIPE-DISPUTE-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

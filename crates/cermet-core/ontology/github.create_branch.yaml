@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: create_branch
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: d06f0f3f0c4446170775df7cd5f0fbfceeb14d16c4cad4df7f45950d119360e8
+semantics:
+  resource_family: git_reference
+  provider_operation: ref_create
+  risk_class: external_state_change
+  sensitivity: source_code
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one new Git ref on a pinned repository at an exact immutable source OID.
+  cautions:
+    - An already-existing ref is refused (422); a create never moves an existing branch.
+    - source_oid must be an exact commit OID (git_oid), never a branch name.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-GIT-REFERENCES
+  - GH-REST-BEST-PRACTICES

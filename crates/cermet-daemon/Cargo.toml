@@ -1,0 +1,78 @@
+[package]
+name = "cermet-daemon"
+description = "cermetd — the agent-path daemon. Composes peer_cred -> authorize -> session-mint -> one dispatched op over agent.sock, driving the shared broker actor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# OFF by default: gates the `CERMET_MASTER_KEY` env door in `master_key`. The shipped binary has
+# NO env-key path — the authoritative key is `$CERMET_HOME/master.key`. Local dev opts in with
+# `--features dev-key`.
+default = []
+dev-key = []
+# TEST-ONLY, OFF by default: forwards cermet-core's egress-redirect door (`CERMET_*_BASE_URL`) so a
+# real daemon PROCESS — not just an in-process test fixture — can be aimed at a local stub. The
+# shipped daemon never enables it; `dist/linux/cermetd.service` says so where an operator would look.
+test-egress = ["cermet-core/test-egress"]
+
+[lib]
+doctest = false
+name = "cermet_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+libc = "0.2"
+cermet-core = { path = "../cermet-core" }
+cermet-ipc = { path = "../cermet-ipc" }
+cermet-broker-actor = { path = "../cermet-broker-actor" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# Parse /etc/cermetd/config.toml (the daemon's first config file). Read-only at startup.
+toml = "0.8"
+# peer-cred read off the accepted fd (the cermet-ipc shim already uses this version/features).
+# `fs`+`user`: chgrp the ctl.sock to the approvers gid for cross-uid reachability.
+nix = { version = "0.26.4", features = ["socket", "uio", "fs", "user"] }
+rand = "0.8"
+# Principals-at-rest: the enrollment secret must be RELOADABLE to recompute the
+# per-connection HMAC, so it is stored REVERSIBLY (AES-256-GCM) — not the one-way argon2 wrap.
+# The GCM key is HKDF-Expand-derived from the master key with a principals-specific `info` so it
+# is independent of cermet-core's vault key. Versions match cermet-core (aes-gcm) / cermet-ipc (sha2).
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+# Master-key sourcing (keychain = hardening only). cermet-core's `os-keychain` feature is dead, so
+# the daemon gets its own product-layer keyring.
+keyring = "2"
+# Wrap the ctl.sock-ingested provider token in a SecretString at the moment of use (the ctl
+# Connect op). Version matches the rest of the workspace (broker-actor/core).
+secrecy = "0.8"
+# The loopback relay's HTTP/1.1 server. Already in the lockfile (reqwest/wiremock
+# pull the same hyper 1.x); this only turns on the server side. Never-reinvent-the-wheel: the native
+# client speaks real HTTP (keep-alive, chunked uploads) and hand-rolling that parser is exactly the
+# in-house reimplementation to avoid. No credential rides here — the credentialed hop is
+# cermet-core's.
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
+[dev-dependencies]
+# `test-double`: the agent-socket tests drive a real broker over the offline mock providers.
+# Dev-deps are invisible to the production build, so no mock ships in cermetd.
+cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress"] }
+tempfile = "3"
+wiremock = "0.6"
+# Read `state.db` directly to assert the session lifecycle. Test-only; matches the
+# version cermet-core links so the bundled SQLite is shared.
+rusqlite = { version = "0.31", features = ["bundled"] }
+regex = "1"
+# The privileged cross-uid ctl e2e (`tests/ctl_priv_e2e.rs`): it drives the production ctl accept
+# loop as a real second-uid approver via the keyless ctl client.
+cermet-ctl-client = { path = "../cermet-ctl-client" }
+# `process`: the same fork/waitpid gates the cermet-ipc second-uid harness uses. TEST-ONLY — the
+# runtime `nix` above stays narrow (features union for the test build; the shipped binary is unaffected).
+nix = { version = "0.26.4", features = ["process"] }

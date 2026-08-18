@@ -1,0 +1,215 @@
+name: release-check
+
+# The final check before a release: both shipped platforms build from the tagged
+# commit, the workspace suite passes on each, the artifacts package, and their
+# checksums are printed side by side for comparison against SHA256SUMS.
+#
+# Verification-only: artifacts are uploaded as workflow artifacts, not attached
+# to a release — publishing stays a human act.
+#
+# EVERY job captures its real output to files and uploads them even on failure,
+# and the final `report` job publishes the tails to the `ci-reports` branch —
+# so a failure (or a lie inside a green step) is diagnosable by fetching that
+# branch, with no access to the Actions log UI at all. The `macos` job asserts
+# INSTALL-OUTPUT HONESTY in-band: a virgin machine's first install must not
+# claim surviving clients; asserting it where the text is still a shell
+# variable is what makes the runner able to catch that class at all.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reference hygiene
+        # Issue-tracker shorthand stays out of tracked files.
+        run: |
+          ! git grep -nE 'BUG-[0-9]{3,4}' -- ':!.github/workflows/release.yml'
+      - name: Workspace suite
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/logs
+          cargo test --workspace 2>&1 | tee /tmp/logs/suite.log
+      - name: Dist layout verify
+        run: make -C dist verify
+      - name: Package (deb + tarball)
+        run: make -C dist package
+      - name: Checksums
+        run: cd dist/out && sha256sum cermet_*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: dist/out/cermet_*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-linux
+          path: /tmp/logs/
+
+  # The suite and the cold-install gate are SEPARATE macOS signals: a workspace-suite
+  # failure must not hide the fresh-Mac install verdict, and a dead daemon must not
+  # hide a suite regression. Two jobs, independent failures.
+  macos-suite:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Workspace suite
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/logs
+          cargo test --workspace 2>&1 | tee /tmp/logs/suite.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-macos-suite
+          path: /tmp/logs/
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package (darwin arm64 tarball)
+        run: make -C dist package-darwin
+      - name: Cold smoke — the tarball executes on a virgin mac
+        run: |
+          mkdir /tmp/cermet-smoke /tmp/logs
+          tar -xzf dist/out/cermet_*_darwin_arm64.tar.gz -C /tmp/cermet-smoke
+          /tmp/cermet-smoke/cermet --version
+      - name: Cold install on a virgin mac
+        run: |
+          set -o pipefail
+          cd /tmp/cermet-smoke
+          sudo ./cermet setup 2>&1 | tee /tmp/logs/setup.log
+      - name: The daemon must actually SERVE
+        # Setup exiting 0 is not the assertion — the discriminating observation is
+        # launchd's own state plus the socket, then `cermet check` under a fresh
+        # login context (the shell that ran setup still carries its pre-install
+        # group set).
+        run: |
+          set -o pipefail
+          sleep 5
+          sudo launchctl print system/dev.cermet.cermetd 2>&1 | tee /tmp/logs/launchd.txt | grep "state = " || true
+          grep -q "state = running" /tmp/logs/launchd.txt
+          test -S /var/cermetd/ctl.sock
+          sudo -i -u runner cermet check 2>&1 | tee /tmp/logs/check.log
+      - name: First-install output honesty
+        # A machine that has never seen Cermet has no survivors to report. An
+        # installer that claims "N agent client(s) survived this install" on a
+        # virgin box is naming its own process tree — the false-positive class a
+        # green step's log would otherwise bury.
+        run: |
+          ! grep -n "survived this install" /tmp/logs/setup.log
+      - name: Crash-loop signature (diagnostics on failure only)
+        if: failure()
+        # A launchd child that dies PRE-EXEC never writes its log — the absence of
+        # /var/log/cermetd.log separates that failure from a daemon that started
+        # and then refused (which leaves its refusal text behind).
+        run: |
+          sudo launchctl print system/dev.cermet.cermetd 2>&1 | sudo tee -a /tmp/logs/launchd.txt || true
+          if [ -f /var/log/cermetd.log ]; then
+            echo "daemon log EXISTS — the daemon started and then failed:"
+            sudo tail -50 /var/log/cermetd.log | sudo tee /tmp/logs/cermetd-tail.log
+          else
+            echo "daemon log ABSENT — launchd child died pre-exec (crash-loop signature)"
+          fi
+      - name: Checksums
+        run: cd dist/out && shasum -a 256 cermet_*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-artifacts
+          path: dist/out/cermet_*_darwin_arm64.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-macos
+          path: /tmp/logs/
+
+  # On a v* TAG only: assemble both platforms' artifacts, generate the unified
+  # SHA256SUMS, and create a DRAFT release carrying them. The draft requires every
+  # check job green — a red suite or a dead virgin-box daemon blocks the artifacts
+  # from ever reaching a release. Publishing the draft stays a human act, and the
+  # bytes published are the bytes the virgin runners just built, tested, installed,
+  # and served.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos-suite, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-artifacts"
+          merge-multiple: true
+          path: out
+      - name: Unified SHA256SUMS
+        run: |
+          cd out
+          sha256sum cermet_* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Draft release with artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "cermet $tag" \
+            --notes "Draft assembled by release-check run ${{ github.run_number }} from the artifacts built, tested, and cold-installed on virgin runners at ${GITHUB_SHA}." \
+            out/cermet_* out/SHA256SUMS
+
+  # Publish the run's evidence where a git fetch can read it: log tails to the
+  # `ci-reports` branch. This branch is CI-owned bookkeeping, not product history
+  # — an orphan line that never merges anywhere.
+  report:
+    needs: [linux, macos-suite, macos]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: logs-*
+          path: collected
+      - name: Compose and publish the run report
+        run: |
+          set -e
+          mkdir -p /tmp/report
+          out="/tmp/report/run-${{ github.run_number }}-${{ github.run_id }}.md"
+          {
+            echo "# release-check run ${{ github.run_number }} (id ${{ github.run_id }}) @ ${GITHUB_SHA}"
+            echo
+            if [ -d collected ]; then
+              find collected -type f | sort | while read -r f; do
+                echo "## ${f#collected/}"
+                echo '```'
+                tail -n 300 "$f"
+                echo '```'
+                echo
+              done
+            else
+              echo "(no log artifacts were produced)"
+            fi
+          } > "$out"
+          git config user.name "release-check"
+          git config user.email "ci@cermet.dev"
+          if git fetch origin ci-reports 2>/dev/null; then
+            git checkout -B ci-reports origin/ci-reports
+          else
+            git checkout --orphan ci-reports
+            git rm -rf --quiet . || true
+          fi
+          mkdir -p reports
+          cp "$out" reports/
+          cp "$out" reports/latest.md
+          git add reports
+          git commit -m "release-check report: run ${{ github.run_number }} @ ${GITHUB_SHA}"
+          git push origin ci-reports

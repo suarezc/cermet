@@ -1,0 +1,34 @@
+[package]
+name = "cermet-broker-actor"
+description = "The daemon-neutral broker actor: ONE OS thread owns the !Sync cermet-core Broker behind an mpsc command queue. Shared by the daemon and its embedding hosts. Replies carry the typed cermet_core::Error; the transport maps it at its own seam."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "cermet_broker_actor"
+path = "src/lib.rs"
+
+[dependencies]
+cermet-core = { path = "../cermet-core" }
+# The daemon-neutral, key-free core: the shared `host_lock` primitive + the `Reply` type, re-exported
+# from this crate so existing `cermet_broker_actor::{host_lock, Reply}` paths keep resolving.
+cermet-broker-core = { path = "../cermet-broker-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Zeroizing wrapper for the inbound connect token: the raw token is wiped from the host
+# heap on drop and is exposed only at the AES-GCM encryption boundary inside the core.
+secrecy = "0.8"
+
+[features]
+default = []
+semantic-test = ["cermet-core/test-double"]
+
+[dev-dependencies]
+# `test-double`: the `smoke` test spawns a real broker over the offline mock providers.
+cermet-core = { path = "../cermet-core", features = ["test-double"] }
+# The `smoke` test spawns a real broker against a throwaway CERMET_HOME.
+tempfile = "3"

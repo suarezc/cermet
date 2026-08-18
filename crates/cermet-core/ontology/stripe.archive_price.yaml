@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: archive_price
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 86c04b3d39909b9cc4d5326524cd4cd0aecfb9e4c92a76ea70ad9ae7fb35d284
+semantics:
+  resource_family: price
+  provider_operation: price_archive
+  risk_class: data_lifecycle_change
+  sensitivity: public_metadata
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Archive one exact price by setting only active false, with returned inactive evidence and no delete operation.
+  cautions:
+    - Amount, currency options, tax behavior, nickname, lookup key, and transfer behavior cannot be changed through this verb.
+    - The LIKELY native ceiling is RAK Prices Write or App plan_write; sandbox proof remains deferred.
+sources:
+  - STRIPE-PRICE-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

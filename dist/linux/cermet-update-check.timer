@@ -1,0 +1,26 @@
+# cermet-update-check.timer — fires the daily update check.
+#
+# Daily, with a wide randomized delay so every Cermet install on earth does not knock on
+# GitHub's door at the same second. Persistent=true so a box that was off at the scheduled hour
+# catches up on the next boot rather than silently skipping — which matters here, because the whole
+# point is that a box learns about a security release without anyone remembering to look.
+#
+# What it drives NEVER INSTALLS ANYTHING: it records a local notice, which `cermet` prints as one
+# line and `cermet check` shows as a row, and applying an update stays `cermet update` with a human
+# and a sudo password. See cermet-update-check.service.
+#
+# Stopping the scheduled contact entirely takes one command and no root:
+# `cermet update --daily off`.
+
+[Unit]
+Description=Daily Cermet update check
+Documentation=file:///usr/share/cermet/docs/QUICKSTART.md
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=12h
+Persistent=true
+Unit=cermet-update-check.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,30 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: retry_invoice_payment
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 30cabd3639d893bfc7cc3872fa4f1b31738b14d6ecbd05bf57448f002ee5b85c
+semantics:
+  resource_family: invoice
+  provider_operation: retry_collection
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Retry one funds_collect invoice payment for its exact remaining amount using one exact customer-owned PaymentMethod.
+  cautions:
+    - Evidence resolves positive amount_remaining and proves the exact PaymentMethod belongs to the exact open invoice customer.
+    - on_behalf_of and transfer_data must be absent; payment_settings may contain only the pinned inert Dahlia defaults before mint and mutation.
+    - forgive and paid_out_of_band are false and off_session is true; no configured or default method is used.
+    - Raw success proof requires the exact invoice, customer, currency, and mode, paid status, amount_remaining zero, and typed amount_paid/attempt_count fields.
+    - Refund, credit, forgiveness, and out-of-band marking are separate actions and are not implied.
+    - Sandbox proof must confirm invoice/pay restricted-key access, safe payment_settings shape, and PaymentMethod ownership fields.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-INVOICE-RETRIEVE
+  - STRIPE-PAYMENT-METHOD-RETRIEVE
+  - STRIPE-INVOICE-PAY
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

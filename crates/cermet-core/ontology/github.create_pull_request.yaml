@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: create_pull_request
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 16a60fbbc3b7dfd9f0baa0a72133179ddc71d672e411334f0ece714e223c6e58
+semantics:
+  resource_family: pull_request
+  provider_operation: pull_request_create_draft
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Open one draft pull request from an exact head branch address into an exact base branch; title and body are request-time free_payload frozen before approval.
+  cautions:
+    - Base and head are mutable same-repository branch names, not OIDs; the git_branch_name admission format rejects cross-repository user:branch syntax, and this endpoint offers no CAS.
+    - The request fixes draft true and the terminal expect_literal requires the response to report draft true; fork and maintainer controls are absent.
+    - Each request can create a distinct PR; a duplicate or invalid base/head refusal fails closed and retry requires a new grant.
+    - No ready-for-review, approval, request-changes, or merge consequence is present or implied.
+sources:
+  - GH-REST-PULL-REQUESTS
+  - GH-REST-BEST-PRACTICES

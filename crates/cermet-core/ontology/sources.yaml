@@ -1,0 +1,176 @@
+schema: cermet.grounded-ontology-sources/v1
+sources:
+  - id: GH-REST-API-VERSIONS
+    url: https://docs.github.com/en/rest/about-the-rest-api/api-versions
+    rechecked_at: '2026-07-19'
+  - id: GH-APP-INSTALLATION-ACCESS-TOKEN
+    url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+    rechecked_at: '2026-07-19'
+  - id: GH-PERSONAL-ACCESS-TOKENS
+    url: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+    rechecked_at: '2026-07-19'
+  - id: GH-ACTIONS-AUTOMATIC-TOKEN
+    url: https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication
+    rechecked_at: '2026-07-19'
+  - id: GH-GRAPHQL-CREATE-COMMIT
+    url: https://docs.github.com/en/graphql/reference/mutations#createcommitonbranch
+    rechecked_at: '2026-07-19'
+  - id: GH-GIT-HTTPS-REMOTES
+    url: https://docs.github.com/en/get-started/git-basics/about-remote-repositories
+    rechecked_at: '2026-07-29'
+  - id: GH-REST-REPOSITORY-CONTENTS
+    url: https://docs.github.com/en/rest/repos/contents
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-GIT-REFERENCES
+    url: https://docs.github.com/en/rest/git/refs
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-GIT-COMMITS
+    url: https://docs.github.com/en/rest/git/commits
+    rechecked_at: '2026-07-28'
+  - id: GH-REST-GIT-TREES
+    url: https://docs.github.com/en/rest/git/trees
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-GIT-BLOBS
+    url: https://docs.github.com/en/rest/git/blobs
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-ISSUES
+    url: https://docs.github.com/en/rest/issues
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-PULL-REQUESTS
+    url: https://docs.github.com/en/rest/pulls
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-PULL-REQUEST-REVIEWS
+    url: https://docs.github.com/en/rest/pulls/reviews
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-WORKFLOW-RUNS
+    url: https://docs.github.com/en/rest/actions/workflow-runs
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-WORKFLOWS
+    url: https://docs.github.com/en/rest/actions/workflows
+    rechecked_at: '2026-08-17'
+  - id: GH-REST-WORKFLOW-JOBS
+    url: https://docs.github.com/en/rest/actions/workflow-jobs
+    rechecked_at: '2026-08-17'
+  - id: GH-REST-DEPLOYMENTS
+    url: https://docs.github.com/en/rest/deployments/deployments
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-SECRET-SCANNING
+    url: https://docs.github.com/en/rest/secret-scanning/secret-scanning
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-ACTIONS-SECRETS
+    url: https://docs.github.com/en/rest/actions/secrets
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-REPOSITORY-RULES
+    url: https://docs.github.com/en/rest/repos/rules
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-DEPLOYMENT-ENVIRONMENTS
+    url: https://docs.github.com/en/rest/deployments/environments
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-BEST-PRACTICES
+    url: https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api
+    rechecked_at: '2026-07-19'
+  - id: GH-REST-PAGINATION
+    url: https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
+    rechecked_at: '2026-07-19'
+  - id: STRIPE-INVOICE-RETRIEVE
+    url: https://docs.stripe.com/api/invoices/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-INVOICE-LIST
+    url: https://docs.stripe.com/api/invoices/list
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-INTENT-RETRIEVE
+    url: https://docs.stripe.com/api/payment_intents/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-DISPUTE-RETRIEVE
+    url: https://docs.stripe.com/api/disputes/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-DISPUTE-UPDATE
+    url: https://docs.stripe.com/api/disputes/update
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-WEBHOOK-UPDATE
+    url: https://docs.stripe.com/api/webhook_endpoints/update
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PRODUCT-RETRIEVE
+    url: https://docs.stripe.com/api/products/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PRICE-RETRIEVE
+    url: https://docs.stripe.com/api/prices/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PRICE-LIST
+    url: https://docs.stripe.com/api/prices/list
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-SUBSCRIPTION-UPDATE
+    url: https://docs.stripe.com/api/subscriptions/update
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-INVOICE-MARK-UNCOLLECTIBLE
+    url: https://docs.stripe.com/api/invoices/mark_uncollectible
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-CREDIT-NOTE-CREATE
+    url: https://docs.stripe.com/api/credit_notes/create
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-CREDIT-NOTE-GUIDE
+    url: https://docs.stripe.com/billing/invoices/credit-notes#voiding
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-CREDIT-NOTE-VOID
+    url: https://docs.stripe.com/api/credit_notes/void
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PRODUCT-UPDATE
+    url: https://docs.stripe.com/api/products/update
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PRICE-UPDATE
+    url: https://docs.stripe.com/api/prices/update
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-RESTRICTED-KEYS
+    url: https://docs.stripe.com/keys/restricted-api-keys
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-APP-PERMISSIONS
+    url: https://docs.stripe.com/stripe-apps/reference/permissions
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-ACCOUNT-RETRIEVE
+    url: https://docs.stripe.com/api/accounts/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-BALANCE-RETRIEVE
+    url: https://docs.stripe.com/api/balance/balance_retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-CHARGE-RETRIEVE
+    url: https://docs.stripe.com/api/charges/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-CUSTOMER-RETRIEVE
+    url: https://docs.stripe.com/api/customers/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-EXTERNAL-ACCOUNT-RETRIEVE
+    url: https://docs.stripe.com/api/external_account_bank_accounts/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-INVOICE-PAY
+    url: https://docs.stripe.com/api/invoices/pay
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-INTENT-CREATE
+    url: https://docs.stripe.com/api/payment_intents/create
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-INTENT-CONFIRM
+    url: https://docs.stripe.com/api/payment_intents/confirm
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-INTENT-CAPTURE
+    url: https://docs.stripe.com/api/payment_intents/capture
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-INTENT-CANCEL
+    url: https://docs.stripe.com/api/payment_intents/cancel
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYMENT-METHOD-RETRIEVE
+    url: https://docs.stripe.com/api/payment_methods/retrieve
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-REFUND-CREATE
+    url: https://docs.stripe.com/api/refunds/create
+    rechecked_at: '2026-07-23'
+  - id: STRIPE-PAYOUT-CREATE
+    url: https://docs.stripe.com/api/payouts/create
+    rechecked_at: '2026-07-23'
+  - id: VERCEL-API-CREATE-DEPLOYMENT
+    url: https://vercel.com/docs/rest-api/reference/endpoints/deployments/create-a-new-deployment
+    rechecked_at: '2026-07-29'
+  - id: VERCEL-API-LIST-PROJECTS
+    url: https://vercel.com/docs/rest-api/reference/endpoints/projects/retrieve-a-list-of-projects
+    rechecked_at: '2026-07-30'
+  - id: VERCEL-CLI-GLOBAL-OPTIONS
+    url: https://vercel.com/docs/cli/global-options
+    rechecked_at: '2026-07-29'

@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: get_dispute_summary
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 51f217c3d66d731f4a2d25e745c12725cf3fbe743838be633e0ade6344af1773
+semantics:
+  resource_family: dispute
+  provider_operation: dispute_retrieve_summary
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Retrieve one exact dispute's amount, reason, lifecycle state, linked payment IDs, and evidence-status counters without returning submitted evidence.
+  cautions:
+    - Full evidence and balance transactions are omitted; evidence_details contributes only due date, booleans, and submission count.
+    - Narrow keep, retention none, and status-only errors prevent evidence or provider failure text from leaving execution.
+    - The LIKELY native ceiling is RAK Disputes Read or App dispute_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-DISPUTE-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

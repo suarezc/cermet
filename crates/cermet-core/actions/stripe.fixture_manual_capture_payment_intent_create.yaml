@@ -1,0 +1,58 @@
+# Create one unconfirmed automatic PaymentIntent plus one exact confirmed manual-capture
+# PaymentIntent. Both use the same descriptor-bounded amount and frozen relationship.
+provider: stripe
+action: fixture_manual_capture_payment_intent_create
+fields:
+  - { name: account,        type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer,       type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: payment_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount,         type: int, required: true, class: side_effect, binding: bounded, max_int: 100 }
+  - { name: currency,       type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [account, customer, payment_method, amount, currency]
+execution_targets: [account, customer, payment_method, currency]
+http:
+  steps:
+    - id: bind_account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      expect_eq: { id: account }
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      expect_literal: { object: balance, livemode: false }
+    - id: create_unconfirmed
+      method: POST
+      path: /v1/payment_intents
+      body_encoding: form
+      body:
+        amount: "{amount}"
+        currency: "{currency}"
+        customer: "{customer}"
+        payment_method: "{payment_method}"
+        confirm: false
+        description: "Cermet confirmation fixture"
+      success_statuses: [200]
+      require: [id, object, amount, currency, customer, payment_method, capture_method, confirmation_method, status, livemode]
+      capture: { confirmation_payment_intent: "$.id" }
+    - id: create_manual
+      method: POST
+      path: /v1/payment_intents
+      body_encoding: form
+      body:
+        amount: "{amount}"
+        currency: "{currency}"
+        customer: "{customer}"
+        payment_method: "{payment_method}"
+        capture_method: manual
+        payment_method_types: [card]
+        confirm: true
+        off_session: true
+        error_on_requires_action: true
+        description: "Cermet manual capture fixture"
+      success_statuses: [200]
+      require: [id, object, amount, amount_capturable, currency, customer, payment_method, capture_method, status, livemode]
+      expect_eq: { currency: currency, customer: customer, payment_method: payment_method }
+      expect_literal: { object: payment_intent, capture_method: manual, status: requires_capture, livemode: false }
+      result_captures: { confirmation_payment_intent: confirmation_payment_intent }

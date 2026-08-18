@@ -1,0 +1,106 @@
+# Vendored immutable sentence sets.
+providers:
+  stripe:
+    read:
+      members:
+        - search_customers
+        - lookup_customer
+        - list_charges
+        - get_charge
+        - list_refunds
+        - get_subscription
+      history:
+        pre_m4:
+          members:
+            - search_customers
+            - lookup_customer
+            - list_charges
+            - get_charge
+            - list_refunds
+            - get_subscription
+    mutate:
+      members:
+        - refund
+        - credit_balance
+        - pause_subscription
+        - cancel_subscription
+      history:
+        pre_m4:
+          members:
+            - refund
+            - credit_balance
+            - pause_subscription
+            - cancel_subscription
+    support:
+      include: [read, mutate]
+      history:
+        pre_m4:
+          members:
+            - search_customers
+            - lookup_customer
+            - list_charges
+            - get_charge
+            - list_refunds
+            - get_subscription
+            - refund
+            - credit_balance
+            - pause_subscription
+            - cancel_subscription
+    support_lookup:
+      members:
+        - search_customers
+        - lookup_customer
+        - list_charges
+        - get_charge
+        - list_refunds
+        - get_subscription
+        - get_invoice
+        - list_invoices_for_customer
+        - get_payment_intent
+        - get_dispute_summary
+    billing_support:
+      members:
+        - get_subscription
+        - get_invoice
+        - list_invoices_for_customer
+        - pause_subscription
+        - resume_subscription_collection
+        - cancel_subscription_at_period_end
+    catalog_admin:
+      members:
+        - get_product
+        - get_price
+        - list_active_prices
+        - archive_product
+        - archive_price
+    dispute_ops:
+      members:
+        - get_dispute_summary
+        - stage_dispute_evidence
+        - submit_dispute_evidence
+    webhook_admin:
+      members:
+        - update_webhook_endpoint_fixed_bundle
+    # Money collection transitions only. Reads, create-and-confirm compounds, client-secret/bearer
+    # delivery, platform routing, future-use setup, and default payment methods are excluded.
+    charge_ops:
+      members:
+        - create_payment_intent_off_session
+        - confirm_payment_intent
+        - capture_payment_intent
+        - cancel_payment_intent
+        - retry_invoice_payment
+    # Existing useful charge/refund reads plus only the account-aware bounded refund. The legacy
+    # stripe.refund wedge remains separately requestable but is deliberately not promoted here.
+    # Transfer reversal, application-fee refund, fraud marking, and an unshipped get-refund read are
+    # excluded.
+    refund_ops:
+      members:
+        - get_charge
+        - list_refunds
+        - refund_charge_bounded
+    # No payout read is shipped, so this set contains only the exact standard-payout mutation.
+    # Instant/default-destination payout, transfer/top-up, and external-account mutation are excluded.
+    payout_ops:
+      members:
+        - create_standard_payout

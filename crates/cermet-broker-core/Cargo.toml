@@ -1,0 +1,23 @@
+[package]
+name = "cermet-broker-core"
+description = "Daemon-neutral broker CORE: the shared single-writer host-lock primitive (advisory flock + O_NOFOLLOW / geteuid hardening) and the `Reply` view/error type. Holds NO master key and opens NO vault, so a keyless production client can depend on it WITHOUT pulling in the in-process, key-loading broker actor. The key-bearing `spawn`/`BrokerHandle` live one layer up in cermet-broker-actor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "cermet_broker_core"
+path = "src/lib.rs"
+
+[dependencies]
+cermet-lang = { path = "../cermet-lang" }
+# The shared single-writer host-lock primitive (host_lock.rs): advisory flock + the O_NOFOLLOW /
+# geteuid hardening shared by the keyless clients and cermet-daemon.
+fs2 = "0.4"
+nix = "0.26.4"
+
+[dev-dependencies]
+# host_lock's tests take out real locks in a scratch dir.
+tempfile = "3"

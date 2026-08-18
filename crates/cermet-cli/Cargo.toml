@@ -1,0 +1,83 @@
+[package]
+name = "cermet-cli"
+description = "cermet-cli — the human OPERATOR CLI role of the one shipped `cermet` binary (composed by `cermet-bin`), a keyless ctl.sock client of the cermetd-hosted broker. Thirteen commands: `catalog`, `run` (decide and execute one capability), `log`, `artifact`, `audit-verify`, `check`, the `rules` and `doc` authority nouns, `owner`, `connect`, `setup`, `update`, and `mcp`. Everything runs through the SHARED CtlBrokerClient (no master key, no vault); authority mutations are gated by the client-side human-presence check. Grants are single-use; no secret is ever printed."
+autobins = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "cermet_cli"
+path = "src/lib.rs"
+
+[features]
+# TEST-ONLY, OFF by default: selects the `TestPresence` client gate (see cermet-ctl-client) so
+# unattended rehearsals can run the human-only ceremony without a live password/Touch-ID prompt.
+# The default production build never enables this — the shipped binary keeps its PAM/Touch-ID gate.
+# Even with this feature, a bypass requires `CERMET_TEST_PRESENCE=1` set per-invocation.
+test-presence = ["cermet-ctl-client/test-presence"]
+
+[dependencies]
+# The SHARED keyless ctl.sock client + presence gate.
+cermet-ctl-client = { path = "../cermet-ctl-client" }
+# The one Rust owner of provider token env-var NAMES — `connect` discovery walks it in order.
+cermet-broker-core = { path = "../cermet-broker-core" }
+# `ArtifactRange` for the `artifact --range` read.
+cermet-ipc = { path = "../cermet-ipc" }
+# The typed `Error` carried on a broker `Reply` (for CLI error rendering / exit codes).
+cermet-lang = { path = "../cermet-lang" }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+# The operator's own one-key settings file (the daily update check's switch, which `cermet setup`
+# records). Read and written unprivileged; the daemon never sees it.
+toml = "0.8"
+# A current-thread runtime: the CLI is a one-shot process driving the async ctl client.
+tokio = { version = "1", features = ["rt", "macros"] }
+# Server-minted throwaway session id for the operator `request` (the CLI supplies none).
+rand = "0.8"
+# Exact repository-file preimages for guarded CERMET.md replacement, and the sha256 `cermet update`
+# verifies a download against.
+sha2 = "0.10"
+# `cermet update` fetches the origin's manifest and artifact. Blocking + rustls, the SAME crate,
+# version, and TLS backend cermet-core already links — a crate edge, not a new dependency. The
+# fetch is credential-free and daemon-free: it has the trust of the `curl` an operator would
+# otherwise type.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# O_NOFOLLOW for the draft-write path (never follow a symlink swapped in after the guard);
+# also termios ECHO-off for the no-echo secret prompt in `connect`.
+libc = "0.2"
+# `connect` never lets a raw provider token spill: it is held in `SecretString` (redacted `Debug`,
+# zeroized on drop) from discovery/capture to the vault handoff, and never printed.
+secrecy = "0.8"
+# Deserialize derive for the small CLI-local view structs (connect outcome, credential rows).
+serde = { version = "1", features = ["derive"] }
+thiserror = { workspace = true }
+# The credential-shape chokepoint on the vocabulary-request capture core (the token-pattern set
+# shared with the live verb tests). Already a workspace dependency via cermet-core.
+regex = "1"
+# RFC3339 receipt timestamps.
+time = { version = "0.3", features = ["formatting", "parsing"] }
+# `user`: geteuid() for the sentence ceremony's owner check. `fs`: bounded flock on the ceremony lock.
+nix = { version = "0.26.4", features = ["user", "fs"] }
+
+[dev-dependencies]
+# The integration harness stands up a REAL dev-mode cermetd broker behind a ctl.sock and drives the
+# CLI dispatch layer over it (the real path, never an in-process double). These are the SAME
+# dev-deps the ctl integration fixtures use.
+cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress"] }
+cermet-broker-actor = { path = "../cermet-broker-actor", features = ["semantic-test"] }
+cermet-daemon = { path = "../cermet-daemon" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time"] }
+tempfile = "3"
+secrecy = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# `user`: getuid() so the fixture's ctl approver_uid matches the test's own peer uid.
+nix = { version = "0.26.4", features = ["user", "fs"] }
+wiremock = "0.6"
+serde_urlencoded = "0.7"
+# Read state.db directly in the moved agent-socket integration test to fetch the operator-internal
+# grant_id for its out-of-band human approval.
+rusqlite = { version = "0.31", features = ["bundled"] }

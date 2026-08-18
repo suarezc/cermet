@@ -1,0 +1,169 @@
+# cermetd — Cermet's separate-uid capability-broker daemon (Linux/systemd).
+#
+# This unit is the load-bearing OS boundary: cermetd runs as the dedicated non-login `cermet` uid,
+# separate from the human approver's. vault.db / state.db / audit.db live under /var/lib/cermetd
+# (0700 cermet:cermet), and an agent under ANOTHER uid gets EACCES on all of them. WHERE the master
+# key itself lives depends on the custody rung this box is on — see the master-key section below;
+# `cermet check` reports it, and so does the last line of `cermet setup`.
+#
+# Install with `sudo cermet setup`, then `systemctl enable --now cermetd`.
+
+[Unit]
+Description=Cermet capability-broker daemon (cermetd)
+Documentation=https://github.com/cermet/cermet
+After=network-online.target
+Wants=network-online.target
+# The credential-transport preflight. systemd delivers a sealed vault key by MOVING a
+# mount onto /run/credentials/cermetd.service, which PID 1 only sees when /run has SHARED
+# propagation — true on every host, frequently false in a container. Requires= (not Wants=) because
+# a preflight that REFUSED has diagnosed an environment that cannot carry that delivery: a box whose
+# declared rung IS sealed must then not start at all, rather than crash-loop on a filesystem error.
+# The preflight is condition-skipped on a host, and on any box with no sealed blob at all
+# (file-protected); a skipped condition satisfies Requires=, so cermetd starts normally.
+Requires=cermet-credential-env.service
+After=cermet-credential-env.service
+# Rate-limit the Restart= loop below (these keys live in [Unit], not [Service] — systemd
+# warns and IGNORES them there, which silently disables the crash-loop brake).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# --- Identity: run as the dedicated, non-login service user ----------------------------
+# The daemon owns the vault and is the only component that ever holds a plaintext credential. Its
+# own uid is what keeps every other uid out of vault.db — the kernel, not policy.
+User=cermet
+Group=cermet
+
+# DELIBERATELY OMITTED: SupplementaryGroups=cermet-approvers
+#
+# The human approver is a SEPARATE uid that IS in cermet-approvers, and reaching ctl.sock requires
+# that membership. The daemon must NEVER be in that group: its own uid would then satisfy the
+# approver check and the split that makes approvals human-only would collapse. The installer
+# asserts this and fails loudly. Do not add this line.
+
+# ONE-BINARY: `cermetd` is a root-owned RELATIVE SYMLINK to /usr/local/bin/cermet, the single
+# executable this project ships. The path is unchanged and stays load-bearing for legibility — it is
+# what `systemctl status`, a process listing, and the journal name — and it is what selects the
+# daemon role in that binary's dispatch table. It is NOT a privilege boundary: systemd picks the uid
+# above BEFORE exec, and normal symlink resolution does not change that choice.
+ExecStart=/usr/local/bin/cermetd
+
+# --- Environment -----------------------------------------------------------------------
+# CERMET_HOME points at the state dir holding the three DBs. Whether the master key is a file under
+# it depends on this box's custody rung (see the master-key section below): on the SEALED rungs it
+# is not — the key arrives decrypted at $CREDENTIALS_DIRECTORY/cermet.key via
+# LoadCredentialEncrypted= — while on `file-protected` it IS a file here, cermet-owned 0600, which
+# is that rung's whole mechanism and its stated limitation.
+Environment=CERMET_HOME=/var/lib/cermetd
+#
+# CERMET_SERVICE_MODE=1 is the EXPLICIT service-mode signal: signalled by the launch context, NEVER
+# inferred from a config field. With it set the daemon asserts, before serving, that
+# config.service_uid == getuid() and approver_uid != getuid(), both nonzero — else it refuses.
+Environment=CERMET_SERVICE_MODE=1
+#
+# DO NOT set any CERMET_*_BASE_URL here. Provider origins are hardcoded in the core; a base-url
+# override is an egress-redirect surface and is compiled out of the shipped daemon. It exists only
+# in a `test-egress` build of `cermet-core`, which `dev/e2e` uses to aim a real daemon at its local
+# fixture server. `cermet setup` refuses to install any binary that LINKS such a core: the marker it
+# scans for is emitted by cermet-core ITSELF, so a build that acquired the feature through cargo's
+# dev-dependency unification is caught exactly like one that asked for it by name.
+
+# --- Master key: the declared custody rung ---------------------------------------------
+# WHICH mechanism holds this box's vault key is a DECLARED setting, `custody_profile` in
+# /etc/cermetd/config.toml, chosen by `cermet setup` as the strongest rung this machine can carry.
+# There are three:
+#
+#   systemd-tpm2+host — a systemd encrypted credential sealed with --with-key=host+tpm2. The
+#                       encrypted vault key is bound to this OS installation AND this box's TPM2
+#                       device, so a disk image alone does not yield it.
+#   systemd-host      — the same delivery, sealed with --with-key=host. No Cermet-owned file holds
+#                       the plaintext key, but systemd's host secret
+#                       (/var/lib/systemd/credential.secret) is an ordinary file on this same
+#                       filesystem, so a full host image can carry both halves. This is NOT
+#                       snapshot protection, and nothing here claims it is.
+#   file-protected    — no credential at all: a cermet-owned 0600 /var/lib/cermetd/master.key,
+#                       protected by the separate-uid boundary like the DBs. Taken when systemd
+#                       credential delivery cannot work on this box.
+#
+# The line below is what delivers the SEALED rungs. The credential is named WITHOUT a path on
+# purpose: systemd then looks it up in its own credential store (/etc/credstore.encrypted/cermet.key,
+# root:root 0600), and — per systemd.exec(5) — a missing credential in that form is NOT fatal. That
+# is what lets ONE unit serve all three rungs with no drop-in and no conditional wiring: a sealed box
+# has the blob and gets it delivered; a file-protected box has no blob and starts normally. Spelled
+# with an absolute path instead, a file-protected box would fail 243/CREDENTIALS forever.
+#
+# When a credential IS delivered it lands at $CREDENTIALS_DIRECTORY/cermet.key — service-scoped,
+# 0400, owned by THIS uid, gone when the unit stops. $CREDENTIALS_DIRECTORY is exempt from the
+# ProtectSystem/ProtectHome/PrivateTmp hardening below, so every Protect*/Restrict* directive here
+# stays in force.
+#
+# THE GUARANTEE ON THE SEALED RUNGS, stated precisely: the daemon uid never receives the host/TPM
+# unsealing material. systemd's privileged activation path decrypts the vault key and passes only
+# that service credential to cermetd. (Not "the unseal secret stays with PID 1" — activation may
+# involve privileged helpers; what is durable is which material the DAEMON uid can and cannot
+# reach.) It does NOT apply to file-protected, which states its own contract: the daemon uid owns
+# the key file at rest, and the rung does not protect the vault key from disk snapshots or backups.
+#
+# The credential NAME (cermet.key) is a byte-for-byte contract with `cermet setup` and the daemon's
+# key reader. Do not rename it in one place only.
+LoadCredentialEncrypted=cermet.key
+
+# --- Filesystem: runtime + state dirs --------------------------------------------------
+# DELIBERATELY OMITTED: RuntimeDirectory=cermetd / RuntimeDirectoryMode=0700.
+#
+# /run/cermetd is provisioned by dist/linux/cermetd.tmpfiles as `d /run/cermetd 2711 cermet
+# cermet-approvers -`, NOT by systemd here. The dir is setgid and group-owned by cermet-approvers,
+# so sockets bound there INHERIT that group with no daemon chgrp (the daemon is not in the group and
+# a chgrp would EPERM). RuntimeDirectory=0700 would create it `cermet`-grouped 0700 and break the
+# cross-uid ctl.sock ACL — hence the tmpfiles rule instead. agent.sock lives in the SEPARATE
+# /run/cermetd-agents (2711 cermet:cermet-agents). The kernel-attested SO_PEERCRED uid check is the
+# actual boundary; the modes/groups are defense-in-depth.
+StateDirectory=cermetd
+StateDirectoryMode=0700
+
+# --- Sandboxing: typical, conventional systemd hardening -------------------------------
+NoNewPrivileges=yes
+# The release binary aborts on panic (broken invariant -> die fail-closed). An aborting daemon
+# may hold the opened master key and a decrypted credential in memory; a core would carry them
+# into /var/lib/systemd/coredump where backup tooling or a bug-report attachment can leak it
+# (accidental disclosure). No core, ever.
+LimitCORE=0
+ProtectSystem=strict
+# ProtectSystem=strict remounts /etc read-only, but the daemon regenerates the sentence-authority
+# PROJECTION (/etc/cermetd/sentences/rules.cermet) on every authority commit. Punch exactly that dir
+# back to read-write; the rest of /etc stays protected. The projection is a rebuildable artifact,
+# never authority, so a writable projection dir widens no trust boundary.
+ReadWritePaths=/etc/cermetd/sentences
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+# AF_UNIX for the local sockets; AF_INET/AF_INET6 for the provider HTTPS calls.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+UMask=0077
+
+# --- Restart policy --------------------------------------------------------------------
+# Fail-closed: on a crash, come back, but rate-limit so a crash loop can't hammer the box
+# (the StartLimit* rate-limit keys are in [Unit] above).
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

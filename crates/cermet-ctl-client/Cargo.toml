@@ -1,0 +1,58 @@
+[package]
+name = "cermet-ctl-client"
+description = "The keyless ctl.sock client + client-side human-presence gate, shared by every operator surface, including cermet-cli (the operator CLI). Holds NO master key and opens NO vault: it is the client half of the keyholder split (the daemon uid owns the vault), so every operator surface names ONE CtlBrokerClient + one Presence."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+name = "cermet_ctl_client"
+path = "src/lib.rs"
+
+[features]
+# TEST-ONLY, OFF by default: compiles the `TestPresence` backend (presence.rs) so unattended
+# rehearsals can run the human-only ceremony without a live password/Touch-ID prompt. The default
+# production build never enables this, so the shipped binary contains ZERO bypass code. Even a
+# build WITH this feature stays inert unless `CERMET_TEST_PRESENCE=1` is set per-invocation.
+test-presence = []
+
+[dependencies]
+# The neutral `Reply` view/error type (Result<String, cermet_core::Error>) — the SAME type the
+# key-bearing actor and the daemon ctl dispatch name; keyless, no vault.
+cermet-broker-core = { path = "../cermet-broker-core" }
+cermet-lang = { path = "../cermet-lang" }
+# The keyless ctl.sock transport (CtlRequest envelope + codec + peercred).
+cermet-ipc = { path = "../cermet-ipc" }
+# `net` + `time`: the async connect-per-call ctl transport under an absolute deadline.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Zeroizing wrapper for serialized ctl frame bodies that can temporarily carry provider tokens
+# and the inbound connect token.
+secrecy = "0.8"
+zeroize = "1"
+
+# Linux operator-path presence: a hardened PAM password re-auth of the invoking approver.
+# PAM is loaded at RUNTIME via `dlopen("libpam.so.0")` (libc) so there is NO link-time
+# dependency on `libpam.so`/`libpam0g-dev` — the daemon never links PAM (only this client does), and
+# `nix` (user) derives PAM_USER from geteuid().
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+nix = { version = "0.26.4", features = ["user", "term"] }
+
+# macOS Touch-ID (LAContext) for the presence gate. Compiled only on macOS; everywhere else presence
+# is fail-closed.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-local-authentication = "0.3"
+block2 = "0.6"
+
+[dev-dependencies]
+# The broker_client transport/decode tests stand up stub ctl sockets and drive the real client.
+serde_json = { workspace = true }
+tempfile = "3"
+# `user`: getuid() for the same-uid keyholder identity the stub sockets bind under.
+nix = { version = "0.26.4", features = ["user"] }

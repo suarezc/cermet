@@ -1,0 +1,29 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: refund_charge_bounded
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 8f4f39c96a4f7c6f2210b34ee28afcdfc5fe2e1766a46a64368d8e398074bfc1
+semantics:
+  resource_family: refund
+  provider_operation: refund_charge_bounded
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: irreversible
+  completion: asynchronous
+  idempotency: idempotent
+review:
+  summary: Create one cash_refund for a bounded amount against an exact charge in its resolved account, mode, and currency.
+  cautions:
+    - The agent supplies charge and positive amount only; account, mode, and currency come from authenticated provider evidence.
+    - Evidence and the fresh precondition require a paid charge and one exact sufficient refundable remainder.
+    - The request has no currency, reason, fraud marking, transfer reversal, or application-fee refund channel.
+    - Raw success proof requires one refund object with exact charge, amount, currency, and pending or succeeded status; mode stays bound by authenticated evidence.
+    - The legacy stripe.refund wedge remains a separate verb and is deliberately excluded from stripe.refund_ops.
+    - Sandbox proof must confirm charge ownership fields, refund livemode/status shape, and the restricted-key Charges and Refunds ceiling.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-CHARGE-RETRIEVE
+  - STRIPE-REFUND-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

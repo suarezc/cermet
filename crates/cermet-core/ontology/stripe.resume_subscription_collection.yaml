@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: resume_subscription_collection
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 05fb54e63b1b60e779e2bbcd219e0fef7ffed327597926ed8fd9e302363b147a
+semantics:
+  resource_family: subscription
+  provider_operation: subscription_resume_collection
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Resume invoice collection for one exact subscription by sending only Stripe's empty pause_collection clear operation.
+  cautions:
+    - The form wire must be exactly pause_collection=; no pause behavior, resumption date, pricing, payment, or proration option is available.
+    - The null assertion proves the clear response reports pause_collection as present JSON null; a missing or non-null value is a postcondition mismatch requiring reconciliation.
+    - The LIKELY native ceiling is RAK Subscriptions Write or App subscription_write; sandbox proof remains deferred.
+sources:
+  - STRIPE-SUBSCRIPTION-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

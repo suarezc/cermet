@@ -1,0 +1,34 @@
+# Create one draft, non-auto-advancing invoice for an exact test customer.
+provider: stripe
+action: fixture_draft_invoice_create
+fields:
+  - { name: account,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: description, type: str, required: true, class: free_payload, binding: unbound, max_chars: 200 }
+consumes: [account, customer, description]
+execution_targets: [account, customer]
+http:
+  steps:
+    - id: bind_account
+      method: GET
+      path: /v1/account
+      success_statuses: [200]
+      expect_eq: { id: account }
+    - id: prove_test_mode
+      method: GET
+      path: /v1/balance
+      success_statuses: [200]
+      expect_literal: { object: balance, livemode: false }
+    - id: create
+      method: POST
+      path: /v1/invoices
+      body_encoding: form
+      body:
+        customer: "{customer}"
+        description: "{description}"
+        auto_advance: false
+        collection_method: charge_automatically
+      success_statuses: [200]
+      require: [id, object, customer, status, auto_advance, collection_method, livemode]
+      expect_eq: { customer: customer }
+      expect_literal: { object: invoice, status: draft, auto_advance: false, collection_method: charge_automatically, livemode: false }

@@ -1,0 +1,27 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: dispatch_workflow
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 3f7d7a0e8d0ce4d9fcdfe1ee8d3e6cd99379023313a556e777d72e18981b2450
+semantics:
+  resource_family: workflow
+  provider_operation: workflow_dispatch_event_create
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: accepted
+  idempotency: non_idempotent
+review:
+  summary: Start a run of one named Actions workflow file on one named ref of the frozen repository.
+  cautions:
+    - The dispatched workflow runs with the repository's OWN Actions permissions and secrets; the effect this verb authorizes is starting it, not what it then does.
+    - Success is accepted, not terminal — the run is created asynchronously and this verb never observes its outcome; read the run and its jobs to learn what happened.
+    - GitHub DOCUMENTS a 204 but answered live with a 200 carrying {workflow_run_id, run_url, html_url}, so both statuses are accepted as success.
+    - On the 200 arm the receipt and its artifact NAME the run that was started; on the 204 arm there is no body at all and the status is the whole receipt.
+    - Repeating the request starts ANOTHER run; the endpoint offers no idempotency key and no CAS to claim.
+    - The ref pin admits a branch or a tag name (both are legal here), so a sentence that means "release tags only" must say so in the ref predicate.
+    - Durable-broker-only write; the `workflow_dispatch` inputs map is deliberately not declared in v1.
+sources:
+  - GH-REST-WORKFLOWS
+  - GH-REST-BEST-PRACTICES

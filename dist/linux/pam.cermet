@@ -1,0 +1,14 @@
+# /etc/pam.d/cermet — PAM service for the cermet operator ceremony.
+#
+# The hardened client (cermet-cli's PamPasswordPresence) REQUIRES this explicit, root-owned 0644
+# service file and refuses to run against PAM's `other` fallback stack — an absent/misconfigured
+# service file is a fail-closed refusal, never a permissive default. The presence check is a
+# password re-auth of the INVOKING approver account (PAM_USER is derived from geteuid(), never
+# trusted from PAM); it is operator-path ceremony integrity, not an agent gate (the trust boundary
+# is the installed distinct-uid topology / kernel peercred).
+#
+# pam_unix.so prompts for the account password with echo OFF (the PAM_PROMPT_ECHO_OFF the client
+# counts), then validates it against the shadow database. Keep this minimal and explicit so the
+# challenge is guaranteed — do NOT swap in a stack that could return success without a prompt.
+auth     required   pam_unix.so
+account  required   pam_unix.so

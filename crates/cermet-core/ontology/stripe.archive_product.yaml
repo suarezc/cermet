@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: archive_product
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: df1adf19662ed37557c4d6d9cfe015f794c5d4f3d897e2eccee0dd0b1c683068
+semantics:
+  resource_family: product
+  provider_operation: product_archive
+  risk_class: data_lifecycle_change
+  sensitivity: public_metadata
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Archive one exact product by setting only active false, with returned inactive evidence and no delete operation.
+  cautions:
+    - Product name, description, pricing links, metadata, tax, images, and shipping settings cannot be changed through this verb.
+    - The LIKELY native ceiling is RAK Products Write or App product_write; sandbox proof remains deferred.
+sources:
+  - STRIPE-PRODUCT-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

@@ -1,0 +1,30 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_payment_intent_off_session
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 32cda5a326150aa220128c058da2af89d19ed389afacd02e7b134c6567fc4bec
+semantics:
+  resource_family: payment_intent
+  provider_operation: create_unconfirmed
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Create one funds_collect PaymentIntent with exact customer, payment method, bounded amount, resolved currency, and confirm false.
+  cautions:
+    - Provider evidence requires the exact PaymentMethod to belong to the exact Customer in one account and mode before mint.
+    - Currency is the authenticated account default_currency; the request cannot supply currency, account, or mode.
+    - off_session is absent at create and confirm is false, so this grant cannot confirm or collect funds by itself.
+    - Client secret, next action, bearer URLs, platform routing, and future-use controls are structurally absent from output and inputs.
+    - The broker-generated idempotency key is hidden, HMAC-bound, and reused only through authenticated ambiguous-effect lineage.
+    - Sandbox proof must confirm restricted-key access, account default-currency shape, relationship fields, and requires_confirmation response status.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-CUSTOMER-RETRIEVE
+  - STRIPE-PAYMENT-METHOD-RETRIEVE
+  - STRIPE-PAYMENT-INTENT-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

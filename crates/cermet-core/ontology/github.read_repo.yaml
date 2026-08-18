@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_repo
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 2bf102ed4eb89477c66d37456e9b812fad1857e3cab1decb7ea63a810d90e673
+semantics:
+  resource_family: repository
+  provider_operation: repository_read
+  risk_class: observation
+  sensitivity: source_code
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: >-
+    Read one pinned repository. The response is GitHub's repository object VERBATIM — the keep set
+    this once described was retired with every other projection — and this verb declares
+    no `retention: none`, so that whole object is stored as an artifact too.
+  cautions: []
+sources:
+  - GH-REST-REPOSITORY-CONTENTS
+  - GH-REST-BEST-PRACTICES

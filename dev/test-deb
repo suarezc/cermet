@@ -1,0 +1,1194 @@
+#!/usr/bin/env bash
+#
+# dev/test-deb — the cold-install package smoke: a stranger installs Cermet on a machine that has
+# never seen it, and the box comes up serving.
+#
+# What it proves, and why it cannot be proved anywhere else. Every other gate runs on THIS box,
+# where cermet has already been installed at least once: the user/groups exist, /etc/cermetd exists,
+# the tmpfiles rule is applied, the unit is known to systemd. The postinst path — `sudo dpkg -i`
+# under a plain human account, whose SUDO_UID is the only evidence of which human approves — has no
+# hermetic stand-in. So this leg boots a throwaway privileged systemd container, creates a stranger
+# account (`alice`), installs the freshly built artifact as her, and asserts the box's state.
+#
+# Two legs, one container each (an install is not idempotent evidence — the second install would be
+# an UPGRADE, which is a different story):
+#   deb      — `sudo dpkg -i`, postinst runs `cermet setup`, non-interactively.
+#   tarball  — unpack + `./cermet setup` under a PTY, which is the self-elevation consent path.
+#              The same command with no terminal must REFUSE and print the exact sudo command;
+#              this leg asserts both halves, because the refusal is the declared contract for
+#              non-interactive callers (crates/cermet-cli/src/setup.rs self_elevate).
+#   exdev    — the SAME deb install onto a box where /var is a SEPARATE FILESYSTEM (mainstream
+#              server partitioning; Debian's guided installer offers it). The sealed blob lives in
+#              /etc/credstore.encrypted and the daemon's state in /var/lib/cermetd, so every
+#              publish/relocate across that pair must survive EXDEV.
+#   upgrade  — VERSION TO VERSION, which no other gate covers: put real state on a box (a vaulted
+#              credential, an authored rule, a denied request's receipt), then upgrade it three
+#              ways, one container each — `dpkg -i` of this tree's deb over the merge-base build,
+#              `cermet update` on a PACKAGED box (which must go through dpkg and leave nothing
+#              shadowing it), and `cermet update` on a TARBALL box (which must publish through
+#              setup and create no packaged copy). Every claim is about state SURVIVING the
+#              version boundary, and about the box still having exactly ONE install channel.
+#   custody  — the SAME deb install onto a box that cannot do systemd credential delivery. The
+#              custody ladder must descend to `file-protected`, say so, and come up serving.
+#              Before the ladder this tier left the broker stopped.
+#
+# Usage:
+#   dev/test-deb                    # build from this tree, run both legs
+#   dev/test-deb --no-build         # reuse dist/out artifacts as-is
+#   dev/test-deb --leg deb          # one leg only (deb|tarball|custody|exdev|upgrade|both)
+#   dev/test-deb --keep             # leave the containers up for post-mortem
+#   dev/test-deb --skip-if-unavailable   # exit 0 with SKIPPED BY DESIGN when no engine is present
+#   dev/test-deb --self-test        # offline proof of the evidence record; no engine, no container
+#
+# EVERY run leaves a durable evidence record: one row per claim as it resolves, then a final block
+# carrying the run id, commit, context, per-leg summaries, wall clock and the verdict line. A run
+# that dies mid-flight leaves its rows and no final block, which is how an incomplete run is told
+# from a complete one. Default ON, into /var/tmp/cermet-dev-runs/<UTC timestamp>-test-deb/.
+#   CERMET_DEV_EVIDENCE=0        — write no evidence at all.
+#   CERMET_DEV_EVIDENCE_DIR=<d>  — write the per-run directory under <d> instead.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=dev/lib/harness.sh
+. "$REPO_ROOT/dev/lib/harness.sh"
+
+IMAGE="${CERMET_TEST_DEB_IMAGE:-docker.io/jrei/systemd-ubuntu:24.04}"
+BUILD=1
+LEG=both
+SKIP_IF_UNAVAILABLE=0
+SELF_TEST=0
+STAMP="$(date -u +%Y%m%d%H%M%S)-$$"
+
+usage() {
+  printf 'usage: %s [--leg deb|tarball|custody|exdev|upgrade|both] [--no-build] [--keep] [--image <ref>] [--skip-if-unavailable] [--self-test]\n' "$0"
+  printf 'evidence: every run writes ${CERMET_DEV_EVIDENCE_DIR:-/var/tmp/cermet-dev-runs}/<UTC timestamp>-test-deb/ (CERMET_DEV_EVIDENCE=0 disables it)\n'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-build) BUILD=0; shift ;;
+    --keep) HARNESS_KEEP=1; shift ;;
+    --leg) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; LEG="$2"; shift 2 ;;
+    --image) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; IMAGE="$2"; shift 2 ;;
+    --skip-if-unavailable) SKIP_IF_UNAVAILABLE=1; shift ;;
+    --self-test) SELF_TEST=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+case "$LEG" in deb|tarball|custody|exdev|upgrade|both) ;; *) usage >&2; exit 2 ;; esac
+
+# ------------------------------------------------------------------------------------ self-test --
+# Offline: the shared emitter's own proofs, then THIS harness really emitting. The second half needs
+# no engine because an engine-absent run is still a run — it resolves one claim (a skip) and
+# finalizes, which exercises open → row → final block end to end.
+if [ "$SELF_TEST" -eq 1 ]; then
+  bash -n "$REPO_ROOT/dev/test-deb"
+  harness_evidence_self_test
+  probe="$(mktemp -d "${TMPDIR:-/tmp}/cermet-test-deb-selftest.XXXXXX")"
+  trap 'rm -rf -- "$probe"' EXIT
+  CERMET_DEV_EVIDENCE_DIR="$probe" CONTAINER_ENGINE=cermet-no-such-engine \
+    "$REPO_ROOT/dev/test-deb" --skip-if-unavailable --no-build >/dev/null 2>&1
+  run_dir="$(find "$probe" -mindepth 1 -maxdepth 1 -type d -name '*-test-deb' | head -1)"
+  [ -n "$run_dir" ] && [ -f "$run_dir/run.json" ] \
+    || { printf 'SELF-TEST FAIL: an engine-absent dev/test-deb run left no finalized evidence\n' >&2; exit 1; }
+  for field in '"harness": "dev/test-deb"' '"status": "skipped-by-design"'; do
+    grep -Fq "$field" "$run_dir/run.json" \
+      || { printf 'SELF-TEST FAIL: the dev/test-deb record is missing %s\n' "$field" >&2; exit 1; }
+  done
+  grep -Fq '"status": "skipped-by-design"' "$run_dir/claims.jsonl" \
+    || { printf 'SELF-TEST FAIL: the engine-absent run recorded no claim row\n' >&2; exit 1; }
+  printf 'SELF-TEST PROOF: dev/test-deb leaves a finalized record even when it can claim nothing\n'
+  exit 0
+fi
+
+harness_evidence_open dev/test-deb
+harness_engine_init
+if ! harness_engine_available; then
+  if [ "$SKIP_IF_UNAVAILABLE" -eq 1 ]; then
+    printf 'SKIPPED BY DESIGN: no container engine on this box (looked for %q; set $CONTAINER_ENGINE).\n' "$ENGINE"
+    printf 'REASON: the cold-install proof needs a throwaway privileged systemd container; it has no host-side stand-in and is NOT being claimed as passed.\n'
+    skip "cold install: the whole run" "no container engine on this box (looked for $ENGINE)"
+    harness_report "dev/test-deb" "leg=$LEG, engine=$ENGINE (absent)"
+    exit 0
+  fi
+  printf 'REFUSED: container engine %q not found (set $CONTAINER_ENGINE, or pass --skip-if-unavailable).\n' "$ENGINE" >&2
+  harness_evidence_finalize 3 refused "dev/test-deb: refused before any claim" \
+    "container engine $ENGINE not found"
+  exit 3
+fi
+trap harness_cleanup EXIT
+
+# ------------------------------------------------------------------------------------- artifacts -
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_ROOT/Cargo.toml" | head -n 1)"
+ARCH="$(dpkg --print-architecture)"
+DEB="$REPO_ROOT/dist/out/cermet_${VERSION}_${ARCH}.deb"
+TARBALL="$REPO_ROOT/dist/out/cermet_${VERSION}_linux_${ARCH}.tar.gz"
+
+printf 'dev/test-deb — cold install of cermet %s (%s) into a throwaway %s container\n' "$VERSION" "$ARCH" "$ENGINE"
+printf 'image: %s\n' "$IMAGE"
+
+if [ "$BUILD" -eq 1 ]; then
+  printf '\nbuilding the package from THIS tree (make -C dist package)…\n'
+  make -C "$REPO_ROOT/dist" package >/dev/null
+fi
+[ -f "$DEB" ] || { printf 'REFUSED: no deb at %s (drop --no-build)\n' "$DEB" >&2; exit 2; }
+[ -f "$TARBALL" ] || { printf 'REFUSED: no tarball at %s (drop --no-build)\n' "$TARBALL" >&2; exit 2; }
+
+# The version string the installed binary must report. Taken from the binary this tree just built,
+# not from Cargo.toml: the version carries a git describe suffix, and a leg that recomputed it here
+# would be asserting its own arithmetic instead of the artifact.
+EXPECTED_VERSION="$("$REPO_ROOT/target/release/cermet" --version)"
+
+# -------------------------------------------------------------------------------- container prep -
+boot_with_alice() { # name [extra engine run args…] -> boots systemd, then creates `alice`
+  local name="$1"
+  shift
+  harness_ensure_base_image "$IMAGE"
+  harness_boot_systemd_container "$name" "$HARNESS_BASE_IMAGE" "$@"
+  engine exec "$name" bash -c '
+    set -e
+    useradd -m -s /bin/bash alice
+    printf "alice ALL=(ALL) NOPASSWD:ALL\n" > /etc/sudoers.d/alice
+    chmod 0440 /etc/sudoers.d/alice
+  ' >/dev/null
+}
+
+# ------------------------------------------------------------------------------- shared asserts --
+# The wording each rung must state, mirroring `cermet_ipc::custody::CustodyProfile`. Spelled out
+# here on purpose: this leg is the outside view, and a claim the product prints has to be asserted
+# against text a human wrote, not against the product's own constant.
+rung_limitation() {
+  case "$1" in
+    file-protected)   printf 'does not protect vault key from: disk snapshots or backups' ;;
+    systemd-host)     printf 'persistent Cermet files do not contain the plaintext key' ;;
+    systemd-tpm2+host) printf 'bound to this OS installation and TPM2 device' ;;
+    *) printf 'UNKNOWN RUNG %s' "$1" ;;
+  esac
+}
+
+# THE STRIP. A box must come up with no trace of the removed
+# decision-trace program, and the only thing on a timer is the update check. Asserted from OUTSIDE
+# the product — systemd's own view of what is scheduled — because "we no longer install it" is a
+# claim about the box, not about our source tree.
+#
+# `expect_removal` distinguishes the two honest shapes of the setup OUTPUT. A stranger's box has
+# nothing to converge, so the word must not appear at all. An UPGRADED box has the units on it, and
+# the run that removes them says which files it unlinked — that line is the convergence receipt, and
+# demanding silence there would be demanding a silent deletion.
+assert_no_upload_scheduler() { # container, leg-label, setup-output, expect-removal(0|1)
+  local name="$1" label="$2" out="$3" expect_removal="${4:-0}" timers
+
+  if [ "$expect_removal" -eq 1 ]; then
+    assert_contains "$label: setup reports removing the retired upload timer" \
+      "removed retired artifact /etc/systemd/system/cermet-research.timer" "the setup output" "$out"
+    assert_contains "$label: setup reports removing the retired upload unit" \
+      "removed retired artifact /etc/systemd/system/cermet-research.service" "the setup output" "$out"
+  else
+    assert_absent "$label: setup says nothing about a research program" "research" \
+      "the setup output" "$out"
+  fi
+  # Either way, the program itself is never announced: no notice, no consent line, no trace talk.
+  assert_absent "$label: setup announces no trace sharing" "trajector" "the setup output" "$out"
+  assert_absent "$label: setup asks for no sharing consent" "on by default" "the setup output" "$out"
+
+  # systemd's own inventory, not a file probe: a unit that is loaded but whose file we deleted would
+  # still be a scheduled job.
+  timers="$(engine exec "$name" systemctl list-timers --all --no-legend 2>/dev/null || true)"
+  assert_absent "$label: no upload timer is scheduled" "cermet-research" "systemctl list-timers" \
+    "$timers"
+  if engine exec "$name" test -e /etc/systemd/system/cermet-research.timer; then
+    bad "$label: no upload unit is installed" "no cermet-research.timer" "one is on disk"
+  else
+    ok "$label: no upload unit is installed" "neither unit nor timer"
+  fi
+
+  # …and the check that DID survive the strip is live, so this is a strip and not a blackout.
+  assert_contains "$label: the update check timer is still installed" "cermet-update-check.timer" \
+    "systemctl list-timers" "$timers"
+  assert_eq "$label: the update check timer is enabled" enabled \
+    "$(engine exec "$name" systemctl is-enabled cermet-update-check.timer 2>/dev/null || true)"
+}
+
+assert_box_is_serving() { # container, leg-label, expected-custody-rung
+  local name="$1" label="$2" rung="$3" uid
+  uid="$(engine exec "$name" id -u alice)"
+
+  assert_eq "$label: systemctl is-active cermetd" active \
+    "$(engine exec "$name" systemctl is-active cermetd 2>/dev/null || true)"
+  assert_eq "$label: systemctl is-enabled cermetd" enabled \
+    "$(engine exec "$name" systemctl is-enabled cermetd 2>/dev/null || true)"
+
+  # CUSTODY-LADDER: the rung the box landed on is DECLARED, so it is asserted from the config the
+  # daemon actually reads — not inferred from which files happen to exist.
+  assert_contains "$label: config declares the custody rung" "custody_profile = \"$rung\"" \
+    "/etc/cermetd/config.toml" \
+    "$(engine exec "$name" cat /etc/cermetd/config.toml 2>/dev/null || true)"
+
+  # …and the key artifact that rung names is the one on disk, end to end. On a sealed rung this is
+  # the assertion the preflight exists for: the daemon reads its master key from
+  # $CREDENTIALS_DIRECTORY/cermet.key and fails closed if the dir is not real, so a running cermetd
+  # with a delivered credential is the whole custody chain in one check. On `file-protected` the
+  # equivalent evidence is the cermet-owned 0600 key file — and NO delivered credential, which is
+  # what proves the rung is real rather than a label over the same mechanism.
+  case "$rung" in
+    file-protected)
+      assert_eq "$label: the key file is cermet-owned 0600" "cermet cermet 600" \
+        "$(engine exec "$name" stat -c '%U %G %a' /var/lib/cermetd/master.key 2>/dev/null || true)"
+      if engine exec "$name" test -e /run/credentials/cermetd.service/cermet.key; then
+        bad "$label: no systemd credential is delivered" "no credential" "one was delivered anyway"
+      else
+        ok "$label: no systemd credential is delivered" "file-protected uses none"
+      fi
+      ;;
+    *)
+      if engine exec "$name" test -f /run/credentials/cermetd.service/cermet.key; then
+        ok "$label: systemd credential provisioned" "/run/credentials/cermetd.service/cermet.key"
+      else
+        bad "$label: systemd credential provisioned" \
+          "/run/credentials/cermetd.service/cermet.key exists" \
+          "$(engine exec "$name" ls -la /run/credentials/ 2>&1 | tr '\n' ' ')"
+      fi
+      # The sealed blob lives in systemd's OWN credential store, which is what lets the unit name
+      # the credential without a path and serve every rung from one file.
+      assert_eq "$label: the sealed blob is root:root 0600 in the credstore" "root root 600" \
+        "$(engine exec "$name" stat -c '%U %G %a' /etc/credstore.encrypted/cermet.key 2>/dev/null || true)"
+      ;;
+  esac
+
+  assert_contains "$label: alice in cermet-approvers" cermet-approvers "alice's groups" \
+    "$(engine exec "$name" id -nG alice)"
+
+  # SUDO_UID inference: the human who ran the install is the human the config names as approver.
+  assert_contains "$label: config names alice as approver" "approver_uid = $uid" "/etc/cermetd/config.toml" \
+    "$(engine exec "$name" cat /etc/cermetd/config.toml 2>/dev/null || true)"
+
+  # `sg` because the group was created during this very install and alice's session predates it.
+  local check_out check_rc
+  set +e
+  check_out="$(engine exec -u alice "$name" bash -lc 'sg cermet-approvers -c "cermet check"' 2>&1)"
+  check_rc=$?
+  set -e
+  if [ "$check_rc" -eq 0 ]; then
+    ok "$label: cermet check exits 0 as alice"
+  else
+    bad "$label: cermet check exits 0 as alice" "exit 0" "exit $check_rc — $(printf '%s' "$check_out" | tr '\n' ' ')"
+  fi
+  # The ladder is automatic, so `cermet check` is where an operator finds out what it chose — asked
+  # of the RUNNING daemon, and carrying the rung's honest limitation, not just its name.
+  assert_contains "$label: cermet check names the custody rung" "$rung" "cermet check output" "$check_out"
+  assert_contains "$label: cermet check states what the rung does not protect" \
+    "$(rung_limitation "$rung")" "cermet check output" "$check_out"
+
+  assert_eq "$label: cermet --version matches tree" "$EXPECTED_VERSION" \
+    "$(engine exec -u alice "$name" bash -lc 'cermet --version' 2>/dev/null || true)"
+}
+
+
+# ------------------------------------------------------------------------------ preflight leg ---
+# These run against the container the deb leg just installed into, LAST, because the
+# final claim deliberately breaks the preflight to prove what happens when it refuses.
+assert_credential_preflight() { # container, setup-output
+  local name="$1" out="$2"
+
+  # The narrowness IS the ruling: converge /run, change nothing else. If this ever starts reporting
+  # `/` as shared, someone reached for `--make-rshared /` again.
+  assert_eq "preflight: /run was converged to shared" shared \
+    "$(engine exec "$name" findmnt -no PROPAGATION /run 2>/dev/null || true)"
+  assert_eq "preflight: / was left exactly as found" private \
+    "$(engine exec "$name" findmnt -no PROPAGATION / 2>/dev/null || true)"
+
+  # WHO converged it changed with the custody ladder: `cermet setup` runs the shipped preflight
+  # itself, because "can this box be handed a credential" is the question that decides which rung it
+  # provisions. So the convergence is reported by the INSTALL, and the unit at boot finds the work
+  # already done. An install that changes a mount on this machine says so out loud.
+  assert_contains "preflight: the install said it converged the mount" "is now a shared mount" \
+    "the setup output" "$out"
+  assert_contains "preflight: the unit at boot found it already done" "already a shared mount" \
+    "the preflight journal" \
+    "$(engine exec "$name" journalctl -u cermet-credential-env.service --no-pager -o cat 2>&1 || true)"
+
+  # Idempotence, on the real box: a second run of the same unit is a no-op that still succeeds.
+  engine exec "$name" systemctl restart cermet-credential-env.service >/dev/null 2>&1 || true
+  assert_eq "preflight: re-running it is a no-op that succeeds" active \
+    "$(engine exec "$name" systemctl is-active cermet-credential-env.service 2>/dev/null || true)"
+
+  # Tier 3, the refusal, in an environment where the mount genuinely cannot be done. A plain
+  # capability-dropped container is the cheapest honest version of "this box cannot carry our key
+  # delivery": the script is the shipped one, mounted from the tree.
+  local refusal
+  set +e
+  refusal="$(engine run --rm --cap-drop=ALL \
+    -v "$REPO_ROOT/dist/linux/cermet-credential-env.sh:/preflight:ro" \
+    "$IMAGE" /preflight 2>&1)"
+  local refusal_rc=$?
+  set -e
+  if [ "$refusal_rc" -ne 0 ]; then
+    ok "preflight: an impossible environment is refused" "exit $refusal_rc"
+  else
+    bad "preflight: an impossible environment is refused" "a nonzero exit" "exit 0"
+  fi
+  assert_contains "preflight: the refusal names the reason" "shared mount propagation" \
+    "the refusal" "$refusal"
+  # Scoped to the TRANSPORT, not the product: it refuses systemd-credential delivery in this
+  # environment, and never claims the environment cannot run Cermet at all.
+  assert_contains "preflight: the refusal is transport-scoped" \
+    "systemd-credential delivery cannot hand cermetd its vault key" "the refusal" "$refusal"
+  assert_absent "preflight: it never disqualifies the product" "Cermet does not" \
+    "the refusal" "$refusal"
+  # CUSTODY-LADDER: the same verdict means two different things to its two callers, and the refusal
+  # says both — install-time it is a descent to file-protected, boot-time on a sealed box it is a
+  # stop. Before the ladder this text said nothing weaker would ever be substituted.
+  assert_contains "preflight: install time descends rather than refusing the product" \
+    "descends to the file-protected" "the refusal" "$refusal"
+  assert_absent "preflight: the pre-ladder refuse-forever wording is gone" \
+    "never inferred from the environment" "the refusal" "$refusal"
+
+  # …and the consequence the Requires= exists for: a refused preflight keeps the daemon DOWN.
+  # Simulated by making the real unit fail, which is the only part of this the container cannot
+  # produce on its own (it is privileged, so its mount always succeeds).
+  # The preflight is RemainAfterExit=yes, so a successful earlier run leaves it `active (exited)`
+  # and its requirement already satisfied — it has to be stopped too, or the forced failure never
+  # executes and this claim proves nothing. (On a real box the equivalent moment is a reboot.)
+  engine exec "$name" bash -c '
+    set -e
+    systemctl stop cermetd
+    systemctl stop cermet-credential-env.service
+    mkdir -p /etc/systemd/system/cermet-credential-env.service.d
+    printf "[Service]\nExecStart=\nExecStart=/bin/false\n" > /etc/systemd/system/cermet-credential-env.service.d/force-refusal.conf
+    systemctl daemon-reload
+    systemctl reset-failed cermet-credential-env.service cermetd.service 2>/dev/null || true
+    systemctl start cermetd 2>/dev/null || true
+  ' >/dev/null 2>&1 || true
+  sleep 1
+  local state
+  state="$(engine exec "$name" systemctl is-active cermetd 2>/dev/null || true)"
+  if [ "$state" != active ]; then
+    ok "preflight: a refused preflight keeps cermetd down" "cermetd is $state, not active"
+  else
+    bad "preflight: a refused preflight keeps cermetd down" "cermetd stays down" "it is active anyway"
+  fi
+}
+
+# ------------------------------------------------------------------------------------- deb leg ---
+run_deb_leg() {
+  local name="cermet-test-deb-$STAMP"
+  leg_header "deb: sudo dpkg -i as a stranger; the postinst configures the box"
+  boot_with_alice "$name"
+  engine cp "$DEB" "$name:/tmp/cermet.deb"
+
+  local out rc
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'sudo dpkg -i /tmp/cermet.deb' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+
+  if [ "$rc" -eq 0 ]; then
+    ok "deb: dpkg -i exits 0"
+  else
+    bad "deb: dpkg -i exits 0" "exit 0" "exit $rc"
+  fi
+  assert_contains "deb: postinst ran cermet setup" "[cermet-setup]" "the dpkg output" "$out"
+  assert_contains "deb: setup printed its success summary" "✓ broker running" "the dpkg output" "$out"
+  assert_contains "deb: setup named the custody rung it chose" "custody: systemd-host" \
+    "the dpkg output" "$out"
+  assert_box_is_serving "$name" deb systemd-host
+  assert_no_upload_scheduler "$name" deb "$out" 0
+  assert_credential_preflight "$name" "$out"
+}
+
+# --------------------------------------------------------------------------------- tarball leg ---
+run_tarball_leg() {
+  local name="cermet-test-tarball-$STAMP"
+  leg_header "tarball: unpack + ./cermet setup, through the self-elevation consent path"
+  boot_with_alice "$name"
+  engine cp "$TARBALL" "$name:/home/alice/cermet.tar.gz"
+  engine exec "$name" chown alice:alice /home/alice/cermet.tar.gz
+  engine exec -u alice "$name" bash -lc 'cd /home/alice && tar xzf cermet.tar.gz'
+
+  # Half one: no terminal, so setup must refuse and hand back the exact command — never hang on a
+  # sudo prompt nobody can answer.
+  local refusal
+  set +e
+  refusal="$(engine exec -u alice "$name" bash -lc 'cd /home/alice && ./cermet setup' 2>&1)"
+  set -e
+  assert_contains "tarball: non-interactive setup refuses" "run: sudo /home/alice/cermet setup" \
+    "the refusal" "$refusal"
+
+  # Half two: a real PTY (`script -qec`), which is what a human at a terminal has.
+  local out rc
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'cd /home/alice && script -qec "./cermet setup" /dev/null' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+
+  if [ "$rc" -eq 0 ]; then
+    ok "tarball: ./cermet setup exits 0 under a PTY"
+  else
+    bad "tarball: ./cermet setup exits 0 under a PTY" "exit 0" "exit $rc"
+  fi
+  assert_contains "tarball: setup printed its success summary" "✓ broker running" "the setup output" "$out"
+  assert_box_is_serving "$name" tarball systemd-host
+}
+
+
+# ------------------------------------------------------------------------------- custody leg ----
+# CUSTODY-LADDER: "when neither are available it takes uid-file."
+#
+# The box: a systemd container with `systemd-creds` made unavailable. That is the honest, fully
+# deterministic version of "this machine cannot do systemd credential delivery" — and it is a real
+# one (minimal images ship without it). The tempting alternative, a `--cap-drop=ALL` container,
+# cannot host this claim at all: without CAP_SYS_ADMIN systemd will not boot as PID 1, so there is
+# no service manager to install a service into. What that container CAN prove is the preflight's
+# standalone refusal, which is asserted in the deb leg above.
+#
+# Before the ladder this tier's contract was "the broker stays stopped". It is now "the broker comes
+# up on file-protected, and every surface says so".
+run_custody_leg() {
+  local name="cermet-test-custody-$STAMP"
+  leg_header "custody: a box that cannot do systemd credential delivery descends to file-protected"
+  boot_with_alice "$name"
+  # Hide it rather than uninstall it: removing the systemd package would take the service manager
+  # with it. `cermet setup` probes for the command, so this is exactly the environment it must read.
+  engine exec "$name" bash -c 'mv "$(command -v systemd-creds)" /usr/local/lib/systemd-creds.hidden' >/dev/null
+  engine cp "$DEB" "$name:/tmp/cermet.deb"
+
+  local out rc
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'sudo dpkg -i /tmp/cermet.deb' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+
+  if [ "$rc" -eq 0 ]; then
+    ok "custody: dpkg -i exits 0 on a box with no credential delivery"
+  else
+    bad "custody: dpkg -i exits 0 on a box with no credential delivery" "exit 0" "exit $rc"
+  fi
+
+  # NEVER SILENT: the descent names why, which rung it took, and what that rung does not protect.
+  assert_contains "custody: the descent says why the sealed rungs were not taken" \
+    "no systemd-credential custody rung is available on this box" "the setup output" "$out"
+  assert_contains "custody: the descent names the rung it took" "file-protected" \
+    "the setup output" "$out"
+  assert_contains "custody: the descent states what that rung does not protect" \
+    "$(rung_limitation file-protected)" "the setup output" "$out"
+  assert_contains "custody: the summary is still a success summary" "✓ broker running" \
+    "the setup output" "$out"
+
+  # …and the box actually works on that rung: serving, declared, and reported.
+  assert_box_is_serving "$name" custody file-protected
+
+  # The preflight is condition-skipped on a file-protected box, which is what lets cermetd start at
+  # all: with a hard Requires= on a unit that ran and refused, a healthy daemon would be held down
+  # over a mechanism this rung does not use.
+  # `ConditionResult=no` IS the skip: systemd evaluated the conditions, they did not hold, and the
+  # unit never ran — which counts as satisfied for cermetd's Requires=. A refusal would instead be
+  # ActiveState=failed, and would have held cermetd down.
+  local preflight_state
+  preflight_state="$(engine exec "$name" systemctl show cermet-credential-env.service -p ConditionResult -p ActiveState 2>&1 || true)"
+  assert_contains "custody: the preflight was condition-skipped" "ConditionResult=no" \
+    "systemctl show cermet-credential-env" "$preflight_state"
+  assert_absent "custody: the preflight did not fail" "ActiveState=failed" \
+    "systemctl show cermet-credential-env" "$preflight_state"
+  if engine exec "$name" test -e /etc/credstore.encrypted/cermet.key; then
+    bad "custody: no sealed blob exists" "no blob" "a sealed blob was written anyway"
+  else
+    ok "custody: no sealed blob exists" "nothing was sealed that could not be delivered"
+  fi
+}
+
+
+# --------------------------------------------------------------------------------- exdev leg ----
+# The sealed blob is published into /etc/credstore.encrypted while the daemon's state dir
+# is /var/lib/cermetd. A separate `/var` is a mainstream server layout — Debian's guided installer
+# offers it — and `hard_link`/`rename` return EXDEV across a filesystem boundary unconditionally.
+# The claim: a box that CAN seal must SEAL. Descending to file-protected for a Cermet-internal
+# plumbing reason would contradict the ladder ruling outright — the rung reported would not be the
+# strongest the machine can carry.
+#
+# The boundary is made real with a tmpfs mount on /var/lib/cermetd — a different device id, which
+# is the whole of what EXDEV tests. The claim below asserts that separation before installing, so a
+# green run can never be a container that quietly shared one filesystem.
+run_exdev_leg() {
+  local name="cermet-test-exdev-$STAMP"
+  leg_header "exdev: /var on its own filesystem — sealing crosses a device boundary"
+  boot_with_alice "$name" --mount type=tmpfs,destination=/var/lib/cermetd
+
+  local etc_dev state_dev
+  etc_dev="$(engine exec "$name" stat -c %d /etc)"
+  state_dev="$(engine exec "$name" stat -c %d /var/lib/cermetd)"
+  if [ "$etc_dev" != "$state_dev" ]; then
+    ok "exdev: /etc and /var/lib/cermetd are different filesystems" "dev $etc_dev vs $state_dev"
+  else
+    bad "exdev: /etc and /var/lib/cermetd are different filesystems" \
+      "two device ids" "both are $etc_dev — this leg would prove nothing"
+  fi
+
+  engine cp "$DEB" "$name:/tmp/cermet.deb"
+  local out rc
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'sudo dpkg -i /tmp/cermet.deb' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+
+  if [ "$rc" -eq 0 ]; then
+    ok "exdev: dpkg -i exits 0 with /var on its own filesystem"
+  else
+    bad "exdev: dpkg -i exits 0 with /var on its own filesystem" "exit 0" "exit $rc"
+  fi
+
+  # THE claim. A box that can seal must seal: a cross-device staging path is our plumbing problem,
+  # never a reason to report weaker custody than the machine actually supports.
+  assert_contains "exdev: a sealable box still takes a SEALED rung" "custody: systemd-host" \
+    "the setup output" "$out"
+  assert_absent "exdev: it does not descend for a Cermet-internal reason" \
+    "no systemd-credential custody rung is available" "the setup output" "$out"
+  assert_box_is_serving "$name" exdev systemd-host
+}
+
+
+# --------------------------------------------------------------------------------- upgrade leg --
+# The product's actual version-to-version gate. Everything else here installs onto a box that has
+# never seen Cermet; this one installs an OLDER Cermet, puts real state on it, and asserts that
+# state survives being upgraded — which is the moment a user's vault, corpus, and receipts are
+# actually at risk.
+#
+# The "old" version is the deb built at this branch's MERGE-BASE with origin/main, not the release
+# currently on cermet.dev. Two reasons, both honest: the published v0.1.0 deb writes the
+# pre-credstore blob layout whose handling has since been deleted, so upgrading from it would
+# exercise a path the shipped code no longer has; and nothing has launched, so no such install
+# exists in the world to protect. When real releases exist post-launch this leg graduates to
+# fetching the previous one. The build is cached under /var/tmp by commit, so only the first run on
+# a given base pays for it.
+#
+# Both upgrade doors are exercised, each in its own container (an upgraded box is not a fresh box,
+# and stacking the two would make a failure unattributable):
+#   dpkg    — `sudo dpkg -i` the tree's deb; the postinst re-runs setup.
+#   update  — `cermet update` against a file:// fixture origin serving a whole fabricated 9.9.9
+#             RELEASE: a `repos/<slug>/releases/latest` document, that release's SHA256SUMS, and its
+#             artifact. Self-contained again since the GitHub-only ruling removed the dual-source
+#             wall that had no fixture-reachable second host, so these doors
+#             are back to FULL END-TO-END APPLY coverage: tamper refusal, the re-hash gate, the
+#             consent text, one-channel dpkg/publication claims, and state survival. The version
+#             string is a fiction, the mechanics are not, and `cermet --version` (which carries the
+#             git commit) is what proves the binary actually changed.
+
+# Neither harness-only build below is an artifact under test — one is "some other build" for the
+# update to install, the other is a test client. The shipped profile's whole-program LTO costs
+# minutes per link and buys them nothing, so they are built without it. The release artifacts this
+# leg actually installs (the deb, the tarball) still come from `make -C dist package`, untouched.
+FIXTURE_PROFILE="CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
+
+BASELINE_DEB=""
+BASELINE_VERSION=""
+FIXTURE_TARBALL=""
+FIXTURE_VERSION=""
+PRESENCE_CLI=""
+
+# Build (once, cached) the deb for this branch's merge-base with origin/main.
+ensure_baseline_deb() {
+  local base cache src
+  base="$(git -C "$REPO_ROOT" merge-base HEAD origin/main 2>/dev/null || true)"
+  [ -n "$base" ] || { printf 'REFUSED: cannot resolve a merge-base with origin/main for the upgrade leg\n' >&2; exit 2; }
+  cache="/var/tmp/cermet-baseline-deb/$base"
+  BASELINE_DEB="$(ls "$cache"/cermet_*.deb 2>/dev/null | head -n 1 || true)"
+  if [ -n "$BASELINE_DEB" ]; then
+    if [ -s "$cache/version" ]; then
+      BASELINE_VERSION="$(cat "$cache/version")"
+    else
+      record_baseline_version "$cache"
+    fi
+    printf 'baseline deb: %s (cached, %s)\n' "$BASELINE_DEB" "$BASELINE_VERSION"
+    return 0
+  fi
+  src="/var/tmp/cermet-baseline-src/$base"
+  printf 'building the BASELINE deb at %s (one-time; cached at %s)…\n' "${base:0:9}" "$cache"
+  rm -rf "$src"
+  git -C "$REPO_ROOT" worktree add --detach "$src" "$base" >/dev/null
+  # Its own target dir, so the baseline build never contends with the tree's.
+  ( cd "$src" && make -C dist package >/dev/null )
+  mkdir -p "$cache"
+  cp "$src"/dist/out/cermet_*.deb "$cache/"
+  git -C "$REPO_ROOT" worktree remove --force "$src" >/dev/null
+  BASELINE_DEB="$(ls "$cache"/cermet_*.deb | head -n 1)"
+  record_baseline_version "$cache"
+  printf 'baseline deb: %s (%s)\n' "$BASELINE_DEB" "$BASELINE_VERSION"
+}
+
+# The build identity the baseline deb carries, read out of the package itself rather than recomputed
+# — the leg asserts against what the artifact says it is, never against arithmetic done here.
+record_baseline_version() { # cache-dir
+  local cache="$1" unpacked
+  unpacked="$(mktemp -d "/var/tmp/cermet-baseline-unpack.XXXXXX")"
+  dpkg-deb -x "$BASELINE_DEB" "$unpacked"
+  BASELINE_VERSION="$("$unpacked/usr/bin/cermet" --version)"
+  rm -rf "$unpacked"
+  printf '%s\n' "$BASELINE_VERSION" >"$cache/version"
+}
+
+# The OTHER build `cermet update` installs in door two: this same source, built where `git` is not
+# reachable, which is exactly the `+nogit` build identity the build script stamps for a tarball
+# build. Two properties are needed and this is the cheapest honest way to get both — bytes that
+# differ from the installed binary (or publication is a converged no-op and proves nothing), and a
+# binary that understands `update --apply` (the publish is run by the NEW binary, so an older one
+# cannot be the target). Cached under /var/tmp by HEAD; only the first run on a commit pays.
+ensure_fixture_tarball() {
+  local head cache src target shim
+  head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  cache="/var/tmp/cermet-update-fixture/$head"
+  FIXTURE_VERSION="cermet $(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_ROOT/Cargo.toml" | head -n 1)+nogit"
+  FIXTURE_TARBALL="$cache/cermet_fixture_linux_${ARCH}.tar.gz"
+  if [ -f "$FIXTURE_TARBALL" ]; then
+    printf 'fixture build: %s (cached, %s)\n' "$FIXTURE_VERSION" "${head:0:9}"
+    return 0
+  fi
+  printf 'building the FIXTURE artifact %s (one-time; cached at %s)…\n' "$FIXTURE_VERSION" "$cache"
+  # One commit's cache at a time. The shared target dirs are keyed by NAME and are reused; only the
+  # per-commit artifact dirs would accumulate, and this box has an 8G tmpfs and a long memory of
+  # filling it.
+  find /var/tmp/cermet-update-fixture -mindepth 1 -maxdepth 1 -type d \
+    ! -name target ! -name target-presence ! -name target-presence-baseline \
+    ! -name "$head" ! -name "$(git -C "$REPO_ROOT" merge-base HEAD origin/main)" \
+    -exec rm -rf {} + 2>/dev/null || true
+  find /var/tmp/cermet-baseline-deb -mindepth 1 -maxdepth 1 -type d \
+    ! -name "$(git -C "$REPO_ROOT" merge-base HEAD origin/main)" -exec rm -rf {} + 2>/dev/null || true
+  shim="/var/tmp/cermet-nogit-shim"
+  mkdir -p "$shim"
+  printf '#!/bin/sh\nexit 1\n' >"$shim/git"
+  chmod 0755 "$shim/git"
+  target="/var/tmp/cermet-update-fixture/target"
+  src="$REPO_ROOT"
+  ( cd "$src" && PATH="$shim:$PATH" CARGO_TARGET_DIR="$target" \
+      env $FIXTURE_PROFILE cargo build --release -p cermet-bin >/dev/null )
+  local stage="$cache/stage"
+  rm -rf "$cache"
+  mkdir -p "$stage"
+  install -m 0755 "$target/release/cermet" "$stage/cermet"
+  ln -sfn cermet "$stage/cermetd"
+  ln -sfn cermet "$stage/git-remote-cermet"
+  tar -C "$stage" -czf "$FIXTURE_TARBALL" cermet cermetd git-remote-cermet
+  "$REPO_ROOT/dist/verify-multicall-payload.sh" "$stage" >/dev/null
+  rm -rf "$stage"
+  printf 'fixture build: %s\n' "$FIXTURE_VERSION"
+}
+
+# The client that satisfies the presence ceremony while seeding state.
+#
+# The shipped PAM gate cannot be exercised in this environment, and the reason is the container
+# engine, not Cermet: `pam_unix` authenticates a NON-ROOT caller through the setgid `unix_chkpwd`
+# helper, and under this box's nested rootless podman that helper cannot start at all —
+# `cannot apply additional memory protection after relocation: Permission denied` from glibc's
+# RELRO mprotect, unchanged by seccomp/apparmor/label opts. (`su` works because su runs as root and
+# reads the shadow file directly.) So the ceremony uses the test-presence CLI as a CLIENT of the
+# installed daemon — the same sanctioned pattern `scripts/sitting/run-sitting.sh` uses, and labeled
+# here for the same reason: PAM is NOT exercised by this leg. Everything else on the box is the
+# release artifact, and the non-installable build is never installed (setup refuses it by design).
+#
+# Its basename must be exactly `cermet`: role selection is by argv[0] in the one-binary router.
+#
+# Built at the SAME commit as the build installed on the box, because "state on the old version"
+# means state that version itself could author. A cross-build client is not a harmless shortcut:
+# the corpus crosses the ctl wire as canonical sentence TEXT, so a client and a daemon that
+# disagree about the dialect cannot transact at all — which is exactly what the 2026-08-16
+# selector/literal ruling made true of this branch and its merge base.
+ensure_presence_cli() { # commit-ish
+  local rev="$1" sha cache target src
+  sha="$(git -C "$REPO_ROOT" rev-parse "$rev")"
+  cache="/var/tmp/cermet-update-fixture/$sha/presence"
+  PRESENCE_CLI="$cache/cermet"
+  if [ -x "$PRESENCE_CLI" ]; then
+    printf 'presence client (%s): %s (cached)\n' "${sha:0:9}" "$PRESENCE_CLI"
+    return 0
+  fi
+  printf 'building the non-installable test-presence CLI at %s (one-time; cached at %s)…\n' \
+    "${sha:0:9}" "$cache"
+  target="/var/tmp/cermet-update-fixture/target-presence"
+  if [ "$sha" = "$(git -C "$REPO_ROOT" rev-parse HEAD)" ]; then
+    src="$REPO_ROOT"
+  else
+    src="/var/tmp/cermet-baseline-src/$sha-presence"
+    rm -rf "$src"
+    git -C "$REPO_ROOT" worktree add --detach "$src" "$sha" >/dev/null
+    target="$target-baseline"
+  fi
+  ( cd "$src" && CARGO_TARGET_DIR="$target" \
+      env $FIXTURE_PROFILE cargo build --release -p cermet-bin --features test-presence >/dev/null )
+  mkdir -p "$cache"
+  install -m 0755 "$target/release/cermet" "$PRESENCE_CLI"
+  if [ "$src" != "$REPO_ROOT" ]; then
+    git -C "$REPO_ROOT" worktree remove --force "$src" >/dev/null
+  fi
+  printf 'presence client (%s): %s\n' "${sha:0:9}" "$PRESENCE_CLI"
+}
+
+# `sg` because alice's login session predates the group this very install created.
+as_alice() { # container command…
+  local name="$1"; shift
+  engine exec -u alice "$name" bash -lc "sg cermet-approvers -c $(printf '%q' "$*")"
+}
+
+# Real state on the box, before it is upgraded: a vaulted credential, an authored rule, and a
+# receipt.
+#
+# The rule goes through the test-presence CLI as a CLIENT of the installed daemon — PAM is NOT
+# exercised by this leg, for the environment reason spelled out at `ensure_presence_cli`. Everything
+# else on the box is the release artifact.
+seed_upgrade_state() { # container presence-cli rule-text
+  local name="$1" cli="$2" rule="$3" out
+
+  set +e
+  out="$(as_alice "$name" 'STRIPE_TOKEN=sk_test_upgrade_leg cermet connect stripe --adopt' 2>&1)"
+  set -e
+  assert_contains "seed: a credential is vaulted on the old version" cred_stripe \
+    "the connect output" "$out"
+
+  # The authority ceremony, through the test-presence CLIENT (see ensure_presence_cli — PAM's
+  # setgid helper cannot run under this container engine). The DAEMON is the installed one, the
+  # decision and the record are its own, and the corpus below is read back with the INSTALLED cermet.
+  engine exec "$name" mkdir -p /tmp/presence >/dev/null
+  engine cp "$cli" "$name:/tmp/presence/cermet"
+  engine exec "$name" chmod 0755 /tmp/presence/cermet >/dev/null
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc \
+    "sg cermet-approvers -c \"CERMET_TEST_PRESENCE=1 /tmp/presence/cermet rules allow '$rule' --yes\"" 2>&1)"
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  # Asserted against the CORPUS as the INSTALLED binary renders it, never against the ceremony's own
+  # output: what matters is that the daemon kept the rule, not that a client said it sent one.
+  assert_contains "seed: a rule is authored on the old version" "stripe.get_charge" \
+    "cermet rules" "$(as_alice "$name" 'cermet rules' 2>&1 || true)"
+
+  # A DENIED request, so a receipt exists that no provider contact could have produced. The corpus
+  # admits get_charge and nothing else, so a refund is refused on the sentence, before any egress.
+  set +e
+  as_alice "$name" 'cermet run stripe.refund --resource {\"charge\":\"ch_upgrade_leg\",\"amount\":100} --justification upgrade-leg' >/dev/null 2>&1
+  set -e
+  set +e
+  out="$(as_alice "$name" 'cermet log --denied' 2>&1)"
+  set -e
+  assert_contains "seed: the denied request left a receipt" refund "the receipt log" "$out"
+
+  record_vault_key "$name"
+}
+
+# THE RE-HASH GATE. The privileged half re-verifies the staged artifact before
+# installing it — the T1 defense, and the one thing in this flow that no other claim touches.
+#
+# Driven through the declared non-interactive contract: with no terminal `cermet update` prints the
+# exact `sudo … --apply…` command and KEEPS the verified download, so the staged artifact can be
+# tampered with between the check and the use, which is precisely the swap the gate exists to catch.
+# Deleting the comparison turns this claim red and nothing else.
+#
+# UNPARKED. It was unreachable only while the dual-source wall refused the
+# fixture's fabricated version before any download could be staged; with GitHub the single source
+# and the fixture serving a whole release, the download stages again and this gate runs for real on
+# both channels.
+assert_rehash_gate_refuses_a_swapped_artifact() { # container label origin expected-version
+  local name="$1" label="$2" origin="$3" want="$4" printed apply staged out rc
+
+  set +e
+  printed="$(engine exec -u alice "$name" bash -lc \
+    "CERMET_UPDATE_ORIGIN=$origin cermet update </dev/null" 2>&1)"
+  set -e
+  apply="$(printf '%s\n' "$printed" | sed -n 's/^.*run: sudo \(.*\)$/\1/p' | tail -1)"
+  if [ -z "$apply" ]; then
+    bad "$label: the non-interactive path hands back its apply command" "a sudo command" \
+      "$(printf '%s' "$printed" | tr '\n' ' ')"
+    return
+  fi
+  # The staged artifact is whichever path that command is about: the binary it runs (tarball) or
+  # the package it names (deb).
+  case "$apply" in
+    *--apply-deb*) staged="$(printf '%s\n' "$apply" | awk '{for(i=1;i<=NF;i++) if ($i=="--apply-deb") print $(i+1)}')" ;;
+    *) staged="$(printf '%s\n' "$apply" | awk '{print $1}')" ;;
+  esac
+  engine exec "$name" bash -c "printf 'swapped' >> $staged" >/dev/null
+
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc "sudo $apply" 2>&1)"
+  rc=$?
+  set -e
+  assert_contains "$label: a swapped staged artifact is refused by the privileged half" \
+    "changed after it was verified" "the apply output" "$out"
+  if [ "$rc" -ne 0 ]; then
+    ok "$label: the swap refusal exits non-zero" "exit $rc"
+  else
+    bad "$label: the swap refusal exits non-zero" "a nonzero exit" "exit 0"
+  fi
+  assert_eq "$label: the swapped artifact installed nothing" "$want" \
+    "$(engine exec -u alice "$name" bash -lc 'cermet --version' 2>/dev/null || true)"
+  engine exec "$name" bash -c "rm -rf \$(dirname $staged)" >/dev/null 2>&1 || true
+}
+
+# Serve a whole fabricated 9.9.9 RELEASE from a file:// origin inside the container: the
+# `repos/<slug>/releases/latest` document the updater reads, that release's SHA256SUMS, and its one
+# artifact — the same three documents github.com and api.github.com answer, laid out under one tree
+# because $CERMET_UPDATE_ORIGIN remaps BOTH halves of the contact.
+#
+# ONE ASSET, deliberately: the whole point of the two-channel design is that a box is only ever
+# offered its OWN channel's artifact, and a release that publishes only the other channel's file
+# must therefore offer this box nothing rather than the wrong thing.
+FIXTURE_SLUG="suarezc/cermet"
+serve_fixture_origin() { # container artifact-path filename
+  local name="$1" artifact="$2" file="$3"
+  local api="/var/tmp/dl/repos/$FIXTURE_SLUG/releases"
+  local dl="/var/tmp/dl/$FIXTURE_SLUG/releases/download/v9.9.9"
+  engine exec "$name" mkdir -p "$api" "$dl" >/dev/null
+  engine cp "$artifact" "$name:$dl/$file"
+  engine exec "$name" bash -c "
+    set -e
+    cd '$dl'
+    sha256sum '$file' > SHA256SUMS
+    printf '{\"tag_name\":\"v9.9.9\",\"body\":\"a fabricated release for the upgrade leg\",\"assets\":[{\"name\":\"$file\"},{\"name\":\"SHA256SUMS\"}]}\n' > '$api/latest'
+    chmod -R a+rX /var/tmp/dl
+  " >/dev/null
+}
+
+
+# The sha256 of the sealed blob that holds this box's vault key.
+vault_key_sha() { # container
+  engine exec "$1" bash -c "sha256sum /etc/credstore.encrypted/cermet.key 2>/dev/null | cut -d' ' -f1" 2>/dev/null || true
+}
+
+VAULT_KEY_SHA=""
+record_vault_key() { # container
+  VAULT_KEY_SHA="$(vault_key_sha "$1")"
+  if [ -n "$VAULT_KEY_SHA" ]; then
+    ok "seed: the vault key blob is recorded for the crossing" "${VAULT_KEY_SHA:0:16}…"
+  else
+    bad "seed: the vault key blob is recorded for the crossing" "a sha256" "no blob at /etc/credstore.encrypted/cermet.key"
+  fi
+}
+
+# Every claim this leg exists to make, asked of the box AFTER an upgrade.
+assert_state_survived() { # container label old-version expected-new-version
+  local name="$1" label="$2" old="$3" want="$4" version out
+
+  assert_eq "$label: cermetd is active on the new build" active \
+    "$(engine exec "$name" systemctl is-active cermetd 2>/dev/null || true)"
+  version="$(engine exec -u alice "$name" bash -lc 'cermet --version' 2>/dev/null || true)"
+  assert_eq "$label: the installed binary is the one that was published" "$want" "$version"
+  if [ "$version" = "$old" ]; then
+    bad "$label: the version actually changed" "not $old" "still $old — nothing was upgraded"
+  else
+    ok "$label: the version actually changed" "$old → $version"
+  fi
+
+  # The vault opens. The credential ROW surviving is not the claim — an upgrade that re-minted the
+  # master key would leave every row in place and every one of them unopenable. So the sealed blob
+  # holding that key is compared BYTE FOR BYTE across the boundary (`record_vault_key` took it
+  # before), and the row check rides along as the daemon's own view of the same fact.
+  assert_eq "$label: the vault key is the SAME key, byte for byte" "$VAULT_KEY_SHA" \
+    "$(vault_key_sha "$name")"
+  set +e
+  out="$(as_alice "$name" 'cermet check stripe' 2>&1)"
+  set -e
+  assert_contains "$label: the vaulted credential is still there" cred_stripe \
+    "cermet check stripe" "$out"
+
+  # The corpus across a version boundary. It is stored as canonical sentence TEXT and re-parsed on
+  # every read, so a build whose DIALECT differs cannot carry the other's corpus forward — and by
+  # the no-backward-compatibility doctrine it must not try (the 2026-08-16 selector/literal ruling
+  # is exactly such a boundary, and this leg straddles it in both directions). What the product
+  # promises across ANY upgrade is that the corpus is never silently lost and never silently
+  # reinterpreted: the daemon either still serves it, or refuses and says how to get it back.
+  # Silence, or a rule that quietly became a different rule, is the failure.
+  set +e
+  out="$(as_alice "$name" 'cermet rules' 2>&1)"
+  set -e
+  if printf '%s' "$out" | grep -qF "stripe.get_charge"; then
+    ok "$label: the corpus survives the boundary, or fails closed with a remedy" \
+      "the authored rule still stands"
+  elif printf '%s' "$out" | grep -qF "cermet rules allow"; then
+    ok "$label: the corpus survives the boundary, or fails closed with a remedy" \
+      "refused, naming re-authoring: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-110)"
+  else
+    bad "$label: the corpus survives the boundary, or fails closed with a remedy" \
+      "the authored rule, or a refusal naming \`cermet rules allow\`" \
+      "$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+
+  set +e
+  out="$(as_alice "$name" 'cermet log --denied' 2>&1)"
+  set -e
+  assert_contains "$label: the receipt is still readable" refund "cermet log --denied" "$out"
+
+  set +e
+  out="$(as_alice "$name" 'cermet audit-verify' 2>&1)"
+  local rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    ok "$label: the audit chain verifies across the version boundary"
+  else
+    bad "$label: the audit chain verifies across the version boundary" "exit 0" \
+      "exit $rc — $(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+
+  # The rung is still DECLARED: an upgrade that dropped the declaration would leave a daemon that
+  # cannot say what holds its vault key.
+  assert_contains "$label: the custody rung is still declared" 'custody_profile = "systemd-host"' \
+    "/etc/cermetd/config.toml" "$(engine exec "$name" cat /etc/cermetd/config.toml 2>/dev/null || true)"
+}
+
+# Boot a box, install the BASELINE deb on it, and seed it. Returns the old version string in
+# $UPGRADE_OLD_VERSION.
+UPGRADE_OLD_VERSION=""
+
+# The seed sentence, in the dialect the build being seeded speaks — state on a version means state
+# THAT version could author. The 2026-08-16 selector/literal ruling made these two spellings differ
+# for a while (`allow verb:x.y` became `allow x.y`), and the corpus crosses the ctl wire as sentence
+# TEXT, so there was no spelling both accepted. That window CLOSED when origin/main's merge base
+# moved past e3adf4a: the baseline build now speaks the same dialect HEAD does, and the split this
+# comment used to describe collapsed into one row exactly as it said it would (2026-08-17). Keeping
+# the old spelling here made the baseline leg seed a rule its own daemon refuses, which is the
+# two-claim failure that collapse removes.
+BASELINE_REV="$(git -C "$REPO_ROOT" merge-base HEAD origin/main)"
+SEED_RULE="stripe.get_charge"
+boot_baseline_box() { # name deb presence-cli-rev seed-rule
+  local name="$1" deb="$2" rev="$3" rule="$4" out rc
+  boot_with_alice "$name"
+  engine cp "$deb" "$name:/tmp/cermet-starting.deb"
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'sudo dpkg -i /tmp/cermet-starting.deb' 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade: the starting version installs" "$(basename "$deb")"
+  else
+    bad "upgrade: the starting version installs" "exit 0" "exit $rc — $(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+  UPGRADE_OLD_VERSION="$(engine exec -u alice "$name" bash -lc 'cermet --version' 2>/dev/null || true)"
+  ensure_presence_cli "$rev"
+  seed_upgrade_state "$name" "$PRESENCE_CLI" "$rule"
+}
+
+PACKAGED_SHA=""
+
+# Boot a box installed from a TARBALL — no packaged copy, so `cermet update` reads the tarball
+# channel off it. `script` supplies the PTY that setup's self-elevation consent path requires.
+boot_tarball_box() { # name tarball
+  local name="$1" tarball="$2" out rc
+  boot_with_alice "$name"
+  engine cp "$tarball" "$name:/home/alice/cermet.tar.gz"
+  engine exec "$name" chown alice:alice /home/alice/cermet.tar.gz
+  engine exec -u alice "$name" bash -lc 'cd /home/alice && tar xzf cermet.tar.gz'
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc \
+    'cd /home/alice && script -qec "./cermet setup" /dev/null' 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade: the starting version installs" "from the tarball, no packaged copy"
+  else
+    bad "upgrade: the starting version installs" "exit 0" "exit $rc — $(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+  if engine exec "$name" test -e /usr/bin/cermet; then
+    bad "upgrade: a tarball box has no packaged copy" "no /usr/bin/cermet" "one is there"
+  else
+    ok "upgrade: a tarball box has no packaged copy" "the channel is unambiguous"
+  fi
+  UPGRADE_OLD_VERSION="$(engine exec -u alice "$name" bash -lc 'cermet --version' 2>/dev/null || true)"
+  ensure_presence_cli HEAD
+  seed_upgrade_state "$name" "$PRESENCE_CLI" "$SEED_RULE"
+}
+
+run_upgrade_leg() {
+  ensure_baseline_deb
+  ensure_fixture_tarball
+
+  # ---- door one: dpkg -i the tree's deb over an older install. The raw package upgrade.
+  local name="cermet-test-upgrade-dpkg-$STAMP" out rc old had_upload_timer
+  leg_header "upgrade (dpkg): an older Cermet with real state on it, upgraded by dpkg -i"
+  boot_baseline_box "$name" "$BASELINE_DEB" "$BASELINE_REV" "$SEED_RULE"
+  old="$UPGRADE_OLD_VERSION"
+
+  # THE STRIP's convergence precondition (2026-08-17). The operator's own boxes, and every box
+  # installed between 2026-08-16 and the strip, carry the removed program's timer. Whether the
+  # BASELINE does is a fact about the merge-base, so it is measured rather than assumed: while the
+  # baseline predates the strip this leg proves the upgrade REMOVES the units; once the merge-base
+  # has moved past it there is nothing to remove and the claim skips by name rather than passing
+  # vacuously.
+  if engine exec "$name" test -e /etc/systemd/system/cermet-research.timer; then
+    had_upload_timer=1
+    ok "upgrade: the starting version installed the retired upload timer" "there is something to converge away"
+  else
+    had_upload_timer=0
+  fi
+
+  engine cp "$DEB" "$name:/tmp/cermet-new.deb"
+  set +e
+  out="$(engine exec -u alice "$name" bash -lc 'sudo dpkg -i /tmp/cermet-new.deb' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade: dpkg -i over an existing install exits 0"
+  else
+    bad "upgrade: dpkg -i over an existing install exits 0" "exit 0" "exit $rc"
+  fi
+  assert_state_survived "$name" "upgrade/dpkg" "$old" "$EXPECTED_VERSION"
+  if [ "$had_upload_timer" -eq 1 ]; then
+    assert_no_upload_scheduler "$name" "upgrade/dpkg" "$out" 1
+  else
+    skip "upgrade/dpkg: the upgrade converges the retired upload timer away" \
+      "the baseline build is already stripped — nothing was installed to remove"
+  fi
+
+  # ---- door two: `cermet update` on a PACKAGED box, which must go through dpkg.
+  #
+  # ONE CHANNEL PER BOX. The claim is not merely that the box ends up on the
+  # new build — it is that update went through the PACKAGE MANAGER and left no second cermet behind
+  # it. The fixture serves the baseline deb as 9.9.9; direction does not matter to the mechanism,
+  # and the build identity is what proves the binary changed. Note the deb path does NOT require the
+  # incoming build to understand `--apply-deb`: the privileged half is the binary already installed,
+  # not the one being installed.
+  local name2="cermet-test-upgrade-deb-$STAMP"
+  leg_header "upgrade (cermet update, deb box): the package manager applies it, and nothing shadows it"
+  boot_baseline_box "$name2" "$DEB" HEAD "$SEED_RULE"
+  old="$UPGRADE_OLD_VERSION"
+  serve_fixture_origin "$name2" "$BASELINE_DEB" "cermet_9.9.9_${ARCH}.deb"
+
+  # THE FIXTURE IS A WHOLE RELEASE AGAIN. GitHub is the single
+  # source, so `$CERMET_UPDATE_ORIGIN` remaps the whole contact — the releases/latest document, the
+  # SHA256SUMS the checksum is resolved from, and the artifact — and the apply mechanics are back
+  # under end-to-end coverage instead of behind a wall no fixture could reach.
+  set +e
+  out="$(engine exec -u alice "$name2" bash -lc 'CERMET_UPDATE_ORIGIN=file:///var/tmp/dl cermet update --check' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  assert_contains "upgrade/deb: --check offers this box the PACKAGE" "cermet_9.9.9_${ARCH}.deb" \
+    "cermet update --check" "$out"
+  assert_contains "upgrade/deb: --check reports what it verified" "github-release" \
+    "cermet update --check" "$out"
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade/deb: --check exits 0"
+  else
+    bad "upgrade/deb: --check exits 0" "exit 0" "exit $rc"
+  fi
+  assert_eq "upgrade/deb: --check installed nothing" "$old" \
+    "$(engine exec -u alice "$name2" bash -lc 'cermet --version' 2>/dev/null || true)"
+
+  # A corrupted package is refused against the checksum the RELEASE published, before dpkg is
+  # invoked at all. SHA256SUMS is left alone on purpose: the release's published sum is the
+  # authority, and the bytes no longer match it.
+  engine exec "$name2" bash -c "printf 'tamper' >> /var/tmp/dl/$FIXTURE_SLUG/releases/download/v9.9.9/cermet_9.9.9_${ARCH}.deb" >/dev/null
+  set +e
+  out="$(engine exec -u alice "$name2" bash -lc \
+    'script -qec "CERMET_UPDATE_ORIGIN=file:///var/tmp/dl cermet update" /dev/null' 2>&1)"
+  rc=$?
+  set -e
+  assert_contains "upgrade/deb: a tampered package is refused" \
+    "does not match the checksum the release published" "the update output" "$out"
+  assert_absent "upgrade/deb: dpkg was never invoked on it" "dpkg:" "the update output" "$out"
+  if [ "$rc" -ne 0 ]; then
+    ok "upgrade/deb: the refusal exits non-zero" "exit $rc"
+  else
+    bad "upgrade/deb: the refusal exits non-zero" "a nonzero exit" "exit 0"
+  fi
+  assert_eq "upgrade/deb: the refused update changed nothing" "$old" \
+    "$(engine exec -u alice "$name2" bash -lc 'cermet --version' 2>/dev/null || true)"
+  engine exec "$name2" bash -c "cd /var/tmp/dl/$FIXTURE_SLUG/releases/download/v9.9.9 && truncate -s -6 cermet_9.9.9_${ARCH}.deb" >/dev/null
+
+  assert_rehash_gate_refuses_a_swapped_artifact "$name2" "upgrade/deb" file:///var/tmp/dl "$old"
+
+  set +e
+  out="$(engine exec -u alice "$name2" bash -lc \
+    'script -qec "CERMET_UPDATE_ORIGIN=file:///var/tmp/dl cermet update" /dev/null' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade/deb: cermet update exits 0"
+  else
+    bad "upgrade/deb: cermet update exits 0" "exit 0" "exit $rc"
+  fi
+  assert_contains "upgrade/deb: the consent paragraph names dpkg" "with dpkg" \
+    "the update output" "$out"
+  assert_contains "upgrade/deb: the consent paragraph names the url it installs from" \
+    "file:///var/tmp/dl" "the update output" "$out"
+  assert_contains "upgrade/deb: the receipt states what the checksum proves" \
+    "integrity, not authenticity" "the update output" "$out"
+  assert_contains "upgrade/deb: the receipt names the single source it verified against" \
+    "github-release" "the update output" "$out"
+  assert_contains "upgrade/deb: the receipt states the restart consequence" "MCP bridge" \
+    "the update output" "$out"
+  # THE claim of the redesign: the package manager holds the new build, and the prefix setup
+  # publishes into holds THE SAME BYTES. Two cermets that can disagree is the defect this avoids.
+  assert_eq "upgrade/deb: the packaged copy and the published copy are one build" same \
+    "$(engine exec "$name2" bash -c 'a=$(sha256sum /usr/bin/cermet | cut -d" " -f1); b=$(sha256sum /usr/local/bin/cermet | cut -d" " -f1); [ "$a" = "$b" ] && echo same || echo "differ: $a vs $b"')"
+  assert_contains "upgrade/deb: dpkg still owns the installed cermet" /usr/bin/cermet \
+    "dpkg -S" "$(engine exec "$name2" bash -c 'dpkg -S /usr/bin/cermet' 2>&1 || true)"
+  assert_state_survived "$name2" "upgrade/deb" "$old" "$BASELINE_VERSION"
+
+  # ---- door three: `cermet update` on a TARBALL box, which must publish through setup.
+  local name3="cermet-test-upgrade-tarball-$STAMP"
+  leg_header "upgrade (cermet update, tarball box): setup publishes it, and no packaged copy appears"
+  boot_tarball_box "$name3" "$TARBALL"
+  old="$UPGRADE_OLD_VERSION"
+  serve_fixture_origin "$name3" "$FIXTURE_TARBALL" "cermet_9.9.9_linux_${ARCH}.tar.gz"
+
+  # A release that publishes only the OTHER channel's asset offers this box nothing — the box is
+  # never silently handed a package it did not install through.
+  set +e
+  out="$(engine exec -u alice "$name3" bash -lc \
+    'CERMET_UPDATE_ORIGIN=file:///var/tmp/dl cermet update --check' 2>&1)"
+  set -e
+  assert_contains "upgrade/tarball: --check offers this box the TARBALL" \
+    "cermet_9.9.9_linux_${ARCH}.tar.gz" "cermet update --check" "$out"
+  assert_absent "upgrade/tarball: --check never offers the package" ".deb" \
+    "cermet update --check" "$out"
+
+  assert_rehash_gate_refuses_a_swapped_artifact "$name3" "upgrade/tarball" file:///var/tmp/dl "$old"
+
+  set +e
+  out="$(engine exec -u alice "$name3" bash -lc \
+    'script -qec "CERMET_UPDATE_ORIGIN=file:///var/tmp/dl cermet update" /dev/null' 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade/tarball: cermet update exits 0"
+  else
+    bad "upgrade/tarball: cermet update exits 0" "exit 0" "exit $rc"
+  fi
+  assert_contains "upgrade/tarball: the consent paragraph names publication, not dpkg" \
+    "publish the new binary" "the update output" "$out"
+  assert_absent "upgrade/tarball: no package manager is involved" "with dpkg" \
+    "the update output" "$out"
+  assert_eq "upgrade/tarball: the published binary is the one that runs" /usr/local/bin/cermet \
+    "$(engine exec -u alice "$name3" bash -lc 'command -v cermet' 2>&1 || true)"
+  if engine exec "$name3" test -e /usr/bin/cermet; then
+    bad "upgrade/tarball: update created no packaged copy" "no /usr/bin/cermet" "one appeared"
+  else
+    ok "upgrade/tarball: update created no packaged copy" "the box still has one channel"
+  fi
+  assert_state_survived "$name3" "upgrade/tarball" "$old" "$FIXTURE_VERSION"
+
+  # An origin with no release at all is the state every install sees until one exists, and it is a
+  # report, not a failure.
+  set +e
+  out="$(engine exec -u alice "$name3" bash -lc 'CERMET_UPDATE_ORIGIN=file:///var/tmp/empty cermet update' 2>&1)"
+  rc=$?
+  set -e
+  assert_contains "upgrade: an origin with no release is a clean report" \
+    "no update channel is published yet" "cermet update" "$out"
+  if [ "$rc" -eq 0 ]; then
+    ok "upgrade: the no-channel state exits 0" "a fact about the release channel, not a failure"
+  else
+    bad "upgrade: the no-channel state exits 0" "exit 0" "exit $rc"
+  fi
+}
+
+if [ "$LEG" = deb ] || [ "$LEG" = both ]; then run_deb_leg; fi
+if [ "$LEG" = tarball ] || [ "$LEG" = both ]; then run_tarball_leg; fi
+if [ "$LEG" = custody ] || [ "$LEG" = both ]; then run_custody_leg; fi
+if [ "$LEG" = exdev ] || [ "$LEG" = both ]; then run_exdev_leg; fi
+if [ "$LEG" = upgrade ] || [ "$LEG" = both ]; then run_upgrade_leg; fi
+
+harness_report "dev/test-deb" "leg=$LEG, engine=$ENGINE"

@@ -1,0 +1,15 @@
+# Retrieve one exact dispute's state and evidence-status summary. The response is verbatim:
+# the dispute's `evidence` body comes back with everything else..
+provider: stripe
+action: get_dispute_summary
+fields:
+  - { name: dispute, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [dispute]
+execution_targets: [dispute]
+http:
+  steps:
+    - id: get
+      method: GET
+      path: /v1/disputes/{dispute}
+      success_statuses: [200]
+      require: [id, object, status]

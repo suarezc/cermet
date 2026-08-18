@@ -1,0 +1,17 @@
+provider: stripe
+action: search_customers
+fields:
+  - { name: email_contains, type: str, required: true, class: read_filter, binding: unbound }
+consumes: [email_contains]
+execution_targets: []
+scope: account
+http:
+  steps:
+    - id: search
+      method: GET
+      path: /v1/customers/search
+      success_statuses: [200]
+      query:
+        limit: "10"
+        query: 'email~"{email_contains|query_literal}"'
+      expect_literal: { has_more: false }

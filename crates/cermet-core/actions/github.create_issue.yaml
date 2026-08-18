@@ -1,0 +1,29 @@
+# Action template for github.create_issue (external_state_change). Open ONE
+# issue on the frozen repository. Addressing is frozen identity (owner/name — exact-pinned execution
+# targets); `title` and `body` are REQUEST-TIME free_payload holes: the agent authors them in the
+# request, they are typed (str), size-capped (the 256 KiB template-field cap), audited verbatim in the
+# frozen resource, and FROZEN AT MINT like every other field — there is no post-approval fill channel.
+# No identity/side_effect/secret field is ever free_payload.
+#
+# The response returns the created issue's stable IDs and URL (`id`, `number`, `html_url`) — never
+# the echoed title/body —. A
+# 201 is the created evidence; any non-2xx (e.g. 410 issues-disabled, 403) fails closed.
+provider: github
+action: create_issue
+fields:
+  - { name: owner, type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: name,  type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: title, type: str, required: true, class: free_payload, binding: unbound }
+  - { name: body,  type: str, required: true, class: free_payload, binding: unbound }
+consumes: [owner, name, title, body]
+execution_targets: [owner, name]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /repos/{owner}/{name}/issues
+      success_statuses: [201]        # 201 Created only.
+      require: [id, number]          # the created issue's stable IDs must be present, never null.
+      body:
+        title: "{title}"
+        body: "{body}"

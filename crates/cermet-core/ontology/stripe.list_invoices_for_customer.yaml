@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: list_invoices_for_customer
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 23728f66b119285b3cc3483dae9813e171ae10414e425805674369a2031e63d1
+semantics:
+  resource_family: invoice
+  provider_operation: invoice_list_for_customer
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: List the first ten invoices for one exact customer, projecting only opaque identity, billing state, amounts, currency, creation time, and truncation.
+  cautions:
+    - The required customer filter and literal limit 10 make an account-wide or agent-sized list inexpressible.
+    - No cursor is accepted; has_more reports truncation without implying authority to fetch another page.
+    - The LIKELY native ceiling is RAK Invoices Read or App invoice_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-INVOICE-LIST
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

@@ -1,0 +1,31 @@
+# Cancel one exact PaymentIntent only while its full frozen safe subset remains cancelable. The
+# provider-resolved positive canonical amount meters the authorization being released.
+provider: stripe
+action: cancel_payment_intent
+request_evidence: stripe.cancel_payment_intent.v1
+money:
+  preconditions: [pi_cancelable]
+fields:
+  - { name: payment_intent, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: status, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: capture_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: confirmation_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [payment_intent]
+execution_targets: [payment_intent, account, mode, currency, customer, status, capture_method, confirmation_method]
+http:
+  steps:
+    - id: cancel
+      method: POST
+      path: /v1/payment_intents/{payment_intent}/cancel
+      body_encoding: form
+      body: {}
+      success_statuses: [200]
+      require: [id, object, currency, customer, livemode, status, capture_method, confirmation_method, canceled_at]
+      expect_eq: { id: payment_intent, currency: currency, customer: customer, capture_method: capture_method, confirmation_method: confirmation_method, livemode: mode }
+      expect_literal: { object: payment_intent, status: canceled }
+      retention: none

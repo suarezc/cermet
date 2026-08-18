@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: get_product
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 6ad6c7f0fdd34775c0fe0a1d40cbbcc90e246f6239199a93869991401451c0c8
+semantics:
+  resource_family: product
+  provider_operation: product_retrieve
+  risk_class: observation
+  sensitivity: public_metadata
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Retrieve one exact product's active state and sale-facing catalog summary without metadata, images, or URLs.
+  cautions:
+    - Product ID is the sole provider-consumed identity, and no expand parameter exists.
+    - Metadata, images, marketing features, package dimensions, statement descriptor, and URL are outside the projection.
+    - The LIKELY native ceiling is RAK Products Read or App product_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-PRODUCT-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

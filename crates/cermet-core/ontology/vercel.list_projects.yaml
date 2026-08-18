@@ -1,0 +1,22 @@
+schema: cermet.grounded-ontology/v1
+provider: vercel
+action: list_projects
+binds:
+  provider_descriptor_sha256: 117444101b16b5b8dc83be5e1b894fed9316457312fac1e380e7aad3296f4382
+  action_template_sha256: 47e4ce06ce9a6c52f5915d5db59bceb0e098e5eab47b93e3427f8cb20f74e949
+semantics:
+  resource_family: project
+  provider_operation: project_list_read
+  risk_class: observation
+  sensitivity: public_metadata
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: >-
+    Read one complete page (max 100) of the account's projects, narrowed by a required, sentence-pinnable
+    server-side search filter (the frozen identity). The response is Vercel's project list VERBATIM and is stored as an
+    artifact; a result with a further page FAILS the completeness assertion rather than truncating.
+  cautions:
+sources:
+  - VERCEL-API-LIST-PROJECTS

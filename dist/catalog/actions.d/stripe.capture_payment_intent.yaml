@@ -1,0 +1,33 @@
+# Capture one bounded amount from an exact manual-capture PaymentIntent. Without multicapture a
+# capture is always final, and Stripe refuses the `final_capture` parameter outright on such
+# intents — so the request omits it rather than freezing a value.
+provider: stripe
+action: capture_payment_intent
+request_evidence: stripe.capture_payment_intent.v1
+money:
+  preconditions: [pi_capturable]
+fields:
+  - { name: payment_intent, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: status, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: capture_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: intent_amount, type: int, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount_capturable, type: int, required: true, class: identity, binding: exact_resource_pin }
+consumes: [payment_intent, amount]
+execution_targets: [payment_intent, account, mode, currency, customer, status, capture_method, intent_amount, amount_capturable]
+http:
+  steps:
+    - id: capture
+      method: POST
+      path: /v1/payment_intents/{payment_intent}/capture
+      body_encoding: form
+      body: { amount_to_capture: "{amount}" }
+      success_statuses: [200]
+      require: [id, object, amount, amount_capturable, amount_received, currency, customer, livemode, status, capture_method]
+      expect_eq: { id: payment_intent, amount: intent_amount, currency: currency, customer: customer, capture_method: capture_method, livemode: mode }
+      expect_literal: { object: payment_intent }
+      retention: none

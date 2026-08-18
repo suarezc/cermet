@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_thread
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: bf8340243676c8f1320c6fe98c23994186a45ba49b2540c55f4c7c36286d44ed
+semantics:
+  resource_family: issue_thread
+  provider_operation: thread_read
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read one issue or pull-request thread's metadata by exact number, with author identity and comment count.
+  cautions:
+    - Comment bodies are not fetched in v1; only the comment count is projected.
+    - Thread title and author identities are personal data.
+sources:
+  - GH-REST-ISSUES
+  - GH-REST-PAGINATION
+  - GH-REST-BEST-PRACTICES

@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: get_price
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 973dd96b65e1f5e0beffb79f3612f1ec5baed069424af7e9bc874a8cf18153de
+semantics:
+  resource_family: price
+  provider_operation: price_retrieve
+  risk_class: observation
+  sensitivity: public_metadata
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Retrieve one exact price's product, amount, currency, billing scheme, type, and recurrence summary without metadata or lookup keys.
+  cautions:
+    - Price ID is the sole provider-consumed identity, and no expand parameter exists.
+    - Custom unit amount details, tiers, quantity transforms, metadata, and lookup key are outside the projection.
+    - The LIKELY native ceiling is RAK Prices Read or App plan_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-PRICE-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

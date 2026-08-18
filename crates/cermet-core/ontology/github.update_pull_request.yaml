@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: update_pull_request
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 169390a0499782432a95e30f442784d1dcf3453ea0c172035a8c182667053692
+semantics:
+  resource_family: pull_request
+  provider_operation: pull_request_update
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: reversible
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Edit one pull request by exact number - its state, title, or body - sending only the fields the request froze.
+  cautions:
+    - Every editable field is optional and an absent one is omitted from the PATCH, so an edit never clobbers a field the approval did not name.
+    - state is not enum-checked at admission (the grammar has formats, not value sets); GitHub enforces open and closed, and a sentence pin is the narrowing control.
+    - A request supplying none of the optional fields is a legal no-op edit that GitHub answers 200 with the unchanged pull request.
+    - Closing a pull request does not delete its branch and does not undo a merge.
+sources:
+  - GH-REST-PULL-REQUESTS
+  - GH-REST-BEST-PRACTICES

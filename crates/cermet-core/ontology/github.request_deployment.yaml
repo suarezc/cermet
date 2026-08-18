@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: request_deployment
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 63b2329dac15a43a230986fd1ff7ea27e5318adc9119c18542fb7d93c79d3a0b
+semantics:
+  resource_family: deployment
+  provider_operation: deployment_request_create
+  risk_class: provider_control_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: accepted
+  idempotency: non_idempotent
+review:
+  summary: Create one deployment request on a pinned repository at an exact commit SHA with frozen task, auto_merge, and required_contexts literals.
+  cautions:
+    - HTTP 201 proves the deployment REQUEST was created, not that anything deployed.
+    - task=deploy, auto_merge=false, required_contexts=[], and the environment booleans are frozen literals.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-DEPLOYMENTS
+  - GH-REST-BEST-PRACTICES

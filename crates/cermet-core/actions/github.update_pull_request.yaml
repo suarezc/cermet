@@ -1,0 +1,50 @@
+# Action template for github.update_pull_request (PR close-out parity; external_state_change).
+# Edit ONE pull request on the frozen repository: its `state`, its `title`,
+# its `body`, or any combination of those.
+#
+# This is the close-out half of the PR vocabulary, and it is deliberately NOT a close-only verb.
+# A "close_pull_request" special case would have been the same mistake the frozen `draft: true` and
+# frozen `event: COMMENT` literals were: baking one policy choice into a vendored
+# template and calling the missing vocabulary a safety property. The verb is the endpoint's real
+# shape; which edits an operator permits is a sentence predicate (`... and state = closed`).
+#
+# EVERY editable field is OPTIONAL, and that is load-bearing on a PATCH. An absent optional field
+# freezes as ABSENCE, and `{x?}` drops the enclosing key from the wire entirely — so a
+# title-only edit sends `{"title": ...}` and nothing else. If these were required-with-null instead,
+# a title edit would CLOBBER the body and the state, which is the classic PATCH footgun. What was
+# approved is exactly what is sent, and what was not approved is not mentioned.
+#
+# NOTE (no enum in the grammar): the template language has admission FORMATS, not closed value sets,
+# so `state` is not enum-checked here — GitHub enforces {open, closed} and rejects anything else
+# with a 422, which fails closed like any other non-2xx. The narrowing control is the sentence pin.
+# NOTE (all-absent is a no-op, deliberately unhandled): a request that supplies none of the three
+# optional fields is a legal PATCH that GitHub answers 200 with the unchanged pull request. Admission
+# does not special-case it — an edge case earns a note, not a branch, and the audited receipt shows
+# plainly that nothing was asked for.
+#
+# `number` carries `format: uint`. Only owner/name/number are execution targets: an
+# execution target must be a required field (a provider default could otherwise select authority the
+# frozen resource never named), and the three editable fields are optional by construction.
+# The response is the updated pull request VERBATIM under the declared retention default.
+provider: github
+action: update_pull_request
+fields:
+  - { name: owner,  type: str, required: true,  class: identity,     binding: exact_resource_pin }
+  - { name: name,   type: str, required: true,  class: identity,     binding: exact_resource_pin }
+  - { name: number, type: str, required: true,  class: identity,     binding: exact_resource_pin, format: uint }
+  - { name: state,  type: str, required: false, class: identity,     binding: exact_resource_pin }
+  - { name: title,  type: str, required: false, class: free_payload, binding: unbound }
+  - { name: body,   type: str, required: false, class: free_payload, binding: unbound }
+consumes: [owner, name, number, state, title, body]
+execution_targets: [owner, name, number]
+http:
+  steps:
+    - id: update
+      method: PATCH
+      path: /repos/{owner}/{name}/pulls/{number}
+      success_statuses: [200]        # 200 only; 404 (no such PR) and 422 (bad state) fail closed.
+      require: [number, state]       # the updated PR must report its identity and resulting state.
+      body:
+        state: "{state?}"
+        title: "{title?}"
+        body: "{body?}"

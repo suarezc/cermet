@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: get_invoice
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 0278ec9cf141b5af03418342cae0e1745a6043cf77b9de8681a7a4339c1641f9
+semantics:
+  resource_family: invoice
+  provider_operation: invoice_retrieve
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Retrieve one exact invoice's billing-state and amount summary without customer PII, payment instruments, line items, or hosted document URLs.
+  cautions:
+    - Invoice ID is the sole provider-consumed identity; no implicit account list or expansion is available.
+    - Customer is retained only as its opaque ID; customer contact fields, lines, metadata, invoice PDF, and hosted URL are omitted.
+    - The LIKELY native ceiling is RAK Invoices Read or App invoice_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-INVOICE-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

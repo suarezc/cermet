@@ -1,0 +1,16 @@
+# Retrieve one exact invoice. The response is Stripe's invoice body VERBATIM — customer
+# PII, payment methods, hosted/PDF URLs, lines, and metadata included — and it is retained as an
+# artifact under the declared default. The bound is the REQUEST: one exact invoice id.
+provider: stripe
+action: get_invoice
+fields:
+  - { name: invoice, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [invoice]
+execution_targets: [invoice]
+http:
+  steps:
+    - id: get
+      method: GET
+      path: /v1/invoices/{invoice}
+      success_statuses: [200]
+      require: [id, object, status]

@@ -1,0 +1,30 @@
+# cermetd.tmpfiles — systemd-tmpfiles rule for cermetd's socket runtime dir.
+# Installed to /etc/tmpfiles.d/cermetd.conf by `cermet setup`.
+#
+# WHY this is provisioned by tmpfiles (a privileged step) and NOT by the daemon:
+# the daemon runs as the unprivileged `cermet` uid and is DELIBERATELY not a member of
+# cermet-approvers. It therefore CANNOT chgrp(2) the socket dir or the sockets to the
+# cermet-approvers group (that would EPERM). Instead a privileged tmpfiles rule creates the
+# dir setgid (the leading 2 in 2711), group-owned by cermet-approvers. Unix setgid-dir
+# semantics make every socket the daemon binds INSIDE this dir INHERIT the cermet-approvers
+# group automatically — so the cross-uid ctl.sock group-ACL is established with no daemon
+# chgrp at all. The daemon sets only socket MODE (ctl.sock 0660).
+#
+# The AGENT socket lives in a SEPARATE dir, /run/cermetd-agents: 2711
+# cermet:cermet-agents, so agent.sock INHERITS the cermet-agents group and the daemon sets its
+# mode to 0660 — the distinct `cermet-agent` uid reaches it via that group; the approver and world
+# cannot. The kernel-attested SO_PEERCRED agent-uid check remains THE auth boundary; the group +
+# mode are defense-in-depth (never call the file mode the boundary).
+#
+# Mode 2711 = setgid + rwx for owner (cermet, the daemon) + --x (search/traverse, no read,
+# no write) for group and other. World-traversable-not-listable: any uid can REACH a socket
+# path it already knows, but cannot enumerate the dir or create entries in it. Connection is
+# then gated by the per-socket MODE + peercred. Only the daemon owner can bind new sockets.
+#
+# Owner cermet = the daemon uid; group cermet-approvers = the approver-side ACL (ctl), group
+# cermet-agents = the agent-side ACL (agent.sock). The refuse-to-serve doctor tier asserts the
+# ctl dir is 2711 cermet:cermet-approvers and the agent dir is 2711 cermet:cermet-agents.
+#
+# Type  Path                 Mode Owner  Group            Age Argument
+d       /run/cermetd         2711 cermet cermet-approvers -
+d       /run/cermetd-agents 2711 cermet cermet-agents -

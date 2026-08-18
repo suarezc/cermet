@@ -1,0 +1,224 @@
+# /etc/cermetd/config.toml — cermetd configuration template (Linux v1 MVP).
+#
+# This is the v1 cut:
+#   * Linux bare metal,
+#   * ONE agent trust-domain per uid,
+#   * ONE configured approver uid (NOT a group resolver — that is a post-v1 expansion),
+#   * principal_id := peer.uid (the kernel-attested peercred uid; no enrollment).
+#
+# Installed 0644 root:root. The DBs and master key (which this file does NOT contain)
+# live under CERMET_HOME=/var/lib/cermetd, 0700 cermet:cermet.
+
+# --- Service identity ------------------------------------------------------------------
+# The dedicated, non-login system user cermetd runs as. Created by `cermet setup`
+# (`useradd --system --no-create-home cermet`). The daemon owns the vault and is the only
+# component that ever decrypts a credential; running as its own uid is what makes the
+# file ACLs a kernel-enforced boundary rather than a convention.
+service_user = "cermet"
+
+# Optional explicit uid for the service user. Leave commented to let useradd allocate one
+# from the system range; set it only if you need a pinned, reproducible uid across hosts.
+# The daemon derives "who am I" from getuid() at runtime, so this is documentation /
+# install-assertion input, not a runtime authority.
+# service_uid = 0   # <-- placeholder; do not leave 0 (0 == root). Pin a real system uid.
+
+# --- Approver (v1: a SINGLE uid, not a group) ------------------------------------------
+# The one human uid permitted to approve `Ask` grants and use the ctl.sock control
+# channel. This is a DIFFERENT uid from service_user above: the approver≠principal /
+# approver≠daemon split is what keeps approvals human-only. The daemon must never be able
+# to satisfy this check itself.
+#
+# v1 is one configured approver uid — deliberately NOT the cermet-approvers GROUP
+# resolver (that, and N approvers, are a post-v1 expansion). The
+# cermet-approvers group still exists for the ctl.sock group-ACL, but authority in v1 is
+# this single uid.
+#
+# REQUIRED: replace the placeholder with the approver's real uid (e.g. `id -u alice`).
+# Leaving it unset / equal to service_uid is a misconfiguration the daemon's
+# refuse-to-serve doctor tier rejects (agent/approver-uid collapse).
+#
+# `cermet setup` seeds this for you on a FIRST install: normally from SUDO_UID, which is how
+# `sudo dpkg -i` / `sudo cermet setup` name the human. A caller with no sudo context (a container
+# build, a harness) names the human with CERMET_APPROVER_UID instead. An existing config already
+# names the approver and is never overwritten, so upgrades need neither.
+approver_uid = 0   # <-- REPLACE. Must NOT equal service_uid. `id -u <approver>`.
+
+# --- Vault-key custody (the declared ladder) --------------------------------------------
+# WHICH mechanism holds this box's vault key. `cermet setup` selects the strongest rung this
+# machine can actually carry and WRITES IT HERE — the ladder is automatic, but never silent, and
+# never a guess: the rung recorded is the one that actually provisioned the key.
+#
+#   custody_profile = "systemd-tpm2+host"
+#       systemd encrypted credential bound to BOTH this OS installation's host secret and this
+#       box's TPM2 device. Encrypted vault key is bound to this OS installation and TPM2 device.
+#
+#   custody_profile = "systemd-host"
+#       systemd encrypted credential bound to the host secret at
+#       /var/lib/systemd/credential.secret. Persistent Cermet files do not contain the plaintext
+#       key; full host-image disclosure may permit recovery (the unseal key is on that image too).
+#
+#   custody_profile = "file-protected"
+#       a cermet-owned 0600 master.key under CERMET_HOME. Peer uids and unprivileged agents get a
+#       kernel EACCES; it does not protect the vault key from disk snapshots or backups.
+#
+# This key is AUTHORITATIVE for the daemon's key SOURCE, not a description of it: cermetd reads
+# exactly the source this names and refuses anything else, so the config and the box can never
+# disagree about custody. There is deliberately NO default — in service mode an absent
+# custody_profile is a refusal naming `cermet setup`, because a guessed key source either opens
+# nothing or opens the wrong vault. Do not hand-edit it: changing this line does not move the key.
+#
+# CHOSEN ONCE: the rung is selected at FIRST provisioning and re-runs of `cermet setup` re-declare
+# whichever rung this box is already on — the key that exists is the key the vault is encrypted
+# under. Moving to a STRONGER rung today means re-keying with `--force-clean-bootstrap`, which is a
+# vendor reset and destroys the vault. A lossless in-place rung upgrade is queued post-launch.
+# custody_profile = "file-protected"   # <-- `cermet setup` writes the declared line at the end of this file.
+
+# --- Socket runtime dir ----------------------------------------------------------------
+# The setgid dir holding ctl.sock, provisioned by dist/linux/cermetd.tmpfiles at platform
+# parity with the macOS installer: 2711 cermet:cermet-approvers (the approver-side ACL), so
+# the ctl.sock the daemon binds inherits cermet-approvers.
+runtime_dir = "/run/cermetd"          # ctl.sock dir (2711 cermet:cermet-approvers).
+
+# --- Agent plane (the distinct model-driven agent uid) ---------------------------------
+# The dedicated `cermet-agent` system uid the model-driven MCP bridge runs as. This is a THIRD
+# uid, distinct from BOTH service_uid (the daemon) and approver_uid (the human). agent.sock admits
+# ONLY this uid; ctl.sock admits ONLY the approver — so the agent plane and the approval plane are
+# kernel-separated and human-only approval becomes a kernel property. Created by `cermet setup`
+# (`useradd --system --no-create-home cermet-agent`, sole member of the cermet-agents group) and
+# seeded here for you (override with CERMET_AGENT_UID).
+#
+# REQUIRED in service mode (never optional): missing, 0 (root), == service_uid, or == approver_uid is a
+# uid-collapse the daemon's refuse-to-serve doctor tier rejects. `id -u cermet-agent`.
+agent_uid = 0   # <-- REPLACE. Must NOT equal service_uid or approver_uid. `id -u cermet-agent`.
+
+# The SEPARATE runtime dir holding agent.sock, provisioned by dist/linux/cermetd.tmpfiles as
+# 2711 cermet:cermet-agents (agent.sock inherits the cermet-agents group; the distinct agent uid
+# reaches it, the approver/world cannot). Defaults to /run/cermetd-agents; leave it unless you have
+# a reason to relocate the agent socket.
+agent_runtime_dir = "/run/cermetd-agents"   # agent.sock dir (2711 cermet:cermet-agents).
+
+# --- Egress ----------------------------------------------------------------------------
+# There is no egress config key. Provider origins are BAKED into the vendored descriptors and
+# pinned in-core on every call (Egress::allows; never user- or agent-settable). A former
+# host-allowlist config key was parsed by nothing and is deleted; do not reintroduce it.
+
+# --- Sentence authority (the daemon-native `cermet rules allow` ceremony) ---------------------
+# The human-owned rule file whose exact bytes confer authority ONLY when their SHA-256 matches
+# the daemon-held pin (CERMET_HOME/sentence.pin, 0600 cermet:cermet). Installed by
+# `cermet setup` in a 2750 setgid dir owned by cermet:cermet-approvers:
+# the approver owns/writes it, the uid-cermet daemon reads it via the group. Leaving this unset
+# means every sentence-gated (e.g. Stripe) request fails closed — the doctor warns in service mode.
+sentence_rules_path = "/etc/cermetd/sentences/rules.cermet"
+
+# --- Sentence language: temporal (windowed) clauses ------------------------------------
+# OFF by default. A decision is a pure function of (request, corpus):
+# nothing accumulated — no counter, no window, no running total — is consulted when a request is
+# decided. That is what makes a sentence answerable by reading it, and a receipt explainable
+# without replaying history.
+#
+# The two clauses this suspends are the only ones that read accumulated state. They are metered
+# from the audit ledger over a fixed calendar window:
+#     ... where budget amount 50000 per day
+#     ... where rate 10 per hour
+# PER-REQUEST bounds are a different thing and are unaffected: an amount ceiling, an amount floor,
+# an exact pin, and a finite set all evaluate from the request alone and stay live whatever this
+# key says.
+#
+# With this false, a corpus carrying either clause is REFUSED at admission (`cermet doc apply`,
+# `cermet rules allow`) with a message naming this key — never silently accepted with the clause
+# dropped, which would turn an authored cap into unmetered standing authority. Set it true to
+# restore the previous behavior exactly: the machinery is gated, not removed. Flipping it does not
+# rewrite the live corpus — re-apply the corpus afterwards.
+#
+# A live corpus that already carries one of these clauses does NOT keep working when this is false:
+# boot adoption re-validates the standing corpus, that validation fails, and the daemon then DENIES
+# every sentence-routed request — naming the failing rule and this key in the deny — until the corpus
+# is re-applied without the clause (or this key is set true). Check with `cermet doc check` before
+# flipping it off on a box whose live corpus uses one.
+# language_temporal_clauses = false
+
+# --- Artifact store --------------------------------------------------------------------
+# Command/tool output (S3) is stored content-addressed under CERMET_HOME/artifacts,
+# _cermet-owned so the agent cannot rewrite history after it is recorded. Both knobs are
+# optional and default to the values below.
+#   artifact_max_bytes:      per-blob ceiling; overflow keeps head+tail and marks truncated.
+#   artifact_retention_days: startup sweep drops blobs older than this (0 = keep forever).
+# artifact_max_bytes = 5242880       # 5 MiB
+# artifact_retention_days = 90
+
+# --- The git seam (plain `git push` on a `cermet::` remote) -----------------------------------------------------
+# A push is decided by GIT'S OWN update hook on a daemon-held mirror, not by an agent request.
+# The daemon wires an SO_PEERCRED-attested stream (git.sock) to `git receive-pack` on that mirror,
+# git does the transfer, and Cermet appears exactly twice: the hook decision and the credentialed
+# hop that carries the authorized update to the upstream. Cermet is authorization and receipt —
+# carriers, staging areas, and wire formats belong to git. A refusal is returned in git's own error
+# vocabulary (an ERR pkt-line), so it reads as `remote error: <reason>` in your push output.
+#
+# There is NO registration step: `git_binary` defaults to this box's git. The daemon boots the same
+# whether or not that path works; usability (it runs, and reports >= 2.31 for the environment-config
+# credential channel) is checked PER REQUEST, and a missing or too-old git refuses git operations
+# with a message naming this key while every other verb is unaffected.
+#
+# The credential rides `http.<url>.extraHeader` through the child's ENVIRONMENT — never argv,
+# because /proc/<pid>/cmdline is world-readable while /proc/<pid>/environ is not. The child is run
+# hermetically (cleared environment, GIT_CONFIG_NOSYSTEM=1, neutralized global config, controlled
+# HOME, no PATH lookup) and led into its own process group so the timeout can reap the whole tree.
+#   git_binary:      ABSOLUTE path of the git to run. Absolute on purpose: a relative name would be
+#                    resolvable by whatever is on PATH, and this one is root-owned.
+#   git_mirror_dir:  root of the persistent 0700 per-remote bare mirrors. They live under the
+#                    unit's own StateDirectory, so they need no tmpfiles rule. Persistence is what
+#                    makes every push after the first O(delta): the bases are already there.
+#   git_max_push_bytes: ceiling on the bytes ONE push may write into a mirror. Written into each
+#                    mirror's own config as `receive.maxInputSize` when the mirror is created, so
+#                    GIT enforces it ("remote: fatal: pack exceeds maximum allowed size"). It bounds
+#                    an UNAUTHORIZED push too: the pack is received before any decision exists, so
+#                    without this a wrong-remote or looping agent could fill the filesystem the
+#                    broker keeps its state DB and audit log on. Changing it affects mirrors created
+#                    afterwards; to re-cap an existing mirror, set receive.maxInputSize in it.
+#   git_timeout_secs: wall-clock ceiling on ONE hermetic invocation (the credentialed hop). The
+#                    streamed receive-pack/upload-pack services are NOT bounded by it — they live
+#                    and die with their attested connection.
+#   git_mirror_retention_days: drop mirrors with no authorized contact this long, swept at daemon
+#                    startup (0 = keep forever). NOTE: there is no credentialed fetch refresh yet,
+#                    so a swept mirror is rebuilt from what the next push carries, not from the
+#                    upstream. Until that lands, aging a mirror out means the next push's decision
+#                    and receipt see an EMPTY mirror history: the hook reports the mirror's tip as
+#                    absent, and the receipt records the upstream's real transition (it reads that
+#                    from git's own push output) rather than the mirror's guess. Set 0 if you would
+#                    rather keep every mirror than have that happen.
+# git_binary = "/usr/bin/git"
+# git_mirror_dir = "/var/lib/cermetd/mirrors"
+# git_max_push_bytes = 536870912
+# git_timeout_secs = 300
+# git_mirror_retention_days = 90
+
+# --- Loopback relay --------------------------------------------------------------------
+# The seam for `execution: relay` verbs (today: vercel.deploy). A relay verb does not
+# construct a provider request — the NATIVE client does. `cermet` hands the agent a grant HANDLE and
+# a loopback URL; the agent runs e.g.
+#
+#   vercel deploy --api http://127.0.0.1:7133 --token <handle> --project <project> --yes
+#
+# `--project` is the FROZEN project the sentence approved: unnamed, the CLI guesses one
+# from the folder name in an unlinked directory, and that guess misses the bind and burns the grant.
+# and every request the CLI makes arrives here. Per request cermetd maps the handle to the live
+# session, checks the request against the verb's declared `predicate` (method, path, permitted query
+# keys, and every frozen field the predicate binds), and only then swaps in the vaulted credential
+# and forwards to the provider's pinned origin. A request matching no admitted shape — or
+# contradicting an approved value, e.g. a production target — is refused WITHOUT the credential,
+# audited, and the session is BURNED (every later request gets 401).
+#
+# The listener is LOOPBACK-ONLY and every request needs an unguessable handle, so another uid on the
+# box reaches nothing without one. A handle passed in `--token` argv is readable via /proc for the
+# session TTL: that is the named, accepted cost, bounded to the predicate.
+#   relay_listen:         loopback host:port to bind. EMPTY ("") disables the relay entirely — no
+#                         listener, and a relay verb then refuses at execute. Use a loopback
+#                         address; binding a routable interface would publish the handle door.
+#   relay_ttl_secs:       how long one relay session stays usable after it opens. At the deadline the
+#                         session closes with its receipt (the deployment id/url/state it observed).
+#   relay_max_body_bytes: cap on one buffered request or response body (a memory bound: the relay
+#                         buffers a body to check it, so this times the bounded concurrent hops is
+#                         the resident worst case). Oversize refuses with 413.
+# relay_listen = "127.0.0.1:7133"
+# relay_ttl_secs = 600
+# relay_max_body_bytes = 33554432    # 32 MiB

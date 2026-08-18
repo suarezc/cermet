@@ -1,0 +1,59 @@
+# Action template for github.dispatch_workflow (external_state_change). Start a run of ONE named
+# GitHub Actions workflow FILE on ONE named ref of the frozen repository — the `workflow_dispatch`
+# effect. The envelope is addressing ONLY: owner/name, the workflow file, and the ref, all
+# exact-pinned identity execution targets an allow must anchor. The endpoint offers no OID/CAS to
+# claim, so unlike `request_workflow_cancel` there is no guarded verification read to make — a
+# single POST is the whole effect.
+#
+# `ref` carries `format: git_branch_name`. The name reads narrower than the predicate: it is git's
+# own check-ref-format applied to a BARE ref COMPONENT, so it admits a tag name (`v0.1.0`) as
+# readily as a branch (`main`) — which is correct here, because GitHub's dispatch endpoint takes
+# either. What it still refuses is the qualified `refs/heads/...` / `refs/tags/...` spelling (so one
+# ref has exactly one pin string a sentence can equal) and the cross-repository `user:ref` form.
+#
+# `workflow` carries NO format: the vocabulary has no workflow-file shape, and inventing one for a
+# single verb is handling code no named adversary needs — a workflow file name is interpolated as a
+# path SEGMENT, and the generic segment guard already refuses empties, dot segments, and any
+# `/ ? # % \`, whitespace, or control character. Deliberate absence, recorded here as a note.
+#
+# NO `inputs` field in v1. The `workflow_dispatch` inputs map is a free-form JSON object whose field
+# class (one `free_payload` blob? a declared key set?) is a design question this verb does not
+# settle; until it is settled the verb dispatches workflows that need no inputs, rather than
+# admitting an unclassed object into a frozen envelope.
+#
+# SUCCESS IS {200, 204} — the LIVE-OBSERVED contract, not just the documented one. GitHub's
+# reference documents this endpoint as 204 No Content, which is what the verb shipped pinned to. A
+# live dispatch came back **200 with a JSON body naming the run it had just started** —
+# `{"workflow_run_id": <uint>, "run_url": ..., "html_url": ...}` — and the verb failed closed on the
+# mismatch while the run was already going. A receipt that says "refused" about an effect that
+# LANDED is the worst answer this engine can give, so both statuses are accepted. Anything outside
+# this set, 2xx included, still fails closed.
+#
+# The 200 body rides back verbatim under the default `retention: full`, so the receipt and its
+# artifact NAME THE RUN this request started. That is the point of keeping it: run-id discovery
+# (polling the runs list and guessing which row is yours) stops being the first step of every
+# diagnosis. On the 204 arm there is simply no body and the status is the whole receipt, exactly as
+# request_workflow_cancel's 202 is.
+#
+# There is deliberately NO `require`, and that absence is load-bearing rather than incidental: the
+# executor evaluates every `require` path against the parsed body on EVERY accepted status alike —
+# the check is not status-conditional — and a 204's empty body parses to JSON null, against which no
+# proof path can resolve. Declaring `require: [workflow_run_id]` would therefore fail the 204 arm
+# closed, which is the arm GitHub's own documentation promises. The status set is the contract.
+provider: github
+action: dispatch_workflow
+fields:
+  - { name: owner,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: workflow, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: ref,      type: str, required: true, class: identity, binding: exact_resource_pin, format: git_branch_name }
+consumes: [owner, name, workflow, ref]
+execution_targets: [owner, name, workflow, ref]
+http:
+  steps:
+    - id: dispatch
+      method: POST
+      path: /repos/{owner}/{name}/actions/workflows/{workflow}/dispatches
+      success_statuses: [200, 204]   # 200-with-a-run-id (live) and 204-no-content (documented). No `require`: it is not status-conditional and would fail the 204 arm closed.
+      body:
+        ref: "{ref}"

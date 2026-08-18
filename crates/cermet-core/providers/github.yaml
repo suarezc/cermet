@@ -1,0 +1,29 @@
+# Provider descriptor for github. A descriptor is the ONLY way a credential may ride to an
+# origin: egress pins the exact scheme+host+port and auth names how the token is presented.
+#
+# API VERSION: the pinned X-GitHub-Api-Version below is the REST version every github call is made
+# against. Advancing it is an EXPLICIT descriptor replacement — it changes the SHA-256 of every
+# bound github ontology record, so all github sidecar `provider_descriptor_sha256` values must be
+# recomputed in lockstep. Bearer auth and the two required GitHub headers are unaffected by it.
+name: github
+egress:
+  - https://api.github.com
+auth: bearer
+headers:
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: "2026-03-10"
+# Request sugar: `repo: "owner/name"` splits into the owner + name fields the templates pin.
+split:
+  - field: repo
+    into: [owner, name]
+    sep: "/"
+# The git transport pin. `github.push` carries a packfile with the system git
+# binary (the broker replaces only the credential-bearing seam; local git authors the objects), so
+# the credential must be able to reach github.com — a DIFFERENT origin from the REST API's. It is
+# pinned here for exactly the reason `egress` is: a descriptor is the only thing that lets a
+# credential ride to an origin, and a template carries paths beneath it, never an origin of its own.
+# `basic:x-access-token` is the shape git's HTTPS transport has always spoken; the token rides
+# `http.<url>.extraHeader` through environment config, never argv.
+git:
+  origin: https://github.com
+  auth: basic:x-access-token

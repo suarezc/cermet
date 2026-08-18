@@ -1,0 +1,42 @@
+# Action template for github.create_pull_request_review (external_state_change). Submit ONE
+# pull-request review on the frozen PR at an EXACT commit OID. The
+# envelope: owner/name, the PR `number`, the `commit_id` the review is anchored to, and
+# the review `event` — all exact-pinned identity execution targets. `body` is a REQUEST-TIME
+# free_payload hole (agent-authored, typed str, size-capped, audited verbatim, frozen at mint — no
+# runtime fill). `commit_id` carries `format: git_oid`; `number` carries `format: uint`.
+#
+# Product parity: `event` is a DECLARED required identity
+# field, not the frozen literal `COMMENT`. The domain distinction that makes this safe: CERMET's OWN
+# grant-approval seam is absolutely non-agent and always will be — there is no approve tool on the
+# agent surface, ever. A GitHub pull-request review that happens to be spelled `APPROVE` is a
+# PROVIDER-domain write, not Cermet authority; restricting it is the operator's sentence policy
+# (`... and event = COMMENT`), not a literal frozen into a vendored template. The value is frozen at
+# request time and HMAC-covered before approval like every other field.
+#
+# NOTE (no enum in the grammar): the template language has admission FORMATS, not closed value sets,
+# so `event` is not enum-checked here — GitHub enforces {APPROVE, REQUEST_CHANGES, COMMENT} and
+# rejects anything else with a 422, which fails closed like any other non-200.
+#
+# The response returns the created review VERBATIM; `require` proves its `id`.
+provider: github
+action: create_pull_request_review
+fields:
+  - { name: owner,     type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: name,      type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: number,    type: str, required: true, class: identity,     binding: exact_resource_pin, format: uint }
+  - { name: commit_id, type: str, required: true, class: identity,     binding: exact_resource_pin, format: git_oid }
+  - { name: event,     type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: body,      type: str, required: true, class: free_payload, binding: unbound }
+consumes: [owner, name, number, commit_id, event, body]
+execution_targets: [owner, name, number, commit_id, event]
+http:
+  steps:
+    - id: review
+      method: POST
+      path: /repos/{owner}/{name}/pulls/{number}/reviews
+      success_statuses: [200]        # GitHub's create-review returns 200; any other status fails closed.
+      require: [id]                  # the created review id must be present, never null.
+      body:
+        commit_id: "{commit_id}"
+        body: "{body}"
+        event: "{event}"

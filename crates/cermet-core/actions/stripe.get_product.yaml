@@ -1,0 +1,14 @@
+# Retrieve one exact product's sale-facing catalog summary without metadata, images, or URLs.
+provider: stripe
+action: get_product
+fields:
+  - { name: product, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [product]
+execution_targets: [product]
+http:
+  steps:
+    - id: get
+      method: GET
+      path: /v1/products/{product}
+      success_statuses: [200]
+      require: [id, object, name]

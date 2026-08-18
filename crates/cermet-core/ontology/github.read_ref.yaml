@@ -1,0 +1,21 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_ref
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: f84964169e70f211341cafab784fdf1b21d2ab32be0ecc198f0613fb72c44664
+semantics:
+  resource_family: git_reference
+  provider_operation: ref_read
+  risk_class: observation
+  sensitivity: source_code
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Resolve one fully-qualified ref on a pinned repository to its current object OID and type.
+  cautions:
+    - A ref is mutable; the returned OID is a point-in-time observation, not a frozen pin.
+sources:
+  - GH-REST-GIT-REFERENCES
+  - GH-REST-BEST-PRACTICES

@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: get_payment_intent
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 407a1772a5fc3611d696e9c7e511f89d5d386e3de8e9d7b7034a5c4b7217eaae
+semantics:
+  resource_family: payment_intent
+  provider_operation: payment_intent_retrieve
+  risk_class: sensitive_observation
+  sensitivity: security
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Retrieve one exact PaymentIntent's amount and lifecycle summary while structurally excluding its client secret, payment instrument, source, and next action.
+  cautions:
+    - No expand or client_secret query parameter exists; the server-side retrieval uses only the exact PaymentIntent ID.
+    - Narrow keep, retention none, and status-only errors prevent the provider's client capability and payment details from leaving execution.
+    - The LIKELY native ceiling is RAK Payment Intents Read or App payment_intent_read; sandbox proof remains deferred.
+sources:
+  - STRIPE-PAYMENT-INTENT-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

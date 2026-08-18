@@ -1,0 +1,29 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: capture_payment_intent
+binds:
+  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  action_template_sha256: 0ebaeaf30b9f380886fc8892065eef02693ba2a1c91e5d2e56ba4fe5f106f140
+semantics:
+  resource_family: payment_intent
+  provider_operation: capture_bounded
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Capture one bounded funds_collect amount from an exact manual PaymentIntent while freezing final_capture false.
+  cautions:
+    - Evidence and the fresh precondition require manual capture, requires_capture, a positive bound, and unchanged total and capturable amounts.
+    - Routing, future-use, hooks, and method-level capture overrides must be absent before mint and immediately before mutation.
+    - The canonical amount is sent only as amount_to_capture; final_capture is false and no second side effect exists.
+    - Raw success proof requires exact post-capture capturable and received arithmetic plus the corresponding requires_capture or succeeded status.
+    - Refund is a separate grant; capture neither executes nor implies compensation.
+    - Sandbox proof must establish incremental capture support and final_capture false behavior for the connected account and payment method.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-PAYMENT-INTENT-RETRIEVE
+  - STRIPE-PAYMENT-INTENT-CAPTURE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

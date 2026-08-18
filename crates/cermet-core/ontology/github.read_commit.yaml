@@ -1,0 +1,21 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_commit
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: b2bb8d09d27d20ce4b3955d00cf2f344587f95246d8be7055a72bb643555e1ce
+semantics:
+  resource_family: git_commit
+  provider_operation: commit_read
+  risk_class: observation
+  sensitivity: source_code
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read one Git commit by immutable OID on a pinned repository, verbatim including its signature block.
+  cautions:
+    - The verbatim verification.payload is the raw commit object; a client reconstructing it must re-verify the OID it hashes to.
+sources:
+  - GH-REST-GIT-COMMITS
+  - GH-REST-BEST-PRACTICES

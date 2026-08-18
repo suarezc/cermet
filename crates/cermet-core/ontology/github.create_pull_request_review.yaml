@@ -1,0 +1,23 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: create_pull_request_review
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 754fc386dccea6253b2ad47813f2d9c5ae25d4d9b448c61d79897c426a60653e
+semantics:
+  resource_family: pull_request_review
+  provider_operation: review_comment_submit
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Submit one COMMENT-event pull-request review on a pinned PR at an exact commit OID; body is request-time free_payload.
+  cautions:
+    - The review event is the literal COMMENT; APPROVE and REQUEST_CHANGES are excluded by design.
+    - commit_id is an exact OID; body is audited verbatim with no post-mint fill.
+    - Durable-broker-only write; absent from the daemonless surface.
+sources:
+  - GH-REST-PULL-REQUEST-REVIEWS
+  - GH-REST-BEST-PRACTICES

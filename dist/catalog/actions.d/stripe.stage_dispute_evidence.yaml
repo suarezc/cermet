@@ -1,0 +1,75 @@
+# Stage reviewed standard evidence on one exact dispute without submitting it to the bank.
+provider: stripe
+action: stage_dispute_evidence
+fields:
+  - { name: dispute, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: access_activity_log, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: billing_address, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: cancellation_policy, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: cancellation_policy_disclosure, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: cancellation_rebuttal, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: customer_communication, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: customer_email_address, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: customer_name, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: customer_purchase_ip, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: customer_signature, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: duplicate_charge_documentation, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: duplicate_charge_explanation, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: duplicate_charge_id, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: product_description, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: receipt, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: refund_policy, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: refund_policy_disclosure, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: refund_refusal_explanation, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: service_date, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: service_documentation, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: shipping_address, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: shipping_carrier, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: shipping_date, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: shipping_documentation, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: shipping_tracking_number, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: uncategorized_file, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
+  - { name: uncategorized_text, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+consumes: [dispute, access_activity_log, billing_address, cancellation_policy, cancellation_policy_disclosure, cancellation_rebuttal, customer_communication, customer_email_address, customer_name, customer_purchase_ip, customer_signature, duplicate_charge_documentation, duplicate_charge_explanation, duplicate_charge_id, product_description, receipt, refund_policy, refund_policy_disclosure, refund_refusal_explanation, service_date, service_documentation, shipping_address, shipping_carrier, shipping_date, shipping_documentation, shipping_tracking_number, uncategorized_file, uncategorized_text]
+execution_targets: [dispute]
+string_char_budget:
+  fields: [access_activity_log, billing_address, cancellation_policy, cancellation_policy_disclosure, cancellation_rebuttal, customer_communication, customer_email_address, customer_name, customer_purchase_ip, customer_signature, duplicate_charge_documentation, duplicate_charge_explanation, duplicate_charge_id, product_description, receipt, refund_policy, refund_policy_disclosure, refund_refusal_explanation, service_date, service_documentation, shipping_address, shipping_carrier, shipping_date, shipping_documentation, shipping_tracking_number, uncategorized_file, uncategorized_text]
+  max_chars: 150000
+http:
+  steps:
+    - id: stage
+      method: POST
+      path: /v1/disputes/{dispute}
+      body_encoding: form
+      body:
+        evidence:
+          access_activity_log: "{access_activity_log?}"
+          billing_address: "{billing_address?}"
+          cancellation_policy: "{cancellation_policy?}"
+          cancellation_policy_disclosure: "{cancellation_policy_disclosure?}"
+          cancellation_rebuttal: "{cancellation_rebuttal?}"
+          customer_communication: "{customer_communication?}"
+          customer_email_address: "{customer_email_address?}"
+          customer_name: "{customer_name?}"
+          customer_purchase_ip: "{customer_purchase_ip?}"
+          customer_signature: "{customer_signature?}"
+          duplicate_charge_documentation: "{duplicate_charge_documentation?}"
+          duplicate_charge_explanation: "{duplicate_charge_explanation?}"
+          duplicate_charge_id: "{duplicate_charge_id?}"
+          product_description: "{product_description?}"
+          receipt: "{receipt?}"
+          refund_policy: "{refund_policy?}"
+          refund_policy_disclosure: "{refund_policy_disclosure?}"
+          refund_refusal_explanation: "{refund_refusal_explanation?}"
+          service_date: "{service_date?}"
+          service_documentation: "{service_documentation?}"
+          shipping_address: "{shipping_address?}"
+          shipping_carrier: "{shipping_carrier?}"
+          shipping_date: "{shipping_date?}"
+          shipping_documentation: "{shipping_documentation?}"
+          shipping_tracking_number: "{shipping_tracking_number?}"
+          uncategorized_file: "{uncategorized_file?}"
+          uncategorized_text: "{uncategorized_text?}"
+        submit: false
+      success_statuses: [200]
+      require: [id, status, evidence_details]

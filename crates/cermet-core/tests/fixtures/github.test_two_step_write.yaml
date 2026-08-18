@@ -1,0 +1,38 @@
+# TEST-ONLY behavioral fixture. NOT a vendored verb, never installed, never product-enabled: it
+# exists so the generic executor/validator machinery has an exercise that no shipped template
+# currently covers end to end — a two-step GET-then-write, a mid-execution `capture`, `optional_ok`
+# on the read, an optional `{sha?}` body placeholder, `path_modes: path`, and the `{x|base64}`
+# transform (the one transform with no vendored user left).
+#
+# This file used to be `github.put_file`, a second content
+# path alongside `push_commit`. That verb is DELETED — push_commit subsumes it, and one content
+# path is the rule. What survives here is deliberately not a content verb: the payload field is
+# named `payload`, nothing addresses a repository file, and the action name says what it is.
+provider: github
+action: test_two_step_write
+fields:
+  - { name: owner,   type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: name,    type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: branch,  type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: path,    type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: payload, type: str, required: true, class: free_payload, binding: unbound }
+  - { name: message, type: str, required: true, class: free_payload, binding: unbound }
+consumes: [owner, name, branch, path, payload, message]
+execution_targets: [owner, name, branch, path]
+http:
+  path_modes: { path: path }
+  steps:
+    - id: get_sha
+      method: GET
+      path: /repos/{owner}/{name}/contents/{path}
+      query: { ref: "{branch}" }
+      optional_ok: [404]
+      capture: { sha: "$.sha" }
+    - id: put
+      method: PUT
+      path: /repos/{owner}/{name}/contents/{path}
+      body:
+        message: "{message}"
+        content: "{payload|base64}"
+        branch: "{branch}"
+        sha: "{sha?}"

@@ -1,0 +1,21 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_blob
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: 79573eb520daeeeadaba3b74f0cb1ac350b04cc9011c5620c559235bc9e89673
+semantics:
+  resource_family: git_blob
+  provider_operation: blob_read
+  risk_class: observation
+  sensitivity: source_code
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read one Git blob by immutable OID on a pinned repository, returning size, encoding, and content.
+  cautions:
+    - Content is bounded only by GitHub's own blob-size ceiling; large blobs return sizable bodies.
+sources:
+  - GH-REST-GIT-BLOBS
+  - GH-REST-BEST-PRACTICES

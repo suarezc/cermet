@@ -1,0 +1,21 @@
+# Redirect one exact webhook endpoint to one exact HTTPS URL while fixing the documented two-event bundle.
+provider: stripe
+action: update_webhook_endpoint_fixed_bundle
+fields:
+  - { name: endpoint, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: url, type: str, required: true, class: identity, binding: exact_resource_pin, format: https_url }
+consumes: [endpoint, url]
+execution_targets: [endpoint, url]
+http:
+  steps:
+    - id: update
+      method: POST
+      path: /v1/webhook_endpoints/{endpoint}
+      body_encoding: form
+      body:
+        url: "{url}"
+        enabled_events: [charge.succeeded, charge.failed]
+      success_statuses: [200]
+      require: [id, url, status, enabled_events]
+      expect_eq: { url: url }
+      expect_literal: { enabled_events: [charge.succeeded, charge.failed] }

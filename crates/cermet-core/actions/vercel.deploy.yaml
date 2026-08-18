@@ -1,0 +1,303 @@
+# Action template for vercel.deploy — a relay verb. CLI parity: the sentence adjudicates the
+# target rather than a frozen template choice (a frozen template policy would be a defect).
+#
+# It constructs no request. The native `vercel` CLI runs as the agent's own uid in the project dir
+# (full file access, its own sha-dedup upload protocol) pointed at cermetd's loopback relay with
+# `--api`; the bearer slot carries the GRANT HANDLE, never a credential. Per hop the relay maps
+# handle -> live session, validates the request against the `predicate` below, and only then swaps in
+# the vaulted token and forwards to the descriptor's pinned origin (https://api.vercel.com).
+#
+# This is never-reinvent-the-wheel applied: git/CLI-shaped work stays in the native tool; Cermet
+# replaces ONLY the credential-bearing transport seam. The named cost — the predicate binds the
+# CLI's internal traffic shapes, so CLI drift fails CLOSED (deploys break until a human updates
+# this document), never open.
+#
+# Authority:
+#   project — frozen identity execution target; the sentence pins WHICH project may be deployed, and
+#             the relay refuses any create whose body `name` is not that project.
+#   team    — frozen identity execution target, request-authored and SENTENCE-adjudicated exactly
+#             like `target` below: the REQUEST names a Vercel scope and it freezes for the whole
+#             session, while WHICH scopes are admissible is the sentence's business
+#             (`allow vercel.deploy where … and team = "personal"`). A rule that does not mention
+#             `team` admits whatever the request names — unmentioned is unconstrained, uniformly —
+#             so pinning the scope is a corpus edit in the rule, not something this document can do
+#             for the operator.
+#             What the frozen value then buys: a team account's CLI stamps `?teamId=` on
+#             every scoped call, and that query VALUE is authority. Unbound, an injected `--scope`
+#             or an edited `.vercel/project.json` (T1), or a stale link file (T2), redirects the
+#             already-approved session's own hops into any team the vaulted token reaches — and
+#             Vercel AUTO-CREATES a project on an unknown name, so the blast radius was
+#             mint-and-deploy, not merely deploy. The bind is
+#             `omit:personal`: a personal-scope token sends no `teamId` at all, so the frozen
+#             literal `personal` means the key must be ABSENT; any other frozen value must appear
+#             verbatim as the query value, and a missing key refuses. The one shape that does NOT
+#             carry the bind is the read-only team-context call, which names its team in the PATH
+#             and sends no query at all (classified at its stanza).
+#             BOTH SPELLINGS ARE ACCEPTED: the request may name the team by its `team_…` id, by the
+#             literal `personal`, or by its SLUG (`cermet-test-team`) — the spelling humans, tasks
+#             and Vercel's own dashboard use. An id or `personal` passes through untouched, with no
+#             credential opened and no provider hop. A slug is resolved ONCE at REQUEST time by the
+#             compiled `request_canonicalization` profile below, inside the daemon, with the vaulted
+#             token (never exposed), and the resolved `team_…` ID is what freezes on the grant. So
+#             sentences keep pinning ids, the relay's `query.teamId` bind keeps enforcing the id per
+#             hop, and approved == executed still holds on the canonical value. A slug that resolves
+#             to nothing is a typed, audited DENY (fail closed — the resolution never guesses), and
+#             the resolution cannot widen anything: it decides how the requested scope is SPELT, not
+#             which scope the corpus admits.
+#   target  — frozen side_effect execution target, request-authored and SENTENCE-adjudicated:
+#             `allow vercel.deploy where target = "preview"` lets previews flow while a
+#             production request falls to the fail-closed default deny (with a widening suggestion). Vercel's create API has no
+#             legal `target: preview` value (a preview deploy sends no target key), so the bind is
+#             `omit:preview`: when the FROZEN value is `preview` the body key must be ABSENT or
+#             null; when it is `production` the body must carry exactly that. A hop whose target
+#             disagrees with the frozen field is refused WITHOUT the credential, audited, and the
+#             grant BURNED. (T1: injected "also deploy prod"; T2: a fat-fingered `--prod` — both
+#             now stopped by the SENTENCE/default layer at request time, and by the bind per hop.)
+#
+# The predicate is the whole enforceable surface: nine shapes, one of which — the deployment create —
+# is the SINGLE effect (`once: true`) a single-use grant authorizes. Reads are unlimited inside the
+# session TTL; uploads are repeatable but spend a declared budget (dimension 5 below). Deploy CONTENT
+# is deliberately unbound — that freedom IS the effect ("deploy the current tree").
+#
+# A wire position is closed on TWO dimensions, and both are needed — key closure ALONE does not stop
+# a scope redirect once `teamId` is an admitted key on every shape:
+#   1. KEY CLOSURE — query parameter names and top-level body keys are closed allowlists per shape,
+#      so a parameter nobody ratified never rides along at all: Vercel's `slug` (a second way to
+#      name a scope), and the body's own override names (`project` overrides `name`,
+#      `customEnvironmentSlugOrId` overrides the target environment, `deploymentId` redeploys an
+#      arbitrary existing deployment). An unlisted key refuses as `no_matching_shape`.
+#   2. VALUE BINDS — an ADMITTED key whose value carries authority is pinned to a frozen field:
+#      `body.name` to `project`, `body.target` to `target`, and `query.teamId` to `team` on every
+#      shape where that value decides WHERE the deploy lands. A ratified value that disagrees with
+#      the approval refuses as `bind_mismatch`. Both dimensions refuse BEFORE the credential is
+#      attached, and both burn.
+# Admitting a key to either allowlist therefore means classifying the AUTHORITY OF ITS VALUE: either
+# it is value-bound to a frozen field, or it is declared authority-free right here in this document,
+# with the reason. There is no third state (docs/provider_design_principles.md). Exactly one position
+# is ratified authority-free: the read-only team-context shape's own team id (at its stanza) — every
+# effect-bearing hop's scope stays bound.
+#
+# The two dimensions above are REQUEST-side, and a session has two more positions that carry
+# authority:
+#   3. PATH SEGMENTS — a wildcard deployment id is authority exactly like a query value. Before this,
+#      the poll and events shapes matched any `dpl_…` at all, so an approved deploy also bought the
+#      right to read (and tail the build log of) every OTHER deployment the token reaches (T1:
+#      injected "while you're there, read the other deployment's log"; T2: a stale id from an earlier
+#      run). The fix is DATAFLOW: the create's own 2xx response is `capture:`d — top-level `id`, the
+#      `dpl_…` — and every wildcard segment on the three deployment shapes is bound to it with
+#      `path.*: captured.deployment_id`. Nothing is captured until the create lands, so a poll BEFORE
+#      the create refuses; the honest CLI never polls for a deployment that does not exist yet.
+#      Evidence: an observed live deploy drove `id` off this same create response into the receipt's
+#      `deployment_id`, and the read hops of that same session carry that same id. Residual, with no
+#      credentialed run to settle it: if a future CLI polls by deployment URL instead of id, the bind
+#      refuses and the DEPLOY still succeeded — only the victory lap burns, one audited
+#      `bind_mismatch` naming the target, and the fix is to capture `url` as a second name.
+#      Fail-closed by construction, never open.
+#      The two wildcards deliberately LEFT unbound are `/v9/projects/*` and `/teams/*`: both run
+#      BEFORE the effect, when nothing is captured, and both are ratified authority-free reads
+#      (at their stanzas) — the real CLI sends each without a query.
+#   4. THE OUTCOME — the create's response was never compared to what the approval froze, so
+#      provider-side semantic drift (an omitted target classified as production, a create resolved to
+#      a different project) was silent. `assert:` on the effect shape compares the response's `name`
+#      to the frozen `project` and its `target` to the frozen `target`, under the SAME `omit:preview`
+#      encoding the request bind uses (Vercel answers a preview create with `target: null` or no key;
+#      a production one carries the literal). This is DETECTION, NOT PREVENTION and every line about
+#      it must say so: the deployment already exists when the response is read. A mismatch burns the
+#      session and writes one high-severity `relay_outcome_mismatch` audit row carrying
+#      frozen-vs-observed. Cost of a false positive is bounded to the victory lap, same as above.
+#      NOTE (accepted, not code): the response the assertion and the capture read is the bounded
+#      receipt tee (32 KB). A create response larger than that arrives truncated, does not parse, and
+#      yields no capture and no assertion — the session then cannot poll. Fail closed, documented,
+#      no reassembly machinery.
+#   5. VOLUME — the four dimensions above all decide ONE hop; none of them bounds how many hops, or
+#      how many bytes, a session may push. `POST /v2/files` was unlimited in both for the whole TTL,
+#      so an approved deploy also bought an unbounded credentialed pipe into the operator's Vercel
+#      file store (T2: an accident loop; T1: "while you're there, keep uploading"). `caps:` on that
+#      shape declares the per-session budget — see the stanza's own comment for the observed evidence
+#      that sized it, and for the missing-set gate that was deliberately NOT built.
+provider: vercel
+action: deploy
+# The compiled profile that rewrites `team` to Vercel's own `team_…` id before the sentence
+# judges the request. The document NAMES semantics; it cannot express them (crates/cermet-core/src/
+# canonicalize.rs). See the `team` stanza above.
+request_canonicalization: vercel.deploy.team_scope.v1
+fields:
+  - { name: project, type: str, required: true, class: identity,    binding: exact_resource_pin }
+  - { name: target,  type: str, required: true, class: side_effect, binding: exact_resource_pin }
+  - { name: team,    type: str, required: true, class: identity,    binding: exact_resource_pin }
+consumes: [project, target, team]
+execution_targets: [project, target, team]
+execution: relay
+predicate:
+  # THE effect: create one deployment of the pinned project at the frozen target.
+  - method: POST
+    path: /v13/deployments
+    once: true
+    query_keys: [forceNew, skipAutoDetectionConfirmation, withLatestCommit, teamId]
+    # The CLOSED top-level body surface, beyond the two keys below that are bound by value.
+    # Seeded from Vercel's create-deployment reference, restricted to fields a `vercel deploy` of a
+    # local directory legitimately sends and that carry no authority over WHICH project/environment is
+    # deployed. Every documented override is deliberately ABSENT (`project`, `deploymentId`,
+    # `customEnvironmentSlugOrId`, `alias`, `gitSource`), as are `env`/`build` (deployment environment
+    # values nobody approved) and `public`. When in doubt a key is LEFT OUT: an unlisted key refuses,
+    # burns, and shows up as one audited `undeclared_body_key` line naming it — so this list is
+    # widened only from observed evidence, and it can only ever fail closed.
+    body_keys:
+      - files              # the CLI's own content manifest (path + sha + size per file)
+      - projectSettings    # framework/build/output/install/root, as the CLI detects them
+      - meta               # free-form deployment metadata the CLI attaches
+      - gitMetadata        # commit message/ref/sha/dirty, for the dashboard
+      - monorepoManager    # detected monorepo tool, or null
+      - regions            # deployment regions
+      - functions          # per-function config
+      - routes             # route config
+      - source             # the CLI's own provenance marker
+      # Observed in CLI 58.4.4's actual create body: the CLI
+      # sends `env`/`build` EMPTY on every deploy (excluding the keys excludes all deploys;
+      # non-empty values are build-time content, already conceded above), `version` is the
+      # constant protocol marker (2), and `actor` is the CLI's driver stamp (e.g.
+      # "claude-code_…_agent" — provenance we WANT on the deployment record).
+      - env
+      - build
+      - version
+      - actor
+      # Observed with CLI 58.4.4 deploying a directory whose vercel.json carries a `headers`
+      # block. Judgment: response-header configuration shapes how the DEPLOYED SITE answers
+      # requests; it carries no authority over WHICH project or target deploys, and those stay
+      # the value-bound frozen fields (`body.name`, `body.target`). The rest of the vercel.json
+      # family (redirects/rewrites/cleanUrls/trailingSlash) is deliberately NOT added: nothing
+      # has evidenced them, and this list widens from evidence, one key at a time.
+      - headers
+    bind:
+      body.name: project
+      body.target: "target|omit:preview"
+      query.teamId: "team|omit:personal"
+    # The ONE consequence a later hop in this session may name — the deployment this
+    # create returned. Read off the 2xx response's top-level `id` (the `dpl_…`), write-once.
+    capture:
+      deployment_id: id
+    # What the landed deployment must SAY about the approval. Detection, not prevention.
+    assert:
+      name: project
+      target: "target|omit:preview"
+  # Session preamble (observed in a CLI --debug trace): the CLI opens with
+  # whoami + team-context reads, and on a TEAM-scoped account appends `?teamId=` to EVERY
+  # call. That query value is the account SCOPE, so every shape admitting the key
+  # binds it to the frozen `team` — the key is ratified, its value is pinned. The two reads
+  # below are the scope-free bootstrap (query-less and read-only): they are HOW the CLI
+  # discovers which scopes the token reaches, so there is nothing to pin and nothing to
+  # redirect — key closure alone closes them.
+  - { method: GET, path: /v2/user }
+  # The team-context read, and the one shape whose values are ratified AUTHORITY-FREE.
+  # Observed with vercel CLI 58.5.1: the CLI calls `GET /teams/<id>` with NO QUERY AT ALL — the team
+  # is named in the PATH. A `query.teamId` bind here therefore refused the verbatim call the CLI
+  # makes on every team-scoped deploy, burning the grant on the preamble before the deploy was
+  # attempted: the enforcement bought nothing and cost everything. Classified per the ratification
+  # obligation (docs/provider_design_principles.md — admitting a key means classifying its VALUE):
+  #   * the PATH segment (a team id) selects whose team metadata is read. It is READ-ONLY and its
+  #     disclosure is no greater than `GET /v1/teams` directly above, which is bindless and lists
+  #     EVERY team the connected token reaches. Nothing here writes, and nothing here decides where
+  #     a deployment lands.
+  #   * the `teamId` QUERY key stays admitted (an earlier CLI's trace appended it to every scoped
+  #     call) and is authority-free for the same reason.
+  # The scope of every EFFECT-bearing hop stays pinned: the create, the uploads and the polls each
+  # carry their own `query.teamId` bind, so a redirected preamble read cannot move the deploy.
+  - { method: GET, path: /teams/*, query_keys: [teamId] }
+  # Observed with CLI 58.4.4 (HOME isolated, no link file):
+  # in an UNLINKED directory the CLI must resolve the team before it can do anything, and its
+  # second call is a bare `GET /v1/teams` — no query, no body. Refusing it burned the grant before
+  # the deploy was attempted, so every unlinked directory cost one whole request→grant cycle. The
+  # list discloses nothing `vercel.list_projects` does not already return. Exactly the observed
+  # shape: read-only and query-less, so a scope-redirecting `slug`/`teamId` still refuses.
+  - { method: GET, path: /v1/teams }
+  # Linked-project retrieve — the CLI's FIRST call when .vercel/project.json exists
+  # ("Retrieving project…"). Read-only project metadata; CLI 58.4.4 in a linked dir opens with
+  # this, and before it was listed the relay refused it and burned the grant — exactly the
+  # fail-closed path.
+  # The SECOND ratified authority-free read, the team-context read's exact class one shape over.
+  # Observed live: in a linked directory the CLI sends `GET /v9/projects/<name>` with NO QUERY AT
+  # ALL, so a `query.teamId` bind here refused the CLI's verbatim opener and burned every
+  # linked-dir deploy on hop 2 (the unlinked stub capture carries `?teamId=` on this hop, which
+  # is why a replay of that flow alone stayed green while the linked flow broke — the replay
+  # suite now carries the linked preamble too). Classified per the ratification obligation:
+  #   * the PATH segment (a project name) selects whose project metadata is read: READ-ONLY, and
+  #     the token scopes what it can see. Nothing here writes or decides where a deployment lands.
+  #   * the `teamId` QUERY key stays admitted (earlier CLI traces append it) and is authority-free
+  #     for the same reason.
+  # The scope of every EFFECT-bearing hop stays pinned: create, uploads, polls, events.
+  - method: GET
+    path: /v9/projects/*
+    query_keys: [teamId]
+  # The CLI's own upload protocol: content-addressed file bodies it dedups against. The body stays
+  # opaque (no `body_keys`, no body bind); the SCOPE the bytes land in is still pinned, and the
+  # VOLUME is bounded.
+  #
+  # Observed with vercel CLI 58.5.1 driven against a localhost stub that plays this API (HOME
+  # isolated, fake token, nothing credentialed anywhere). What the CLI actually does:
+  #   * the two-phase create is real. `POST /v13/deployments` answered
+  #     `400 {"error":{"code":"missing_files","message":"Missing files","missing":[<sha1>,…]}}` makes
+  #     the CLI upload EXACTLY that subset — three POSTs for a three-sha missing list out of a
+  #     six-file manifest, nothing else — and then create again.
+  #   * each upload carries its digest in a request HEADER: `x-now-digest: <sha1>` (NOT
+  #     `x-vercel-digest`), alongside `x-now-size: <bytes>` and `content-type:
+  #     application/octet-stream`. One file per request, raw bytes, no JSON.
+  #   * the retry create body is BYTE-IDENTICAL to the first attempt (same sha-1 over the same 711
+  #     bytes) — the CLI re-sends what it already built, it does not re-detect anything.
+  #   * a non-2xx on an upload ABORTS the deploy; the CLI does not retry the file. So the hop count
+  #     is bounded by the manifest, never by a retry loop, which is what makes a count cap safe.
+  # `caps` is therefore sized to a real deploy with two orders of magnitude of headroom: one POST per
+  # changed file, and this is a static site tree. It bounds ABUSE (T2: an accident loop; T1: "while
+  # you're there, keep uploading"), not any honest deploy. The per-body ceiling is separate and
+  # already there — `relay_max_body_bytes`, 32 MiB by default — so this is the AGGREGATE.
+  #
+  # NOTE (accepted, not code) — the missing-set gate was designed and deliberately NOT built. Gating
+  # "the uploaded digest must be in the create's missing list" needs FIVE engine dimensions that do
+  # not exist: reading a 4xx body (`observe_body` is 2xx-only by construction), a NESTED response
+  # path (`error.missing`, while `capture:` reads ONE top-level key), an ARRAY-valued capture, a bind
+  # that reads a request HEADER (no enforcement dimension reaches headers at all), and set-MEMBERSHIP
+  # instead of equality. The adversary it would answer is T1 exfiltration — a steered agent pushing
+  # secret bytes into the operator's Vercel file store — and that adversary is ALREADY conceded,
+  # entirely, by the unbound deploy content above: the create's `files` manifest is content freedom,
+  # so any bytes an agent could smuggle through an unmatched upload it can simply publish at the
+  # preview URL instead. Five dimensions of grammar for zero adversary movement is exactly the
+  # complexity this design refuses. What REOPENS it: evidence that an uploaded-but-never-deployed
+  # blob is retrievable by a party the deploy does not already expose it to, or a path where the
+  # digest HEADER (rather than the bytes) changes what some later deployment serves.
+  #
+  # NOTE (accepted, not code) — the retry create is not pinned against the first attempt either. The
+  # capture shows it byte-identical, and the `once` release on a 4xx re-runs the FULL shape, query,
+  # bind and body-key check on the retry, so the only thing a pin would add is freezing the `files`
+  # manifest — the one thing deploy CONTENT is deliberately left free.
+  - method: POST
+    path: /v2/files
+    query_keys: [teamId]
+    caps:
+      max_uses: 4096
+      max_total_bytes: 268435456   # 256 MiB aggregate per session
+    bind:
+      query.teamId: "team|omit:personal"
+  # Post-create reads the CLI polls to report the preview URL and build outcome. The
+  # wildcard is the deployment id, and it is pinned to the one THIS session created — a read of
+  # someone else's deployment is not this grant's consequence.
+  - method: GET
+    path: /v13/deployments/*
+    query_keys: [withGitRepoInfo, teamId]
+    bind:
+      path.*: captured.deployment_id
+      query.teamId: "team|omit:personal"
+  - method: GET
+    path: /v2/deployments/*/events
+    query_keys: [builds, delimiter, direction, follow, limit, name, since, statusCode, until, teamId]
+    bind:
+      path.*: captured.deployment_id
+      query.teamId: "team|omit:personal"
+  # What CLI 58.4.4 ACTUALLY calls to follow build logs is
+  # the legacy path with a `format` key (`/v3/now/deployments/{id}/events?direction=forward&
+  # follow=1&format=lines`) — the documented /v2 shape above was wrong-at-birth for the CLI.
+  # The create had already landed; this read refusal only burned the victory lap.
+  - method: GET
+    path: /v3/now/deployments/*/events
+    query_keys: [builds, delimiter, direction, follow, format, limit, name, since, statusCode, until, teamId]
+    bind:
+      path.*: captured.deployment_id
+      query.teamId: "team|omit:personal"

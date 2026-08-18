@@ -1,0 +1,33 @@
+# Create one unconfirmed PaymentIntent for an exact customer/payment-method relationship. Confirmation
+# is a separate grant: confirm is frozen false and off_session is deliberately absent at creation.
+provider: stripe
+action: create_payment_intent_off_session
+request_evidence: stripe.create_payment_intent_off_session.v1
+money:
+  preconditions: [payment_method_belongs_to_customer]
+fields:
+  - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: payment_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [customer, payment_method, amount, currency]
+execution_targets: [customer, payment_method, account, mode, currency]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/payment_intents
+      body_encoding: form
+      body:
+        amount: "{amount}"
+        currency: "{currency}"
+        customer: "{customer}"
+        payment_method: "{payment_method}"
+        confirm: false
+      success_statuses: [200]
+      require: [id, object, amount, currency, customer, payment_method, livemode, status]
+      expect_eq: { amount: amount, currency: currency, customer: customer, payment_method: payment_method, livemode: mode }
+      expect_literal: { object: payment_intent, status: requires_confirmation }
+      retention: none
