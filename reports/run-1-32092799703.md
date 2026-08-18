@@ -1,0 +1,732 @@
+# release-check run 1 (id 32092799703) @ ee23c6b514132a7663435e210ef9a0bcf22a2182
+
+## logs-linux/suite.log
+```
+test master_key::tests::service_mode_fails_closed_on_group_or_world_readable_credentials_dir ... ok
+test master_key::tests::service_mode_fails_closed_on_group_writable_credentials_dir ... ok
+test master_key::tests::service_mode_fails_closed_on_non_hex ... ok
+test master_key::tests::service_mode_fails_closed_on_symlinked_credential ... ok
+test master_key::tests::service_mode_fails_closed_on_wrong_length ... ok
+test master_key::tests::service_mode_fails_closed_when_credential_absent ... ok
+test master_key::tests::service_mode_fails_closed_when_credentials_dir_unset ... ok
+test master_key::tests::service_mode_reads_valid_64_hex_credential ... ok
+test master_key::tests::service_mode_without_a_declared_rung_fails_closed ... ok
+test master_key::tests::the_file_protected_rung_reads_the_daemon_owned_key_file ... ok
+test master_key::tests::the_no_key_advice_offers_the_dev_override_only_where_it_is_compiled_in ... ok
+test owner::tests::owner_gate_accepts_exactly_uid_zero ... ok
+test owner::tests::owner_socket_is_mode_0600 ... ok
+test owner::tests::transition_errors_are_closed_owner_responses ... ok
+test quiesce_store::tests::a_group_writable_record_is_refused ... ok
+test quiesce_store::tests::a_malformed_record_fails_closed_on_load ... ok
+test quiesce_store::tests::unlink_then_load_is_absent ... ok
+test quiesce_store::tests::write_load_roundtrips_and_persists_only_the_hash ... ok
+test relay::tests::a_routable_or_malformed_listen_address_refuses_to_serve ... ok
+test relay::tests::the_default_listen_authority_is_loopback_and_declared ... ok
+test runtime::tests::existing_loose_dir_is_retightened ... ok
+test runtime::tests::resolve_runtime_path_falls_back_to_home_run ... ok
+test runtime::tests::resolve_runtime_path_prefers_cermet_runtime_env ... ok
+test runtime::tests::runtime_dir_is_0700 ... ok
+test runtime::tests::runtime_dir_refuses_a_symlinked_run ... ok
+test sentence_record::tests::a_boot_validation_failure_is_named_in_the_deny_it_causes ... ok
+test sentence_record::tests::a_corpus_in_the_superseded_dialect_fails_closed_and_says_how_to_recover ... ok
+test sentence_record::tests::a_legacy_single_integer_marker_is_a_loud_error_never_confirmed ... ok
+test sentence_record::tests::a_marker_with_trailing_tokens_is_a_loud_error ... ok
+test sentence_record::tests::a_once_live_generation_with_a_failed_confirm_is_never_swept_on_supersession ... ok
+test sentence_record::tests::a_retry_after_a_failed_record_dir_fsync_re_fsyncs_before_confirming ... ok
+test sentence_record::tests::a_symlinked_record_fails_closed ... ok
+test sentence_record::tests::a_to_b_to_a_during_audit_outage_replays_three_occurrences ... ok
+test sentence_record::tests::adopt_refuses_a_visible_but_unfsynced_record ... ok
+test sentence_record::tests::adopt_replays_all_pending_generations_not_just_the_latest ... ok
+test sentence_record::tests::boot_adoption_gate_refuses_tampered_record ... ok
+test sentence_record::tests::changed_corrupt_bytes_stale_an_absent_or_corrupt_baseline ... ok
+test sentence_record::tests::commit_emits_audit_with_the_record_lock_released ... ok
+test sentence_record::tests::commit_flips_generation_atomically ... ok
+test sentence_record::tests::commit_refuses_a_future_staged_timestamp ... ok
+test sentence_record::tests::commit_refuses_an_expired_staged_record ... ok
+test sentence_record::tests::commit_refuses_when_staged_bytes_do_not_match_token ... ok
+test sentence_record::tests::commit_with_stale_token_refused ... ok
+test sentence_record::tests::concurrent_ceremonies_second_commit_refused_first_audit_survives ... ok
+test sentence_record::tests::corrupt_audit_marker_is_a_loud_error_not_silently_skipped ... ok
+test sentence_record::tests::crash_between_stage_and_commit_leaves_prior_generation_live ... ok
+test sentence_record::tests::custody_audit_emitted_only_after_commit_and_replayable_via_outbox ... ok
+test sentence_record::tests::ensure_dir_durable_retries_the_parent_fsync_after_a_transient_failure ... ok
+test sentence_record::tests::etc_projection_is_regenerated_on_commit_and_never_read_as_authority ... ok
+test log::tests::emit_never_blocks_even_when_the_queue_is_full_or_gone ... ok
+test sentence_record::tests::foreign_owner_fails_closed ... ok
+test sentence_record::tests::fresh_boot_without_record_denies_all ... ok
+test sentence_record::tests::group_or_other_writable_fails_closed ... ok
+test sentence_record::tests::every_absent_corrupt_unserved_and_served_baseline_change_stales_the_stage ... ok
+test sentence_record::tests::housekeeping_reconciles_a_live_intent_only_marker ... ok
+test sentence_record::tests::malformed_and_traversal_shaped_stage_tokens_are_rejected_before_path_construction ... ok
+test sentence_record::tests::marker_write_failure_fails_the_commit_before_the_flip ... ok
+test sentence_record::tests::live_generation_with_unconfirmed_marker_is_confirmed_by_adopt ... ok
+test sentence_record::tests::non_projection_write_temp_products_remain_0600 ... ok
+test sentence_record::tests::noop_sink_never_clears_pending_markers ... ok
+test sentence_record::tests::occurrence_keyed_intents_for_the_same_digest_never_overwrite_each_other ... ok
+test sentence_record::tests::peek_staged_text_returns_exact_staged_bytes ... ok
+test sentence_record::tests::orphan_pre_flip_marker_is_swept_never_emitted ... ok
+test sentence_record::tests::projection_is_0640_and_leaves_no_temp_file ... ok
+test sentence_record::tests::projection_write_does_not_follow_a_symlink_across_the_uid_boundary ... ok
+test sentence_record::tests::reconcile_fails_closed_when_the_marker_cannot_be_proven_durable ... ok
+test sentence_record::tests::reactivation_produces_a_distinct_audit_occurrence ... ok
+test sentence_record::tests::record_v2_and_outbox_preserve_the_same_occurrence_and_actor_across_recovery ... ok
+test sentence_record::tests::snapshot_uses_the_same_process_lifetime_served_gate_as_authority ... ok
+test sentence_record::tests::stage_fails_when_the_parent_dir_fsync_fails_on_first_creation ... ok
+test sentence_record::tests::stage_fails_when_the_staging_dir_fsync_fails ... ok
+test sentence_record::tests::stage_refuses_a_noncanonical_or_unpinned_proposal ... ok
+test sentence_record::tests::stage_returns_daemon_canonical_echo_and_token ... ok
+test sentence_record::tests::same_candidate_restaging_never_reuses_or_resurrects_an_old_ceremony ... ok
+test sentence_record::tests::superseded_but_confirmed_generation_keeps_its_audit ... ok
+test sentence_record::tests::supersession_fails_if_the_outgoing_record_cannot_be_re_proven_durable ... ok
+test sentence_record::tests::sweep_removes_inert_staged_records ... ok
+test sentence_record::tests::supersession_re_fsyncs_the_outbox_marker_never_trusting_a_visible_one ... ok
+test serve::tests::agent_peer_admitted_admits_only_the_operator_uid ... ok
+test serve::tests::agent_peer_admitted_refuses_a_foreign_uid ... ok
+test serve::tests::agent_peer_admitted_refuses_everyone_when_operator_is_unresolved ... ok
+test serve::tests::agent_peer_admitted_refuses_the_daemon_uid_when_it_is_not_the_operator ... ok
+test serve::tests::assert_socket_group_errors_on_a_missing_socket ... ok
+test serve::tests::assert_socket_group_fails_when_the_socket_group_differs ... ok
+test serve::tests::assert_socket_group_passes_when_the_socket_carries_the_expected_gid ... ok
+test serve::tests::assert_socket_mode_requires_socket_type_and_exact_mode ... ok
+test sentence_record::tests::unvalidated_generation_denies_until_marked_validated ... ok
+test serve::tests::bind_socket_in_group_sets_only_the_mode ... ok
+test serve::tests::bind_socket_sets_the_requested_mode ... ok
+test serve::tests::bind_socket_in_group_does_not_chgrp ... ok
+test serve::tests::bind_sockets_is_fail_closed_if_either_fails ... ok
+test serve::tests::bind_sockets_separate_dirs_places_each_socket_in_its_own_dir_at_its_mode ... ok
+test serve::tests::bind_sockets_separate_dirs_is_fail_closed_and_cleans_the_agent_socket ... ok
+test serve::tests::bind_sockets_with_group_does_not_chgrp_ctl ... ok
+test serve::tests::bind_sockets_with_group_leaves_agent_mode_intact ... ok
+test serve::tests::bind_sockets_with_no_group_binds_normally ... ok
+test serve::tests::conn_slots_are_bounded_and_reusable ... ok
+test serve::tests::clean_stale_socket_pathnames_removes_only_unix_sockets ... ok
+test serve::tests::daemon_requested_projection_preserves_hint_and_drops_grant_id ... ok
+test serve::tests::deadline_writer_completes_a_promptly_drained_write ... ok
+test serve::tests::derive_principal_id_is_uid_prefixed ... ok
+test serve::tests::moneypath_daemon_error_projection_carries_only_the_safe_effect_handle ... ok
+test serve::tests::resolve_group_gid_errors_on_a_missing_group ... ok
+test serve::tests::resolve_group_gid_resolves_a_real_group_by_name ... ok
+test serve::tests::the_session_reply_advertises_this_daemons_build ... ok
+test supervise::tests::returns_on_first_surface_death_not_waiting_for_the_survivor ... ok
+test serve::tests::deadline_writer_aborts_a_stalled_write_within_the_budget ... ok
+
+test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+
+     Running tests/agent_socket.rs (target/debug/deps/agent_socket-a2425bd0cce99162)
+
+running 23 tests
+test a_foreign_uid_is_refused_before_any_byte_on_agent_sock ... ok
+test a_new_client_frame_reaching_an_older_daemon_is_refused_by_the_frame_parser ... ok
+test a_grant_id_is_refused_as_an_agent_execute_handle_over_the_socket ... ok
+test a_skewed_client_cannot_reach_an_effect_by_skipping_the_handshake ... ok
+test a_supplied_unknown_or_closed_session_id_is_refused_with_the_reinit_reason ... ok
+test an_agent_request_without_a_justification_is_refused_at_the_daemon_boundary ... ok
+test an_agent_request_with_a_blank_justification_is_refused_at_the_daemon_boundary ... ok
+test an_unresolved_operator_uid_refuses_all_connections_on_agent_sock ... ok
+test artifact_verb_retrieves_a_stored_span_and_fails_closed_on_unknown ... ok
+test ctl_commit_frame_on_agent_socket_is_rejected_without_a_response ... ok
+test derived_uid_authenticates_with_no_handshake ... ok
+test disconnect_closes_the_session ... ok
+test execute_error_frames_are_byte_identical_across_classes ... ok
+test hello_admits_only_a_client_of_this_exact_build ... ok
+test hello_from_a_skewed_client_is_refused_before_any_session_is_minted ... ok
+test hello_mints_a_session_that_the_guard_does_not_close ... ok
+test hello_sweeps_a_stale_idle_session ... ok
+test hello_with_no_build_at_all_is_refused_legibly_rather_than_parsed_as_agreement ... ok
+test malformed_artifact_path_over_agent_sock_fails_closed_opaque ... ok
+test provider_action_audit_attributes_the_executing_session_not_only_the_request_session ... ok
+test request_verifyaudit_and_bogus_execute_under_derive ... ok
+test the_operator_uid_is_served_on_agent_sock ... ok
+test stalled_connection_is_reaped_by_the_deadline ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+     Running tests/ctl_socket.rs (target/debug/deps/ctl_socket-29569e67e10a338f)
+
+running 9 tests
+test ctl_doctor_reports_the_uid_collapse ... ok
+test connect_then_list_over_ctl_ingests_into_the_daemon_vault ... ok
+test ctl_execute_ops_fail_closed_for_unknown_grant ... ok
+test ctl_doctor_reports_unconfigured_sentence_authority_from_live_config ... ok
+test malformed_artifact_path_over_ctl_sock_fails_closed_opaque ... ok
+test ctl_replies_carry_the_daemons_build_identity ... ok
+test prepare_accepts_exact_serialized_frame_cap_and_rejects_one_byte_over_real_framing ... ok
+test prepare_is_non_mutating_and_stage_reuses_its_pinned_canonical_form ... ok
+test sentence_stage_commit_is_live_for_the_approver_and_denied_to_a_non_approver ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/git_plane.rs (target/debug/deps/git_plane-5e9c25b10faadcf5)
+
+running 16 tests
+test a_covered_branch_deletion_is_carried_and_receipted ... ok
+test a_clone_of_a_repo_this_host_has_never_seen_works ... ok
+test a_malformed_repo_identity_is_refused_before_any_git_process_exists ... ok
+test a_fetch_reflects_an_out_of_band_upstream_change ... ok
+test a_push_the_upstream_refuses_leaves_the_mirror_unchanged ... ok
+test a_read_with_no_fetch_sentence_is_refused_and_never_serves_stale_refs ... ok
+test a_refresh_that_fails_refuses_and_carries_gits_error ... ok
+test a_shallow_clone_of_a_main_branch_repo_is_not_empty ... ok
+test a_second_push_reuses_the_persistent_mirror ... ok
+test an_allowed_push_streams_through_receive_pack_and_lands_upstream ... ok
+test an_unadmitted_uid_reads_a_legible_refusal_instead_of_a_mute_reset ... ok
+test an_unruled_branch_deletion_is_refused_with_a_receipt ... ok
+test an_unruled_push_is_refused_in_gits_own_output_and_moves_nothing ... ok
+test an_unusable_git_refuses_the_stream_legibly_naming_the_setting ... ok
+test every_pre_spawn_refusal_reaches_the_agent_as_a_git_error ... ok
+test a_stalled_client_releases_its_connection_slot_instead_of_wedging_the_plane ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.21s
+
+     Running tests/relay_socket.rs (target/debug/deps/relay_socket-e86a8b78fb38e2fd)
+
+running 5 tests
+test a_disabled_relay_binds_nothing ... ok
+test a_streaming_hop_reaches_the_client_before_the_upstream_finishes ... ok
+test an_oversized_body_is_refused_by_the_declared_cap ... ok
+test the_loopback_relay_credentials_a_declared_hop_and_refuses_everything_else ... ok
+test a_silent_upstream_never_holds_the_broker_actor ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s
+
+     Running unittests src/lib.rs (target/debug/deps/cermet_ipc-789d5480d65b4418)
+
+running 31 tests
+test client::tests::view_result_maps_ok_error_and_rejects_non_envelope ... ok
+test client::tests::client_roundtrips_a_request_and_reads_the_uniform_envelope ... ok
+test codec::tests::oversize_length_prefix_rejected_without_alloc ... ok
+test codec::tests::roundtrip_frame_over_socketpair ... ok
+test codec::tests::truncated_and_malformed_frames_error ... ok
+test ctl::tests::connect_token_is_redacted_in_debug_but_carried_on_the_wire ... ok
+test ctl::tests::ctl_vocabulary_roundtrips_and_is_disjoint_from_agent ... ok
+test ctl::tests::evidence_is_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::mcp_repoint_ops_are_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::parallel_authority_operation_tags_no_longer_decode ... ok
+test ctl::tests::sentence_ceremony_ops_are_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::the_grant_keyed_ctl_execute_no_longer_decodes ... ok
+test custody::tests::each_profile_round_trips_its_declared_spelling ... ok
+test custody::tests::every_rung_states_its_honest_limitation ... ok
+test custody::tests::only_the_sealed_rungs_are_credential_delivered ... ok
+test custody::tests::the_ladder_is_ordered_strongest_first ... ok
+test owner::tests::owner_vocabulary_is_closed_and_disjoint_from_ctl_and_agent ... ok
+test peer::tests::peer_cred_on_accepted_fd_reports_self_uid ... ok
+test peer::tests::peer_cred_on_uds_accepted_connection_reports_self_uid ... ok
+test peer::tests::peer_cred_rejects_or_differs_on_listener_fd ... ok
+test wire::tests::agent_ipc_operation_tags_are_an_exact_positive_closed_set ... ok
+test wire::tests::budget_window_is_the_only_budget_signal_on_the_agent_wire ... ok
+test wire::tests::deleted_pipeline_op_tags_fail_decoding_as_unknown_variants ... ok
+test wire::tests::moneypath_retry_effect_round_trips_as_request_metadata_not_resource_data ... ok
+test wire::tests::op_vocabulary_frames_roundtrip ... ok
+test wire::tests::requested_authority_kind_is_optional ... ok
+test wire::tests::requested_hint_is_additive_and_round_trips_on_the_agent_wire ... ok
+test wire::tests::retired_request_forms_no_longer_decode_on_the_agent_wire ... ok
+test wire::tests::set_session_id_stamps_every_variant_but_hello ... ok
+test wire::tests::the_session_frame_advertises_the_daemons_build_identity ... ok
+test codec::tests::oversize_response_under_outbound_cap_roundtrips ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/build_identity.rs (target/debug/deps/build_identity-092e467e099d992d)
+
+running 4 tests
+test a_different_build_reports_the_daemons_own_id ... ok
+test a_matching_build_is_no_skew ... ok
+test an_absent_build_reports_the_pre_build_identity_daemon ... ok
+test build_id_is_this_package_version_plus_a_provenance_suffix ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/priv_uid_harness.rs (target/debug/deps/priv_uid_harness-a3e5316d0802c34d)
+
+running 11 tests
+test agent_uid_denied_on_0660_ctl_sock_owned_by_approvers_group ... ok
+test agent_uid_gets_eacces_on_0600_file_owned_by_other_uid ... ok
+test agent_uid_gets_eacces_on_console_token ... ok
+test agent_uid_gets_eacces_on_sentence_pin ... ok
+test agent_uid_gets_eacces_on_vault_db ... ok
+test approver_uid_denied_on_0660_agent_sock_owned_by_agents_group ... ok
+test cermet_agents_member_connects_0660_socket_nonmember_denied ... ok
+test cross_uid_peercred_reads_connecting_uid ... ok
+test daemon_group_member_reads_0640_rules_nonmember_denied ... ok
+test parent_forced_traversable_but_not_readable_and_leaf_stays_0600 ... ok
+test uid_in_both_cermet_agents_and_approvers_passes_0660_agent_sock_acl ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cermet_lang-6520612915e7e186)
+
+running 43 tests
+test contract::tests::assert_consistent_accepts_a_well_formed_contract ... ok
+test contract::tests::assert_consistent_rejects_an_optional_execution_target - should panic ... ok
+test contract::tests::assert_consistent_rejects_an_unclassified_field - should panic ... ok
+test contract::tests::assert_consistent_rejects_parameters_in_consumes - should panic ... ok
+test contract::tests::assert_consistent_rejects_target_absent_from_schema - should panic ... ok
+test contract::tests::bounded_binding_accepts_only_integer_side_effect_fields ... ok
+test contract::tests::req_accessors_fail_closed_on_absent_and_wrong_kind ... ok
+test contract::tests::from_stored_rejects_undeclared_key_and_wrong_kind ... ok
+test contract::tests::scalar_from_json_is_fail_closed_on_non_scalars ... ok
+test contract::tests::scalar_int_rejects_float_string_and_bool_no_coercion ... ok
+test contract::tests::scalar_str_does_not_accept_a_number ... ok
+test contract::tests::to_canonical_json_is_key_order_independent ... ok
+test error::tests::actionable_wire_codes_are_stable ... ok
+test error::tests::every_error_class_survives_the_ctl_round_trip_exactly_once ... ok
+test error::tests::execute_refusal_classes_round_trip ... ok
+test error::tests::wire_payload_never_carries_the_class_word ... ok
+test provider::tests::stripe_resolver_pins_the_full_origin ... ok
+test provider::tests::stripe_resolver_restores_the_original_timeout_and_response_cap ... ok
+test sentence::deny_reason_storage_tests::a_predicate_mismatch_round_trips_through_storage_with_its_field ... ok
+test sentence::deny_reason_storage_tests::a_predicate_mismatch_stored_before_the_field_existed_reads_back ... ok
+test sentence::dialect_tests::a_bare_dotted_selector_is_one_verb ... ok
+test sentence::dialect_tests::a_digest_pinned_selector_is_a_set_and_round_trips ... ok
+test sentence::dialect_tests::a_prefixed_selector_is_a_parse_error_naming_the_reserved_namespace ... ok
+test sentence::dialect_tests::an_integer_pin_no_longer_binds_a_uint_formatted_string_field ... ok
+test sentence::dialect_tests::an_unquoted_string_value_is_a_parse_error_naming_the_dialect ... ok
+test sentence::dialect_tests::only_quote_and_backslash_are_escapes ... ok
+test sentence::dialect_tests::quoted_strings_and_bare_int_bool_literals_parse ... ok
+test sentence::dialect_tests::the_printer_emits_only_the_new_dialect ... ok
+test sentence::form_index_tests::admissible_forms_are_exactly_what_the_evaluator_resolves ... ok
+test sentence::form_index_tests::the_form_index_is_ordered_and_bounded ... ok
+test sentence::human_rule_number_tests::every_corpus_validation_error_names_a_one_based_rule ... ok
+test sentence::human_rule_number_tests::the_number_a_human_reads_round_trips_to_the_index_the_machine_meant ... ok
+test sentence::temporal_gate_tests::a_widening_suggestion_never_proposes_a_temporal_clause ... ok
+test sentence::temporal_gate_tests::stateless_predicates_are_unaffected_by_a_closed_gate ... ok
+test sentence::temporal_gate_tests::the_gate_off_refuses_every_temporal_clause_and_names_the_setting ... ok
+test sentence::temporal_gate_tests::the_gate_on_admits_every_temporal_clause ... ok
+test sets::tests::catalog_history_retains_prior_snapshot_after_current_advances ... ok
+test sets::tests::cyclic_expansion_yields_no_snapshot_authority ... ok
+test types::tests::every_class_is_derived_from_a_typed_signal ... ok
+test types::tests::every_disposition_is_spelled_one_way_by_serde_and_by_the_record ... ok
+test types::tests::no_status_is_guessed_into_a_policy_refusal ... ok
+test types::tests::the_class_has_one_spelling ... ok
+test provider::tests::stripe_resolver_refuses_a_response_over_two_mib ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+```
+
+## logs-macos-suite/suite.log
+```
+test master_key::tests::service_mode_fails_closed_on_non_hex ... ok
+test master_key::tests::service_mode_fails_closed_on_symlinked_credential ... ok
+test master_key::tests::service_mode_fails_closed_on_wrong_length ... ok
+test master_key::tests::service_mode_fails_closed_when_credentials_dir_unset ... ok
+test master_key::tests::service_mode_fails_closed_when_credential_absent ... ok
+test master_key::tests::service_mode_without_a_declared_rung_fails_closed ... ok
+test master_key::tests::service_mode_reads_valid_64_hex_credential ... ok
+test master_key::tests::the_no_key_advice_offers_the_dev_override_only_where_it_is_compiled_in ... ok
+test owner::tests::owner_gate_accepts_exactly_uid_zero ... ok
+test master_key::tests::the_file_protected_rung_reads_the_daemon_owned_key_file ... ok
+test owner::tests::transition_errors_are_closed_owner_responses ... ok
+test owner::tests::owner_socket_is_mode_0600 ... ok
+test quiesce_store::tests::a_group_writable_record_is_refused ... ok
+test quiesce_store::tests::a_malformed_record_fails_closed_on_load ... ok
+test quiesce_store::tests::unlink_then_load_is_absent ... ok
+test relay::tests::a_routable_or_malformed_listen_address_refuses_to_serve ... ok
+test relay::tests::the_default_listen_authority_is_loopback_and_declared ... ok
+test quiesce_store::tests::write_load_roundtrips_and_persists_only_the_hash ... ok
+test runtime::tests::resolve_runtime_path_falls_back_to_home_run ... ok
+test runtime::tests::resolve_runtime_path_prefers_cermet_runtime_env ... ok
+test runtime::tests::existing_loose_dir_is_retightened ... ok
+test runtime::tests::runtime_dir_is_0700 ... ok
+test runtime::tests::runtime_dir_refuses_a_symlinked_run ... ok
+test sentence_record::tests::a_corpus_in_the_superseded_dialect_fails_closed_and_says_how_to_recover ... ok
+test sentence_record::tests::a_legacy_single_integer_marker_is_a_loud_error_never_confirmed ... ok
+test sentence_record::tests::a_marker_with_trailing_tokens_is_a_loud_error ... ok
+test sentence_record::tests::a_boot_validation_failure_is_named_in_the_deny_it_causes ... ok
+test sentence_record::tests::a_retry_after_a_failed_record_dir_fsync_re_fsyncs_before_confirming ... ok
+test sentence_record::tests::a_symlinked_record_fails_closed ... ok
+test sentence_record::tests::a_once_live_generation_with_a_failed_confirm_is_never_swept_on_supersession ... ok
+test sentence_record::tests::adopt_refuses_a_visible_but_unfsynced_record ... ok
+test log::tests::emit_never_blocks_even_when_the_queue_is_full_or_gone ... ok
+test sentence_record::tests::a_to_b_to_a_during_audit_outage_replays_three_occurrences ... ok
+test sentence_record::tests::changed_corrupt_bytes_stale_an_absent_or_corrupt_baseline ... ok
+test sentence_record::tests::boot_adoption_gate_refuses_tampered_record ... ok
+test sentence_record::tests::commit_emits_audit_with_the_record_lock_released ... ok
+test sentence_record::tests::commit_flips_generation_atomically ... ok
+test sentence_record::tests::commit_refuses_a_future_staged_timestamp ... ok
+test sentence_record::tests::adopt_replays_all_pending_generations_not_just_the_latest ... ok
+test sentence_record::tests::commit_with_stale_token_refused ... ok
+test sentence_record::tests::commit_refuses_when_staged_bytes_do_not_match_token ... ok
+test sentence_record::tests::commit_refuses_an_expired_staged_record ... ok
+test sentence_record::tests::corrupt_audit_marker_is_a_loud_error_not_silently_skipped ... ok
+test sentence_record::tests::concurrent_ceremonies_second_commit_refused_first_audit_survives ... ok
+test sentence_record::tests::ensure_dir_durable_retries_the_parent_fsync_after_a_transient_failure ... ok
+test sentence_record::tests::crash_between_stage_and_commit_leaves_prior_generation_live ... ok
+test sentence_record::tests::custody_audit_emitted_only_after_commit_and_replayable_via_outbox ... ok
+test sentence_record::tests::etc_projection_is_regenerated_on_commit_and_never_read_as_authority ... ok
+test sentence_record::tests::fresh_boot_without_record_denies_all ... ok
+test sentence_record::tests::foreign_owner_fails_closed ... ok
+test sentence_record::tests::group_or_other_writable_fails_closed ... ok
+test sentence_record::tests::every_absent_corrupt_unserved_and_served_baseline_change_stales_the_stage ... ok
+test sentence_record::tests::malformed_and_traversal_shaped_stage_tokens_are_rejected_before_path_construction ... ok
+test sentence_record::tests::housekeeping_reconciles_a_live_intent_only_marker ... ok
+test sentence_record::tests::marker_write_failure_fails_the_commit_before_the_flip ... ok
+test sentence_record::tests::live_generation_with_unconfirmed_marker_is_confirmed_by_adopt ... ok
+test sentence_record::tests::non_projection_write_temp_products_remain_0600 ... ok
+test sentence_record::tests::noop_sink_never_clears_pending_markers ... ok
+test sentence_record::tests::peek_staged_text_returns_exact_staged_bytes ... ok
+test sentence_record::tests::occurrence_keyed_intents_for_the_same_digest_never_overwrite_each_other ... ok
+test sentence_record::tests::orphan_pre_flip_marker_is_swept_never_emitted ... ok
+test sentence_record::tests::projection_is_0640_and_leaves_no_temp_file ... ok
+test sentence_record::tests::projection_write_does_not_follow_a_symlink_across_the_uid_boundary ... ok
+test sentence_record::tests::reconcile_fails_closed_when_the_marker_cannot_be_proven_durable ... ok
+test sentence_record::tests::record_v2_and_outbox_preserve_the_same_occurrence_and_actor_across_recovery ... ok
+test sentence_record::tests::reactivation_produces_a_distinct_audit_occurrence ... ok
+test sentence_record::tests::stage_fails_when_the_parent_dir_fsync_fails_on_first_creation ... ok
+test sentence_record::tests::stage_fails_when_the_staging_dir_fsync_fails ... ok
+test sentence_record::tests::stage_refuses_a_noncanonical_or_unpinned_proposal ... ok
+test sentence_record::tests::snapshot_uses_the_same_process_lifetime_served_gate_as_authority ... ok
+test sentence_record::tests::stage_returns_daemon_canonical_echo_and_token ... ok
+test sentence_record::tests::same_candidate_restaging_never_reuses_or_resurrects_an_old_ceremony ... ok
+test sentence_record::tests::supersession_fails_if_the_outgoing_record_cannot_be_re_proven_durable ... ok
+test sentence_record::tests::sweep_removes_inert_staged_records ... ok
+test sentence_record::tests::supersession_re_fsyncs_the_outbox_marker_never_trusting_a_visible_one ... ok
+test serve::tests::agent_peer_admitted_admits_only_the_operator_uid ... ok
+test serve::tests::agent_peer_admitted_refuses_a_foreign_uid ... ok
+test serve::tests::agent_peer_admitted_refuses_everyone_when_operator_is_unresolved ... ok
+test serve::tests::agent_peer_admitted_refuses_the_daemon_uid_when_it_is_not_the_operator ... ok
+test serve::tests::assert_socket_group_errors_on_a_missing_socket ... ok
+test serve::tests::assert_socket_group_fails_when_the_socket_group_differs ... ok
+test serve::tests::assert_socket_group_passes_when_the_socket_carries_the_expected_gid ... ok
+test sentence_record::tests::superseded_but_confirmed_generation_keeps_its_audit ... ok
+test serve::tests::assert_socket_mode_requires_socket_type_and_exact_mode ... ok
+test serve::tests::bind_socket_in_group_sets_only_the_mode ... ok
+test serve::tests::bind_socket_sets_the_requested_mode ... ok
+test serve::tests::bind_sockets_is_fail_closed_if_either_fails ... ok
+test serve::tests::bind_sockets_separate_dirs_is_fail_closed_and_cleans_the_agent_socket ... ok
+test serve::tests::bind_sockets_separate_dirs_places_each_socket_in_its_own_dir_at_its_mode ... ok
+test serve::tests::bind_socket_in_group_does_not_chgrp ... ok
+test serve::tests::bind_sockets_with_group_does_not_chgrp_ctl ... ok
+test serve::tests::bind_sockets_with_no_group_binds_normally ... ok
+test serve::tests::bind_sockets_with_group_leaves_agent_mode_intact ... ok
+test serve::tests::conn_slots_are_bounded_and_reusable ... ok
+test serve::tests::daemon_requested_projection_preserves_hint_and_drops_grant_id ... ok
+test serve::tests::clean_stale_socket_pathnames_removes_only_unix_sockets ... ok
+test serve::tests::deadline_writer_completes_a_promptly_drained_write ... ok
+test serve::tests::derive_principal_id_is_uid_prefixed ... ok
+test serve::tests::moneypath_daemon_error_projection_carries_only_the_safe_effect_handle ... ok
+test serve::tests::resolve_group_gid_errors_on_a_missing_group ... ok
+test serve::tests::resolve_group_gid_resolves_a_real_group_by_name ... ok
+test serve::tests::the_session_reply_advertises_this_daemons_build ... ok
+test supervise::tests::returns_on_first_surface_death_not_waiting_for_the_survivor ... ok
+test sentence_record::tests::unvalidated_generation_denies_until_marked_validated ... ok
+test serve::tests::deadline_writer_aborts_a_stalled_write_within_the_budget ... ok
+
+test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+
+     Running tests/agent_socket.rs (target/debug/deps/agent_socket-4af3a1b62828c357)
+
+running 23 tests
+test a_new_client_frame_reaching_an_older_daemon_is_refused_by_the_frame_parser ... ok
+test a_foreign_uid_is_refused_before_any_byte_on_agent_sock ... ok
+test a_skewed_client_cannot_reach_an_effect_by_skipping_the_handshake ... ok
+test a_grant_id_is_refused_as_an_agent_execute_handle_over_the_socket ... ok
+test an_agent_request_with_a_blank_justification_is_refused_at_the_daemon_boundary ... ok
+test a_supplied_unknown_or_closed_session_id_is_refused_with_the_reinit_reason ... ok
+test an_agent_request_without_a_justification_is_refused_at_the_daemon_boundary ... ok
+test an_unresolved_operator_uid_refuses_all_connections_on_agent_sock ... ok
+test artifact_verb_retrieves_a_stored_span_and_fails_closed_on_unknown ... ok
+test ctl_commit_frame_on_agent_socket_is_rejected_without_a_response ... ok
+test derived_uid_authenticates_with_no_handshake ... ok
+test disconnect_closes_the_session ... ok
+test execute_error_frames_are_byte_identical_across_classes ... ok
+test hello_admits_only_a_client_of_this_exact_build ... ok
+test hello_from_a_skewed_client_is_refused_before_any_session_is_minted ... ok
+test hello_mints_a_session_that_the_guard_does_not_close ... ok
+test hello_sweeps_a_stale_idle_session ... ok
+test hello_with_no_build_at_all_is_refused_legibly_rather_than_parsed_as_agreement ... ok
+test malformed_artifact_path_over_agent_sock_fails_closed_opaque ... ok
+test request_verifyaudit_and_bogus_execute_under_derive ... ok
+test provider_action_audit_attributes_the_executing_session_not_only_the_request_session ... ok
+test the_operator_uid_is_served_on_agent_sock ... ok
+test stalled_connection_is_reaped_by_the_deadline ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running tests/ctl_socket.rs (target/debug/deps/ctl_socket-c2ad9d646723b327)
+
+running 9 tests
+test ctl_doctor_reports_unconfigured_sentence_authority_from_live_config ... ok
+test ctl_doctor_reports_the_uid_collapse ... ok
+test connect_then_list_over_ctl_ingests_into_the_daemon_vault ... ok
+test ctl_execute_ops_fail_closed_for_unknown_grant ... ok
+test malformed_artifact_path_over_ctl_sock_fails_closed_opaque ... ok
+test ctl_replies_carry_the_daemons_build_identity ... ok
+test prepare_accepts_exact_serialized_frame_cap_and_rejects_one_byte_over_real_framing ... ok
+test prepare_is_non_mutating_and_stage_reuses_its_pinned_canonical_form ... ok
+test sentence_stage_commit_is_live_for_the_approver_and_denied_to_a_non_approver ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests/git_plane.rs (target/debug/deps/git_plane-97dc7b02d04aaf6a)
+
+running 16 tests
+test a_clone_of_a_repo_this_host_has_never_seen_works ... ok
+test a_malformed_repo_identity_is_refused_before_any_git_process_exists ... ok
+test a_fetch_reflects_an_out_of_band_upstream_change ... ok
+test a_covered_branch_deletion_is_carried_and_receipted ... ok
+test a_push_the_upstream_refuses_leaves_the_mirror_unchanged ... ok
+test a_read_with_no_fetch_sentence_is_refused_and_never_serves_stale_refs ... ok
+test a_refresh_that_fails_refuses_and_carries_gits_error ... ok
+test a_second_push_reuses_the_persistent_mirror ... ok
+test an_allowed_push_streams_through_receive_pack_and_lands_upstream ... ok
+test an_unadmitted_uid_reads_a_legible_refusal_instead_of_a_mute_reset ... ok
+test a_shallow_clone_of_a_main_branch_repo_is_not_empty ... ok
+test an_unruled_branch_deletion_is_refused_with_a_receipt ... ok
+test an_unusable_git_refuses_the_stream_legibly_naming_the_setting ... ok
+test every_pre_spawn_refusal_reaches_the_agent_as_a_git_error ... ok
+test an_unruled_push_is_refused_in_gits_own_output_and_moves_nothing ... ok
+test a_stalled_client_releases_its_connection_slot_instead_of_wedging_the_plane ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.38s
+
+     Running tests/relay_socket.rs (target/debug/deps/relay_socket-a6b4742ab0b82bd6)
+
+running 5 tests
+test a_disabled_relay_binds_nothing ... ok
+test a_streaming_hop_reaches_the_client_before_the_upstream_finishes ... ok
+test an_oversized_body_is_refused_by_the_declared_cap ... ok
+test the_loopback_relay_credentials_a_declared_hop_and_refuses_everything_else ... ok
+test a_silent_upstream_never_holds_the_broker_actor ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+
+     Running unittests src/lib.rs (target/debug/deps/cermet_ipc-437ae2d19ceb8800)
+
+running 33 tests
+test codec::tests::oversize_length_prefix_rejected_without_alloc ... ok
+test client::tests::view_result_maps_ok_error_and_rejects_non_envelope ... ok
+test codec::tests::roundtrip_frame_over_socketpair ... ok
+test codec::tests::truncated_and_malformed_frames_error ... ok
+test ctl::tests::connect_token_is_redacted_in_debug_but_carried_on_the_wire ... ok
+test client::tests::client_roundtrips_a_request_and_reads_the_uniform_envelope ... ok
+test ctl::tests::evidence_is_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::mcp_repoint_ops_are_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::parallel_authority_operation_tags_no_longer_decode ... ok
+test ctl::tests::sentence_ceremony_ops_are_absent_from_the_agent_wire_vocabulary ... ok
+test ctl::tests::ctl_vocabulary_roundtrips_and_is_disjoint_from_agent ... ok
+test ctl::tests::the_grant_keyed_ctl_execute_no_longer_decodes ... ok
+test custody::tests::each_profile_round_trips_its_declared_spelling ... ok
+test custody::tests::every_rung_states_its_honest_limitation ... ok
+test custody::tests::only_the_sealed_rungs_are_credential_delivered ... ok
+test custody::tests::the_ladder_is_ordered_strongest_first ... ok
+test peer::tests::getpeereid_uid_disagreement_errors ... ok
+test owner::tests::owner_vocabulary_is_closed_and_disjoint_from_ctl_and_agent ... ok
+test peer::tests::peer_cred_on_accepted_fd_reports_self_uid ... ok
+test peer::tests::peer_cred_rejects_or_differs_on_listener_fd ... ok
+test peer::tests::zeroed_or_wrong_version_xucred_errors ... ok
+test peer::tests::peer_cred_on_uds_accepted_connection_reports_self_uid ... ok
+test wire::tests::agent_ipc_operation_tags_are_an_exact_positive_closed_set ... ok
+test wire::tests::budget_window_is_the_only_budget_signal_on_the_agent_wire ... ok
+test wire::tests::moneypath_retry_effect_round_trips_as_request_metadata_not_resource_data ... ok
+test wire::tests::deleted_pipeline_op_tags_fail_decoding_as_unknown_variants ... ok
+test wire::tests::requested_authority_kind_is_optional ... ok
+test wire::tests::requested_hint_is_additive_and_round_trips_on_the_agent_wire ... ok
+test wire::tests::retired_request_forms_no_longer_decode_on_the_agent_wire ... ok
+test wire::tests::set_session_id_stamps_every_variant_but_hello ... ok
+test wire::tests::op_vocabulary_frames_roundtrip ... ok
+test wire::tests::the_session_frame_advertises_the_daemons_build_identity ... ok
+test codec::tests::oversize_response_under_outbound_cap_roundtrips ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/build_identity.rs (target/debug/deps/build_identity-56d96a2bbce37db6)
+
+running 4 tests
+test a_matching_build_is_no_skew ... ok
+test a_different_build_reports_the_daemons_own_id ... ok
+test an_absent_build_reports_the_pre_build_identity_daemon ... ok
+test build_id_is_this_package_version_plus_a_provenance_suffix ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/priv_uid_harness.rs (target/debug/deps/priv_uid_harness-c88c043cd4ebda3d)
+
+running 11 tests
+test agent_uid_gets_eacces_on_console_token ... ok
+test agent_uid_denied_on_0660_ctl_sock_owned_by_approvers_group ... ok
+test agent_uid_gets_eacces_on_0600_file_owned_by_other_uid ... ok
+test agent_uid_gets_eacces_on_sentence_pin ... ok
+test agent_uid_gets_eacces_on_vault_db ... ok
+test approver_uid_denied_on_0660_agent_sock_owned_by_agents_group ... ok
+test cermet_agents_member_connects_0660_socket_nonmember_denied ... ok
+test cross_uid_peercred_reads_connecting_uid ... ok
+test daemon_group_member_reads_0640_rules_nonmember_denied ... ok
+test uid_in_both_cermet_agents_and_approvers_passes_0660_agent_sock_acl ... ok
+test parent_forced_traversable_but_not_readable_and_leaf_stays_0600 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cermet_lang-56c9990d106bb4ff)
+
+running 43 tests
+test contract::tests::assert_consistent_accepts_a_well_formed_contract ... ok
+test contract::tests::assert_consistent_rejects_parameters_in_consumes - should panic ... ok
+test contract::tests::assert_consistent_rejects_an_optional_execution_target - should panic ... ok
+test contract::tests::assert_consistent_rejects_an_unclassified_field - should panic ... ok
+test contract::tests::assert_consistent_rejects_target_absent_from_schema - should panic ... ok
+test contract::tests::bounded_binding_accepts_only_integer_side_effect_fields ... ok
+test contract::tests::scalar_from_json_is_fail_closed_on_non_scalars ... ok
+test contract::tests::scalar_int_rejects_float_string_and_bool_no_coercion ... ok
+test contract::tests::scalar_str_does_not_accept_a_number ... ok
+test contract::tests::req_accessors_fail_closed_on_absent_and_wrong_kind ... ok
+test error::tests::actionable_wire_codes_are_stable ... ok
+test contract::tests::from_stored_rejects_undeclared_key_and_wrong_kind ... ok
+test contract::tests::to_canonical_json_is_key_order_independent ... ok
+test error::tests::execute_refusal_classes_round_trip ... ok
+test error::tests::every_error_class_survives_the_ctl_round_trip_exactly_once ... ok
+test error::tests::wire_payload_never_carries_the_class_word ... ok
+test provider::tests::stripe_resolver_restores_the_original_timeout_and_response_cap ... ok
+test sentence::deny_reason_storage_tests::a_predicate_mismatch_round_trips_through_storage_with_its_field ... ok
+test sentence::deny_reason_storage_tests::a_predicate_mismatch_stored_before_the_field_existed_reads_back ... ok
+test sentence::dialect_tests::a_bare_dotted_selector_is_one_verb ... ok
+test sentence::dialect_tests::a_digest_pinned_selector_is_a_set_and_round_trips ... ok
+test sentence::dialect_tests::a_prefixed_selector_is_a_parse_error_naming_the_reserved_namespace ... ok
+test sentence::dialect_tests::an_integer_pin_no_longer_binds_a_uint_formatted_string_field ... ok
+test sentence::dialect_tests::an_unquoted_string_value_is_a_parse_error_naming_the_dialect ... ok
+test sentence::dialect_tests::only_quote_and_backslash_are_escapes ... ok
+test sentence::dialect_tests::quoted_strings_and_bare_int_bool_literals_parse ... ok
+test sentence::dialect_tests::the_printer_emits_only_the_new_dialect ... ok
+test sentence::form_index_tests::admissible_forms_are_exactly_what_the_evaluator_resolves ... ok
+test sentence::form_index_tests::the_form_index_is_ordered_and_bounded ... ok
+test sentence::human_rule_number_tests::every_corpus_validation_error_names_a_one_based_rule ... ok
+test sentence::human_rule_number_tests::the_number_a_human_reads_round_trips_to_the_index_the_machine_meant ... ok
+test sentence::temporal_gate_tests::a_widening_suggestion_never_proposes_a_temporal_clause ... ok
+test sentence::temporal_gate_tests::stateless_predicates_are_unaffected_by_a_closed_gate ... ok
+test sentence::temporal_gate_tests::the_gate_off_refuses_every_temporal_clause_and_names_the_setting ... ok
+test sentence::temporal_gate_tests::the_gate_on_admits_every_temporal_clause ... ok
+test sets::tests::catalog_history_retains_prior_snapshot_after_current_advances ... ok
+test sets::tests::cyclic_expansion_yields_no_snapshot_authority ... ok
+test types::tests::every_class_is_derived_from_a_typed_signal ... ok
+test provider::tests::stripe_resolver_refuses_a_response_over_two_mib ... ok
+test types::tests::every_disposition_is_spelled_one_way_by_serde_and_by_the_record ... ok
+test types::tests::no_status_is_guessed_into_a_policy_refusal ... ok
+test types::tests::the_class_has_one_spelling ... ok
+test provider::tests::stripe_resolver_pins_the_full_origin ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+```
+
+## logs-macos/check.log
+```
+plumbing
+  ✓ cermetd            serving on ctl.sock — 0 provider(s) connected
+  ✓ build              cermet and cermetd are 0.1.0+ee23c6b51413
+  ✓ custody            file-protected — does not protect vault key from: disk snapshots or backups
+  ✓ git-remote-cermet  /opt/cermet/bin/git-remote-cermet
+  ✓ git plane          git.sock at /var/cermetd-agents/git.sock; uid 501 (you): admitted (approver_uid)
+  · update check       on, and it has not run yet — running 0.1.0 (cermet update --daily-check)
+  ✓ agent bridge       /var/cermetd-agents/agent.sock
+
+stale engines
+  ✓ stale engines      no cermet process or MCP registration from another install
+
+providers
+  · none connected     start with `cermet connect github` (or vercel, stripe)
+```
+
+## logs-macos/launchd.txt
+```
+system/dev.cermet.cermetd = {
+	active count = 1
+	path = /Library/LaunchDaemons/dev.cermet.cermetd.plist
+	type = LaunchDaemon
+	state = running
+
+	program = /opt/cermet/bin/cermetd
+	arguments = {
+		/opt/cermet/bin/cermetd
+	}
+
+	stdout path = /var/log/cermetd.log
+	stderr path = /var/log/cermetd.log
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		CERMET_SERVICE_MODE => 1
+		CERMET_CONFIG => /etc/cermetd/config.toml
+		CERMET_HOME => /var/lib/cermetd
+		XPC_SERVICE_NAME => dev.cermet.cermetd
+	}
+
+	domain = system
+	username = _cermet
+	group = _cermet
+
+	minimum runtime = 5
+	exit timeout = 5
+	runs = 1
+	pid = 16621
+	immediate reason = speculative
+	forks = 0
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = (never exited)
+
+	semaphores = {
+		successful exit => 0
+	}
+
+	spawn type = adaptive (6)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	resource limits = {
+		core (hard) => 0
+	}
+
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = runatload | inferred program | system service | tle system
+}
+```
+
+## logs-macos/setup.log
+```
+[cermet-setup] ok    preflight: root, inputs, utilities, and install lock
+[cermet-setup] fixed group: created /Groups/_cermet
+[cermet-setup] fixed user: created /Users/_cermet
+[cermet-setup] fixed group: created /Groups/cermet-approvers
+[cermet-setup] fixed group: created /Groups/cermet-agents
+[cermet-setup] fixed user: created /Users/cermet-agent
+[cermet-setup] ok    accounts: service uid 400, agent uid 401, disjoint groups
+[cermet-setup] fixed binary: published one root:wheel 0755 cermet from /private/tmp/cermet-smoke, with cermetd and git-remote-cermet as relative role aliases to it
+[cermet-setup] fixed PATH: /etc/paths.d/cermet names /opt/cermet/bin (new login shells, or `eval $(/usr/libexec/path_helper -s)`)
+[cermet-setup] fixed config: installed bootable config with resolved uids
+[cermet-setup] fixed config: service_uid=400, approver_uid=501, agent_uid=401
+[cermet-setup] fixed sudoers: atomic visudo-validated install; 3/3 optional defaults retained
+[cermet-setup] fixed runtime dirs: /var/cermetd and /var/cermetd-agents converged 2711
+[cermet-setup] fixed daemon log: created /var/log/cermetd.log as _cermet:_cermet 0640 — launchd opens it as _cermet before exec, and stock /var/log is root-only
+[cermet-setup] fixed master key: minted 32 bytes into a _cermet-owned 0600 key file
+[cermet-setup] fixed custody: declared custody_profile = "file-protected"
+[cermet-setup]       does not protect vault key from: disk snapshots or backups
+[cermet-setup] fixed lockdown: initialized explicit clear generation
+[cermet-setup] fixed catalog: wholesale reseeded /var/lib/cermetd/actions.d from /var/run/cermet-setup-payload.51fcc3df3d344eb3/catalog/actions.d (58 descriptors)
+[cermet-setup] fixed catalog: wholesale reseeded /var/lib/cermetd/providers.d from /var/run/cermet-setup-payload.51fcc3df3d344eb3/catalog/providers.d (3 descriptors)
+[cermet-setup] fixed launchd: installed /Library/LaunchDaemons/dev.cermet.cermetd.plist
+[cermet-setup] fixed update check: daily check plist installed for runner (notice only; never installs)
+[cermet-setup] fixed approvers: added runner to cermet-approvers
+[cermet-setup] ok    service: cermetd bootstrapped and serving
+[cermet-setup] ok    update check: daily check scheduled
+
+[cermet-setup] ✓ broker running (cermetd, starts at boot)
+[cermet-setup] ✓ credential vault ready (custody: file-protected)
+[cermet-setup]   does not protect vault key from: disk snapshots or backups
+[cermet-setup] ✓ git integration ready (git-remote-cermet)
+[cermet-setup] update checks: daily against https://github.com/suarezc/cermet/releases, run as you and never by the daemon. The notice is LOCAL and nothing installs itself; applying an update stays `sudo cermet update`. Off: cermet update --daily off
+[cermet-setup] next: cermet connect github   (or vercel, stripe)
+[cermet-setup] note: cermet-approvers membership reaches existing sessions after a re-log-in
+```
+
