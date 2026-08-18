@@ -5,7 +5,7 @@
 Cermet authorizes agent *effects*, not traffic. Your agent asks for a typed provider
 effect — refund *this charge*, push *this branch*, deploy *this project* — and a daemon
 on your machine decides it against sentences you wrote, executes the allowed ones with
-credentials the agent never holds, and writes every decision as a verifiable receipt.
+credentials the agent never holds, and writes every decision into a hash-chained local receipt log.
 
 [cermet.dev](https://cermet.dev) ·
 [quickstart](https://cermet.dev/quickstart.html) ·
@@ -108,13 +108,19 @@ can do:
 
 ## Guarantees
 
+*The adversaries these guarantees are scoped to are named in
+[`docs/REFERENCE.md`](docs/REFERENCE.md) (Named adversaries); the provider integration
+doctrine — the honest answer to "isn't this just another proxy?" — is
+[`docs/provider_design_principles.md`](docs/provider_design_principles.md).*
+
 - **Deny by default.** A request that doesn't parse into a known verb with typed
   fields does not exist. Access requires a definite allow; absence is never permission.
 - **Approved fields are executed fields.** Every executed field is frozen and
   integrity-bound before the grant is minted. There is no execute-time fill channel.
-- **The agent surface is keyless.** Agents are identified by kernel-attested process
-  identity, not bearer tokens — there is no client-side secret to steal, and the raw
-  provider credential never leaves the daemon.
+- **The agent surface is keyless.** Agents are identified by the kernel's own socket
+  peer credentials (`SO_PEERCRED` uid checks on every request), not bearer tokens — there
+  is no client-side secret to steal, and the raw provider credential never leaves the
+  daemon.
 - **Authority changes are human acts.** Applying or widening sentences is
   presence-gated at the physical screen; no approve or auto-approve tool exists on the
   agent surface, by construction.
@@ -174,7 +180,7 @@ contacts GitHub on its own; typing `cermet update` is still what installs anythi
 | --- | --- | --- |
 | `service_user` | `cermet` | dedicated non-login user the daemon runs as |
 | `approver_uid` | *(set at install)* | the human operator's uid — presence ceremonies bind here |
-| `agent_uid` | *(set at install)* | the agent trust domain's uid, kernel-attested per request |
+| `agent_uid` | *(set at install)* | the agent trust domain's uid, peer-credential-checked per request |
 | `runtime_dir` | `/run/cermetd` | operator ctl socket |
 | `agent_runtime_dir` | `/run/cermetd-agents` | agent bridge socket |
 | `sentence_rules_path` | `/etc/cermetd/sentences/rules.cermet` | the served authority corpus |

@@ -1,5 +1,3 @@
-# The local toolchain in this environment is rustc 1.49 (2020), which cannot
-# build the secure stack (pyo3, aes-gcm, rusqlite all need ~1.63+).
-# Run `rustup update stable` once; this pins the project to a modern stable.
+# Pinned so every build — local, CI, contributor — compiles with the same stable.
 [toolchain]
 channel = "1.96.0"
