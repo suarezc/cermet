@@ -14,7 +14,7 @@
 use std::process::{Command, Stdio};
 
 use cermet_cli::cutover::{
-    running_processes, stale_processes, ProcessRole, RunningProcess, StaleReason,
+    running_processes, self_lineage, stale_processes, ProcessRole, RunningProcess, StaleReason,
 };
 
 /// A process that stays alive on a piped stdin nobody writes to. The bytes are irrelevant — the
@@ -82,7 +82,7 @@ fn a_stale_daemon_and_a_stale_client_on_one_deleted_target_are_told_apart() {
             (m.dev(), m.ino())
         })
         .ok();
-    let found = stale_processes(&processes, &[], &installed, published, std::process::id());
+    let found = stale_processes(&processes, &[], &installed, published, &self_lineage());
     assert_eq!(found.len(), 2, "both are stale: {found:?}");
 
     let daemon_row = found
