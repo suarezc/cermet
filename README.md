@@ -178,7 +178,6 @@ contacts GitHub on its own; typing `cermet update` is still what installs anythi
 | `runtime_dir` | `/run/cermetd` | operator ctl socket |
 | `agent_runtime_dir` | `/run/cermetd-agents` | agent bridge socket |
 | `sentence_rules_path` | `/etc/cermetd/sentences/rules.cermet` | the served authority corpus |
-| `language_temporal_clauses` | `false` (commented) | gates `rate …`/`budget … per …` clauses; off means decisions are pure functions of the request |
 | `custody_profile` | *(set at install)* | which mechanism holds the vault key — `systemd-tpm2+host` / `systemd-host` / `file-protected`, chosen by `cermet setup` as the strongest rung the box can carry and required in service mode; `cermet check` reports it |
 
 ## Development
