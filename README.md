@@ -148,6 +148,33 @@ tar -xzf cermet_0.1.0_darwin_arm64.tar.gz
 
 Uninstalling is documented step-by-step in the [quickstart](docs/QUICKSTART.md#11-uninstall); `cermet uninstall` ships in 0.1.1.
 
+**Containers.** cermetd runs under the init system — systemd on Linux, launchd on macOS —
+because the init system is what delivers the sealed vault key to the daemon and supervises
+it. systemd will only act as the system manager from PID 1: the kernel gives PID 1 the
+semantics a supervisor needs (orphaned processes reparent to it, unhandled fatal signals
+are ignored, it owns the cgroup root), and systemd refuses to run as the system instance
+anywhere else. A default Docker container has no init at all — *your* process is PID 1 and
+supervision belongs to the engine — so `setup` inside `docker run ubuntu` fails, and it is
+systemd's constraint, not a check of ours. A systemd-booting image works fine; this is the
+same shape this project's own test suite boots:
+
+```sh
+docker run -d --name cermet-box --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw jrei/systemd-ubuntu:24.04
+# podman: podman run -d --name cermet-box --systemd=always --privileged jrei/systemd-ubuntu:24.04
+
+# setup derives the human approver from SUDO_USER, so install as a sudoer, not bare root:
+docker exec cermet-box bash -c 'apt-get update -q && apt-get install -yq sudo &&
+  useradd -m -s /bin/bash dev &&
+  printf "dev ALL=(ALL) NOPASSWD:ALL\n" > /etc/sudoers.d/dev && chmod 0440 /etc/sudoers.d/dev'
+docker cp cermet_0.1.0_amd64.deb cermet-box:/tmp/
+docker exec -u dev cermet-box bash -lc 'sudo dpkg -i /tmp/cermet_0.1.0_amd64.deb'
+```
+
+One honesty note: a container has no TPM, so `setup` lands on the `file-protected` custody
+rung — the vault key is a root-protected file on the container's volume — and `cermet check`
+will say exactly that.
+
 From source — Rust only, toolchain pinned by the repo:
 
 ```sh
