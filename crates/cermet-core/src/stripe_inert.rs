@@ -5,7 +5,7 @@ use serde_json::Value;
 pub(crate) const IMPLEMENTATION_SOURCE: &[u8] = include_bytes!("stripe_inert.rs");
 
 fn absent_or_null(value: &Value, field: &str) -> bool {
-    value.get(field).map_or(true, Value::is_null)
+    value.get(field).is_none_or(Value::is_null)
 }
 
 fn absent_or_empty(value: &Value, field: &str) -> bool {
