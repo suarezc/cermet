@@ -223,18 +223,21 @@ pub fn staleness(
 /// PURE. Which of `processes` is a cermet process this install does not own, each carrying its role
 /// and its (separately decided) reason.
 ///
-/// `self_pid` is never reported: `cermet setup` itself runs from outside the prefix (that is what
-/// `make -C dist install` does), so the installer would otherwise name itself first.
+/// Nothing in `self_lineage` (the scan plus its ancestors) is ever reported: `cermet setup` itself
+/// runs from outside the prefix (that is what `make -C dist install` does), and on invocation paths
+/// where it re-execs through a wrapper (the terminal `./cermet setup` consent path re-running
+/// itself under sudo), its cermet-named ANCESTORS are outside the prefix too. A process that is
+/// part of performing the install cannot be a survivor of it.
 pub fn stale_processes(
     processes: &[RunningProcess],
     retired: &[&str],
     installed: &[&str],
     published: Option<(u64, u64)>,
-    self_pid: u32,
+    self_lineage: &[u32],
 ) -> Vec<StaleProcess> {
     processes
         .iter()
-        .filter(|process| process.pid != self_pid)
+        .filter(|process| !self_lineage.contains(&process.pid))
         .filter_map(|process| {
             let reason = staleness(process, retired, installed, published)?;
             Some(StaleProcess {
@@ -479,6 +482,36 @@ pub fn running_processes() -> Result<Vec<RunningProcess>, String> {
     Ok(processes)
 }
 
+/// Best-effort pid lineage of THIS process: itself, its parent, grandparent, and so on — capped,
+/// stopping at pid 1 or on any failure, returning whatever was gathered (minimum: itself). The
+/// first hop is the cheap in-process `parent_id()`; further hops ask `ps`, which exists on every
+/// platform this builds for. A cycle or an unparseable answer just ends the walk: a short lineage
+/// only risks re-reporting an ancestor, never missing a genuine survivor.
+pub fn self_lineage() -> Vec<u32> {
+    let mut lineage = vec![std::process::id()];
+    let mut current = std::os::unix::process::parent_id();
+    while lineage.len() < 16 && current > 1 && !lineage.contains(&current) {
+        lineage.push(current);
+        match parent_of(current) {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+    lineage
+}
+
+/// The parent pid of `pid`, per `ps -o ppid= -p <pid>`, or `None` when ps cannot say.
+fn parent_of(pid: u32) -> Option<u32> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "ppid=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
 /// PURE. `/proc/<pid>/cmdline` is NUL-separated with a trailing NUL.
 #[cfg(any(not(target_os = "macos"), test))]
 pub fn parse_proc_cmdline(bytes: &[u8]) -> Vec<String> {
@@ -595,7 +628,7 @@ pub fn detect(home: Option<&Path>) -> CutoverReport {
                 &retired,
                 INSTALLED_BIN_DIRS,
                 published_identity(INSTALLED_BIN_DIRS),
-                std::process::id(),
+                &self_lineage(),
             );
         }
         Err(reason) => report
@@ -822,7 +855,7 @@ mod tests {
                 None,
             ),
         ];
-        let found = stale_processes(&processes, RETIRED, INSTALLED, Some(PUBLISHED), 1);
+        let found = stale_processes(&processes, RETIRED, INSTALLED, Some(PUBLISHED), &[1]);
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].role, ProcessRole::Daemon, "{found:?}");
         assert_eq!(found[1].role, ProcessRole::KeylessClient, "{found:?}");
@@ -833,7 +866,7 @@ mod tests {
         // Without the manager's answer, `argv[0]` alone still separates them.
         let mut argv_only = processes.clone();
         argv_only[0].manager_role = None;
-        let found = stale_processes(&argv_only, RETIRED, INSTALLED, Some(PUBLISHED), 1);
+        let found = stale_processes(&argv_only, RETIRED, INSTALLED, Some(PUBLISHED), &[1]);
         assert_eq!(found[0].role, ProcessRole::Daemon, "{found:?}");
         assert_eq!(found[1].role, ProcessRole::KeylessClient, "{found:?}");
     }
@@ -869,7 +902,7 @@ mod tests {
         let mut superseded = live(31337, "/usr/bin/cermet", "/usr/bin/cermetd");
         superseded.identity = Some((66, 4241));
         superseded.manager_role = Some(ProcessRole::Daemon);
-        let found = stale_processes(&[superseded], RETIRED, INSTALLED, Some(PUBLISHED), 1);
+        let found = stale_processes(&[superseded], RETIRED, INSTALLED, Some(PUBLISHED), &[1]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].reason, StaleReason::SupersededBuild);
         assert_eq!(found[0].role, ProcessRole::Daemon);
@@ -882,13 +915,13 @@ mod tests {
         let mut unknown = live(5, "/usr/bin/cermet", "/usr/bin/cermet");
         unknown.identity = None;
         assert_eq!(
-            stale_processes(&[unknown], RETIRED, INSTALLED, Some(PUBLISHED), 1),
+            stale_processes(&[unknown], RETIRED, INSTALLED, Some(PUBLISHED), &[1]),
             vec![]
         );
         // And an install that has published nothing yet cannot compare either.
         let current = live(6, "/usr/bin/cermet", "/usr/bin/cermet");
         assert_eq!(
-            stale_processes(&[current], RETIRED, INSTALLED, None, 1),
+            stale_processes(&[current], RETIRED, INSTALLED, None, &[1]),
             vec![]
         );
     }
@@ -904,7 +937,7 @@ mod tests {
             RETIRED,
             INSTALLED,
             Some(PUBLISHED),
-            1,
+            &[1],
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].reason, StaleReason::Retired);
@@ -917,7 +950,7 @@ mod tests {
         // The July zombies: the install deleted the file, the process kept going.
         let mut gone = live(51234, "/opt/cermet/bin/cermet", "/opt/cermet/bin/cermet");
         gone.deleted = true;
-        let found = stale_processes(&[gone], RETIRED, INSTALLED, Some(PUBLISHED), 1);
+        let found = stale_processes(&[gone], RETIRED, INSTALLED, Some(PUBLISHED), &[1]);
         assert_eq!(found.len(), 1, "deleted beats being inside the prefix");
         assert_eq!(found[0].reason, StaleReason::Deleted);
     }
@@ -933,7 +966,7 @@ mod tests {
             RETIRED,
             INSTALLED,
             Some(PUBLISHED),
-            1,
+            &[1],
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].reason, StaleReason::OutsidePrefix);
@@ -953,9 +986,43 @@ mod tests {
             ),
         ];
         assert_eq!(
-            stale_processes(&processes, RETIRED, INSTALLED, Some(PUBLISHED), 4),
+            stale_processes(&processes, RETIRED, INSTALLED, Some(PUBLISHED), &[4]),
             vec![]
         );
+    }
+
+    #[test]
+    fn an_outside_prefix_ancestor_of_the_scan_is_never_a_survivor() {
+        // The installer's own invocation chain (a terminal-run `./cermet setup` re-execing itself
+        // through sudo, a dev-tree wrapper) runs cermet-named binaries outside the prefix by
+        // construction. An ancestor of the scan is part of the install, not a survivor of it —
+        // reporting one tells a first-time installer that something outlived an install that had
+        // nothing before it.
+        let parent = live(688, "/Users/admin/cermet", "./cermet");
+        let found = stale_processes(
+            &[parent],
+            RETIRED,
+            INSTALLED,
+            Some(PUBLISHED),
+            &[689, 688, 42],
+        );
+        assert_eq!(found, vec![], "ancestors of the scan are excluded");
+    }
+
+    #[test]
+    fn the_same_process_outside_the_scan_lineage_is_still_reported() {
+        // The identical process, not in the lineage: a genuinely surviving old-binary client.
+        let bystander = live(688, "/Users/admin/cermet", "./cermet");
+        let found = stale_processes(
+            &[bystander],
+            RETIRED,
+            INSTALLED,
+            Some(PUBLISHED),
+            &[689, 42],
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].reason, StaleReason::OutsidePrefix);
+        assert_eq!(found[0].pid, 688);
     }
 
     #[test]
