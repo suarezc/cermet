@@ -13,9 +13,12 @@ use thiserror::Error;
 
 use crate::cermet_document::MAX_DOCUMENT_BYTES;
 
-const DOCUMENT_NAME: &CStr = c"CERMET.md";
-const GIT_NAME: &CStr = c".git";
-const PARENT_NAME: &CStr = c"..";
+// SAFETY: both byte strings have exactly one trailing NUL and no interior NUL.
+const DOCUMENT_NAME: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"CERMET.md\0") };
+// SAFETY: the byte string has exactly one trailing NUL and no interior NUL.
+const GIT_NAME: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b".git\0") };
+// SAFETY: the byte string has exactly one trailing NUL and no interior NUL.
+const PARENT_NAME: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"..\0") };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectoryIdentity {

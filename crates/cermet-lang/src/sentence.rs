@@ -774,7 +774,9 @@ impl<'a> SentenceEvaluator<'a> {
                 selected == provider
                     && self
                         .resolve_set(selected, set, digest.as_deref())
-                        .is_none_or(|snapshot| snapshot.members().iter().any(|item| item == action))
+                        .map_or(true, |snapshot| {
+                            snapshot.members().iter().any(|item| item == action)
+                        })
             }
         }
     }
@@ -1778,7 +1780,7 @@ fn symbolic_shapes_are_discoverable(
                 continue;
             }
             base.domains[index].retain(|atom_idx| {
-                symbolic_atom_exact_json(&universes[index][*atom_idx]).is_none_or(|value| {
+                symbolic_atom_exact_json(&universes[index][*atom_idx]).map_or(true, |value| {
                     evaluator.contracts.present_field_is_valid(
                         &shape.provider,
                         &shape.action,
@@ -2100,7 +2102,7 @@ pub fn validate_rule_structure(rule: &Rule) -> Result<(), ()> {
                 && valid_ident(set)
                 && digest
                     .as_deref()
-                    .is_none_or(crate::sets::valid_snapshot_digest)
+                    .map_or(true, crate::sets::valid_snapshot_digest)
         }
         Selector::Verb { provider, action } => {
             valid_provider_ident(provider) && valid_ident(action)

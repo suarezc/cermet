@@ -258,7 +258,7 @@ fn validate_money_terminal(
         .is_some_and(|value| value.as_i64().is_none())
         || object
             .get("retention_error")
-            .is_some_and(|value| value.as_str().is_none_or(str::is_empty))
+            .is_some_and(|value| value.as_str().map_or(true, str::is_empty))
     {
         return Err(Error::Integrity(
             "money terminal has malformed optional evidence".into(),
@@ -267,8 +267,8 @@ fn validate_money_terminal(
     let artifact = object.get("artifact");
     let digest = object.get("digest");
     if artifact.is_some() != digest.is_some()
-        || artifact.is_some_and(|value| value.as_str().is_none_or(str::is_empty))
-        || digest.is_some_and(|value| value.as_str().is_none_or(str::is_empty))
+        || artifact.is_some_and(|value| value.as_str().map_or(true, str::is_empty))
+        || digest.is_some_and(|value| value.as_str().map_or(true, str::is_empty))
         || object.get("retention_error").is_some() && artifact.is_some()
     {
         return Err(Error::Integrity(

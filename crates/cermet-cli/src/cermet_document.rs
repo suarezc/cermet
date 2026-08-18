@@ -514,7 +514,7 @@ mod tests {
     fn exactly_cap_bytes_are_not_rejected_for_size_alone() {
         let mut source = document("none", "");
         let extra = MAX_DOCUMENT_BYTES - source.len();
-        source.splice(0..0, std::iter::repeat_n(b'x', extra));
+        source.splice(0..0, std::iter::repeat(b'x').take(extra));
         assert_eq!(source.len(), MAX_DOCUMENT_BYTES);
         assert!(ManagedDocument::parse(&source).is_ok());
     }

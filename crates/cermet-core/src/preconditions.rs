@@ -224,17 +224,17 @@ pub(crate) fn evaluate_observation(
             primary.get("object").and_then(Value::as_str) == Some("customer")
                 && exact_str(resource, "customer", &primary["id"])
                 && mode_matches(resource, primary)
-                && primary
-                    .get("account")
-                    .is_none_or(|account| account.as_str() == resource.get_str("account"))
+                && primary.get("account").map_or(true, |account| {
+                    account.as_str() == resource.get_str("account")
+                })
                 && related.is_some_and(|method| {
                     method.get("object").and_then(Value::as_str) == Some("payment_method")
                         && exact_str(resource, "payment_method", &method["id"])
                         && exact_str(resource, "customer", &method["customer"])
                         && mode_matches(resource, method)
-                        && method
-                            .get("account")
-                            .is_none_or(|account| account.as_str() == resource.get_str("account"))
+                        && method.get("account").map_or(true, |account| {
+                            account.as_str() == resource.get_str("account")
+                        })
                 })
         }
         Kind::InvoiceOpen => {
@@ -376,9 +376,9 @@ pub(crate) fn evaluate_observation(
                                 .checked_sub(refunded)
                                 .is_some_and(|remaining| remaining >= amount)
                     })
-                && primary
-                    .get("account")
-                    .is_none_or(|account| account.as_str() == resource.get_str("account"))
+                && primary.get("account").map_or(true, |account| {
+                    account.as_str() == resource.get_str("account")
+                })
         }
         #[cfg(any(test, feature = "test-double"))]
         Kind::TestChargeReady => {
@@ -389,9 +389,9 @@ pub(crate) fn evaluate_observation(
                     .zip(primary.get("amount_refunded").and_then(Value::as_i64))
                     .zip(resource.get_i64("amount"))
                     .is_some_and(|((total, refunded), amount)| total - refunded >= amount)
-                && primary
-                    .get("account")
-                    .is_none_or(|account| account.as_str() == resource.get_str("account"))
+                && primary.get("account").map_or(true, |account| {
+                    account.as_str() == resource.get_str("account")
+                })
         }
     };
     if ok {
