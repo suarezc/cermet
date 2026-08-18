@@ -891,7 +891,8 @@ fn valid_calendar_date(date: &str) -> bool {
     let year = digits(&bytes[0..4]);
     let month = digits(&bytes[5..7]);
     let day = digits(&bytes[8..10]);
-    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap_year =
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let days_in_month = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
