@@ -392,8 +392,13 @@ mirror — so the human deciding what rule to write is looking at what the push 
 and the hook confirms ONLY if that landed, so **the mirror ref advances iff the upstream's did**. A
 plain push: the upstream server's fast-forward rule is the entire concurrency control, and its
 refusal rides git's error channel back to the agent. Ref CREATION is the same effect as advancing
-(git has no bootstrap ceremony). Deletion and force are deliberately absent vocabulary — hook
-refusals with reasons, a deliberate omission rather than a code gap.
+(git has no bootstrap ceremony), and so is DELETION: `new` at the zero oid carries as git's own
+delete refspec under the same push sentence, matching git's model of what push authority means, and
+is receipted the same way either direction — an admitted deletion leaves an allow row naming the ref
+and the zero-oid transition, an unadmitted one a deny row with its widening suggestion. Restricting
+deletion, for an operator who wants that, is sentence-axis work rather than a hole in the decision
+path. Force is deliberately absent vocabulary: the hop is a plain push, so the upstream refuses a
+non-fast-forward.
 
 **The receipt.** It derives from the hook's frozen tuple plus the upstream's OWN account of what it
 did, read out of `git push --porcelain`. It carries `upstream_old_oid` (what the

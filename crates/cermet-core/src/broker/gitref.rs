@@ -168,8 +168,14 @@ impl super::Broker {
     /// success ONLY if the upstream accepted, so the mirror's ref advances iff the upstream's did
     /// and `mirror ≡ upstream` holds through every failure arm.
     ///
-    /// Vocabulary the sentences do not yet have — force/non-fast-forward and deletion — refuses
-    /// here as a hook refusal, not a code gap: that vocabulary is a deliberate gap.
+    /// A DELETION is an ordinary ref update whose new value is [`NULL_OID`], decided under the SAME
+    /// push sentence that covers the repo — git's own model, where push authority over a ref
+    /// includes removing it. Deleting it is not a separate word: the transition is `old → zero`,
+    /// the same shape a creation (`zero → new`) already had, and both are receipted the same way.
+    /// Restricting deletion for an operator who wants that restriction is sentence-axis work (a
+    /// predicate over the transition), not a hole in this function — a refusal with no decision
+    /// behind it leaves the attempt with no receipt at all, which is the one outcome the broker's
+    /// contract does not allow.
     pub fn authorize_ref_update(&self, update: &RefUpdate) -> RefVerdict {
         let Some(branch) = update.refname.strip_prefix("refs/heads/") else {
             return RefVerdict::deny(
@@ -181,16 +187,6 @@ impl super::Broker {
                 None,
             );
         };
-        if update.new == NULL_OID {
-            return RefVerdict::deny(
-                format!(
-                    "cermet: refusing to DELETE {}. Deletion is deliberately absent vocabulary — \
-                     it is destructive and would need its own word.",
-                    update.refname
-                ),
-                None,
-            );
-        }
 
         let mut resource = json!({
             "owner": update.repo.owner,
@@ -243,13 +239,25 @@ impl super::Broker {
         match result {
             Ok(execution) if execution.ok => RefVerdict {
                 allow: true,
-                message: format!(
-                    "cermet: carried {}@{} to {} (request {})",
-                    branch,
-                    short(&update.new),
-                    update.repo.slug(),
-                    outcome.request_id
-                ),
+                // The receipt names the transition it performed, in the words that fit it: a
+                // deletion has no tip to carry.
+                message: if update.new == NULL_OID {
+                    format!(
+                        "cermet: deleted {} on {} (was {}; request {})",
+                        branch,
+                        update.repo.slug(),
+                        short(&update.old),
+                        outcome.request_id
+                    )
+                } else {
+                    format!(
+                        "cermet: carried {}@{} to {} (request {})",
+                        branch,
+                        short(&update.new),
+                        update.repo.slug(),
+                        outcome.request_id
+                    )
+                },
                 request_id: Some(outcome.request_id),
             },
             Ok(_) => RefVerdict::deny(
@@ -315,6 +323,13 @@ impl super::Broker {
                  `cermet rules allow`",
             ),
         }
+        if update.new == NULL_OID {
+            out.push_str(&format!(
+                "\ncermet: this push DELETES {} (was {})",
+                update.refname,
+                short(&update.old)
+            ));
+        }
         if let Some(paths) = self.derive_changed_paths(update) {
             out.push_str(&format!(
                 "\ncermet: this push touches {} path(s)",
@@ -338,6 +353,11 @@ impl super::Broker {
     /// denied. A future path-predicate sentence is a different consumer and fails CLOSED on its own
     /// behalf: an unmatched restriction is never an allow.
     fn derive_changed_paths(&self, update: &RefUpdate) -> Option<ChangedPaths> {
+        if update.new == NULL_OID {
+            // A deletion changes no paths — it removes a ref. The refusal above says so directly
+            // rather than running a diff against an oid that names no object.
+            return None;
+        }
         let mirror = crate::git::mirror_path(&self.git, &update.repo);
         crate::git::changed_paths(&self.git, &mirror, &update.old, &update.new).ok()
     }

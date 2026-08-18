@@ -77,6 +77,7 @@ struct Harness {
     socket: PathBuf,
     upstream: PathBuf,
     git: cermet_core::git::GitConfig,
+    broker: BrokerHandle,
     runtime: Option<tokio::runtime::Runtime>,
 }
 
@@ -251,9 +252,10 @@ impl Harness {
             admitted_uids: admitted.unwrap_or_else(|| vec![uid]),
         };
         let config = ServeConfig::default();
+        let hook_broker = broker.clone();
         runtime.spawn_blocking(move || gitplane::serve_git_socket(git_listener, plane, config));
         runtime.spawn_blocking(move || {
-            gitplane::hook::serve_hook_socket(hook_listener, broker, registry, uid, config)
+            gitplane::hook::serve_hook_socket(hook_listener, hook_broker, registry, uid, config)
         });
 
         Harness {
@@ -262,8 +264,29 @@ impl Harness {
             socket,
             upstream,
             git: git_cfg,
+            broker,
             runtime: Some(runtime),
         }
+    }
+
+    /// The receipt log, newest first — the same rows `cermet log` renders. A push decided through
+    /// git's hook is an ordinary request, so it is visible here or it left no receipt at all.
+    fn receipts(&self) -> Vec<serde_json::Value> {
+        let broker = self.broker.clone();
+        let json = self
+            .runtime
+            .as_ref()
+            .expect("the harness runtime is live")
+            .block_on(async move { broker.history().await })
+            .expect("the receipt log reads");
+        serde_json::from_str(&json).expect("the receipt log is JSON")
+    }
+
+    /// The newest receipt naming this branch, whatever it decided.
+    fn receipt_for_branch(&self, branch: &str) -> Option<serde_json::Value> {
+        self.receipts()
+            .into_iter()
+            .find(|row| row["resource"]["branch"] == serde_json::json!(branch))
     }
 
     /// A local clone with one commit; returns its oid.
@@ -655,21 +678,129 @@ fn a_second_push_reuses_the_persistent_mirror() {
     );
 }
 
+/// A deletion is an update to the zero oid, decided under the SAME push sentence that covers the
+/// repo — git's own model of what push authority means. It executes and leaves an ALLOW receipt.
 #[test]
-fn a_branch_deletion_is_refused_as_absent_vocabulary() {
+fn a_covered_branch_deletion_is_carried_and_receipted() {
     let h = Harness::start(ALLOW);
-    let (src, _oid) = h.source();
-    assert!(h.push(&src, "github/acme/website", "main").0);
+    let (src, oid) = h.source();
+    git_ok(&h.root, &src, &["branch", "feature"]);
+    let (ok, output) = h.push(&src, "github/acme/website", "feature");
+    assert!(ok, "{output}");
+    assert_eq!(
+        h.ref_of(&h.upstream, "feature").as_deref(),
+        Some(oid.as_str())
+    );
 
-    let (ok, output) = h.push(&src, "github/acme/website", ":main");
-    assert!(!ok, "deletion has no word yet:\n{output}");
+    let (ok, output) = h.push(&src, "github/acme/website", ":feature");
     assert!(
-        output.contains("deliberately absent vocabulary"),
-        "the refusal says WHY, not just no:\n{output}"
+        ok,
+        "the push sentence covering this repo covers deleting its refs:\n{output}"
     );
     assert!(
-        h.ref_of(&h.upstream, "main").is_some(),
+        output.contains("cermet: deleted feature"),
+        "the receipt names the ref and rides git's own channel:\n{output}"
+    );
+    assert_eq!(
+        h.ref_of(&h.upstream, "feature"),
+        None,
+        "the deletion reached the upstream"
+    );
+    assert_eq!(
+        h.ref_of(&h.mirror(), "feature"),
+        None,
+        "mirror ≡ upstream: the mirror's ref went with it"
+    );
+
+    let receipt = h
+        .receipt_for_branch("feature")
+        .expect("a deletion leaves a receipt like any other attempted effect");
+    assert_eq!(receipt["decision"], "allow");
+    assert_eq!(receipt["provider"], "github");
+    assert_eq!(receipt["action"], "push");
+    assert_eq!(
+        receipt["resource"]["new_oid"],
+        serde_json::json!(cermet_core::git::NULL_OID),
+        "the receipt names the zero-oid transition, not a guess at one"
+    );
+    assert_eq!(
+        receipt["resource"]["mirror_old_oid"],
+        serde_json::json!(oid),
+        "and the tip it moved from"
+    );
+    assert!(
+        receipt["request_id"].is_string(),
+        "the deletion carries a request id:\n{receipt}"
+    );
+}
+
+/// The other half of the contract: a deletion no sentence admits is refused WITH a receipt, in the
+/// broker's own words, never git's bare "failed to push some refs".
+#[test]
+fn an_unruled_branch_deletion_is_refused_with_a_receipt() {
+    // Push authority for a DIFFERENT repo, so nothing here speaks for `acme/website`.
+    let h = Harness::start("allow github.push where owner = \"other\" and name = \"repo\"");
+    let (src, oid) = h.source();
+    git_ok(&h.root, &src, &["branch", "feature"]);
+    // Seed both sides out of band: the ref exists to delete, without any allowed push creating it.
+    git_ok(
+        &h.root,
+        &src,
+        &["push", "-q", h.upstream.to_str().unwrap(), "feature"],
+    );
+    let mirror = cermet_core::git::ensure_mirror(
+        &h.git,
+        &cermet_core::git::RepoId::parse("github/acme/website").unwrap(),
+        &h.root.join("cermetd-hook"),
+    )
+    .unwrap();
+    // Into the mirror by fetch, not by push: a push would meet the mirror's own update hook, and
+    // this ref is meant to predate any decision.
+    git_ok(
+        &h.root,
+        &h.root,
+        &[
+            "--git-dir",
+            mirror.to_str().unwrap(),
+            "fetch",
+            "-q",
+            h.upstream.to_str().unwrap(),
+            "+refs/heads/feature:refs/heads/feature",
+        ],
+    );
+
+    let (ok, output) = h.push(&src, "github/acme/website", ":feature");
+    assert!(!ok, "no sentence admits this deletion:\n{output}");
+    assert!(
+        output.contains("no standing authority"),
+        "the refusal is legible in the agent's push output:\n{output}"
+    );
+    assert!(
+        output.contains("ask your operator"),
+        "and it addresses the party that can widen authority:\n{output}"
+    );
+    assert_eq!(
+        h.ref_of(&h.upstream, "feature").as_deref(),
+        Some(oid.as_str()),
         "nothing was deleted"
+    );
+    assert_eq!(
+        h.ref_of(&mirror, "feature").as_deref(),
+        Some(oid.as_str()),
+        "and the mirror kept its ref"
+    );
+
+    let receipt = h
+        .receipt_for_branch("feature")
+        .expect("a refused deletion leaves a deny row, not silence");
+    assert_eq!(receipt["decision"], "deny");
+    assert_eq!(
+        receipt["resource"]["new_oid"],
+        serde_json::json!(cermet_core::git::NULL_OID)
+    );
+    assert!(
+        receipt["reason"].is_string(),
+        "the deny row carries why:\n{receipt}"
     );
 }
 

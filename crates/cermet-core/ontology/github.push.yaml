@@ -13,12 +13,13 @@ semantics:
   completion: terminal
   idempotency: provider_cas
 review:
-  summary: Advance one branch on a pinned repository, decided by git's update hook on the mirror.
+  summary: Move one branch on a pinned repository, decided by git's update hook on the mirror.
   cautions:
     - Not requestable; the decision is git's update hook, driven by an ordinary git push.
     - The upstream's own fast-forward rule is the concurrency control, so a moved head is a refusal.
     - mirror_old_oid is the daemon mirror's tip, not the upstream's; the receipt carries both.
-    - Deletion and force pushes are deliberately absent vocabulary.
+    - Deleting a branch is this verb with new_oid at the zero oid, under the same sentence.
+    - Force pushes are deliberately absent vocabulary; the hop is a plain push.
 sources:
   - GH-GIT-HTTPS-REMOTES
   - GH-PERSONAL-ACCESS-TOKENS

@@ -834,19 +834,24 @@ fn parse_name_status(stdout: &[u8]) -> ChangedPaths {
 /// performed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamTransition {
-    /// The oid the upstream ref moved FROM, or `None` when it created the ref.
+    /// The oid the upstream ref moved FROM, or `None` when it created the ref — and on a deletion,
+    /// where git's porcelain line reports no oid at all.
     pub from: Option<String>,
     /// True when the upstream had no such ref before this push.
     pub created: bool,
+    /// True when the upstream REMOVED the ref.
+    pub deleted: bool,
 }
 
 /// Parse the one `--porcelain` status line for `refs/heads/<branch>`.
 ///
-/// The two shapes git emits (verified against git 2.53, `core.abbrev=no` so the oids are full):
+/// The three shapes git emits (verified against git 2.53, `core.abbrev=no` so the oids are full):
 ///   ` \t<src>:refs/heads/main\t<from>..<to>`   — an update
 ///   `*\t<src>:refs/heads/main\t[new branch]`   — a creation
+///   `-\t:refs/heads/main\t[deleted]`           — a deletion
 /// Anything else yields `None` rather than a guess: an unparsed line means the receipt says
-/// "unknown", never a fabricated oid.
+/// "unknown", never a fabricated oid. A deletion's `from` is `None` because git's own line carries
+/// no oid for it — the tip the daemon held is a separate, separately-labelled fact.
 pub fn parse_upstream_transition(stdout: &[u8], branch: &str) -> Option<UpstreamTransition> {
     let text = String::from_utf8_lossy(stdout);
     let want = format!("refs/heads/{branch}");
@@ -865,6 +870,14 @@ pub fn parse_upstream_transition(stdout: &[u8], branch: &str) -> Option<Upstream
             return Some(UpstreamTransition {
                 from: None,
                 created: true,
+                deleted: false,
+            });
+        }
+        if summary.starts_with("[deleted]") {
+            return Some(UpstreamTransition {
+                from: None,
+                created: false,
+                deleted: true,
             });
         }
         if let Some((from, _to)) = summary.split_once("..") {
@@ -873,6 +886,7 @@ pub fn parse_upstream_transition(stdout: &[u8], branch: &str) -> Option<Upstream
                 return Some(UpstreamTransition {
                     from: Some(from.to_string()),
                     created: false,
+                    deleted: false,
                 });
             }
         }
@@ -895,6 +909,10 @@ fn is_oid(value: &str) -> bool {
 /// confirms only on upstream success and **the mirror ref advances iff upstream's did**. A plain
 /// push: the upstream server's fast-forward rule is the concurrency control, and its refusal rides
 /// git's error channel back into the agent's `git push` output.
+///
+/// A [`NULL_OID`] `new_oid` is a DELETION, and it carries as git's own delete refspec (an empty
+/// source). This is git's spelling for the same transition the hook reported; there is nothing of
+/// ours to invent.
 pub fn carry_to_upstream(
     cfg: &GitConfig,
     mirror: &Path,
@@ -903,7 +921,8 @@ pub fn carry_to_upstream(
     new_oid: &str,
     branch: &str,
 ) -> Result<GitRun> {
-    let refspec = format!("{new_oid}:refs/heads/{branch}");
+    let source = if new_oid == NULL_OID { "" } else { new_oid };
+    let refspec = format!("{source}:refs/heads/{branch}");
     let run = run(
         cfg,
         Some(mirror),

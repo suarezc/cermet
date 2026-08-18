@@ -629,7 +629,7 @@ fn the_hop_creates_a_branch_that_does_not_exist_upstream_yet() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_upstream_transition_parser_reads_both_shapes_git_emits() {
+fn the_upstream_transition_parser_reads_every_shape_git_emits() {
     let created = parse_upstream_transition(
         b"To file:///x\n*\t1111111111111111111111111111111111111111:refs/heads/main\t[new branch]\nDone\n",
         "main",
@@ -644,6 +644,17 @@ fn the_upstream_transition_parser_reads_both_shapes_git_emits() {
     let updated = parse_upstream_transition(line.as_bytes(), "main").expect("an update parses");
     assert!(!updated.created);
     assert_eq!(updated.from.as_deref(), Some(from.as_str()));
+
+    // A deletion: git's line names the ref with an EMPTY source and carries no oid at all, so
+    // `from` stays absent rather than borrowing the mirror's tip for it.
+    let deleted = parse_upstream_transition(
+        b"To file:///x\n-\t:refs/heads/main\t[deleted]\nDone\n",
+        "main",
+    )
+    .expect("a deletion parses");
+    assert!(deleted.deleted);
+    assert!(!deleted.created);
+    assert_eq!(deleted.from, None);
 
     // A different branch's line is not this branch's transition.
     assert!(parse_upstream_transition(line.as_bytes(), "other").is_none());
@@ -702,6 +713,31 @@ fn the_hop_reports_the_upstreams_from_oid_not_the_mirrors_tip() {
         Some(first.as_str()),
         "the mirror's old tip is not what the upstream moved from"
     );
+}
+
+#[test]
+fn the_hop_carries_a_zero_oid_as_gits_own_delete_refspec() {
+    let f = Fixture::new();
+    let hook = f.hook_program();
+    let (src, first) = f.source();
+    let mirror = ensure_mirror(&f.cfg, &f.repo(), &hook).unwrap();
+    let upstream = f.bare("upstream.git");
+    let url = format!("file://{}", upstream.display());
+
+    f.git(&src, &["push", "-q", mirror.to_str().unwrap(), "main"]);
+    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "main").unwrap();
+    assert_eq!(f.ref_of(&upstream, "main").as_deref(), Some(first.as_str()));
+
+    // The hook's `new` for a deletion IS the zero oid; the hop spells that as git spells it.
+    let run = carry_to_upstream(&f.cfg, &mirror, &url, None, NULL_OID, "main").unwrap();
+    assert_eq!(
+        f.ref_of(&upstream, "main"),
+        None,
+        "the ref is gone from the upstream"
+    );
+    let transition = parse_upstream_transition(&run.stdout, "main")
+        .expect("the porcelain line names the deletion it performed");
+    assert!(transition.deleted);
 }
 
 // ---------------------------------------------------------------------------

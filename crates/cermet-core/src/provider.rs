@@ -2625,6 +2625,9 @@ impl GenericProvider {
             "new_oid": new_oid,
             "upstream_old_oid": transition.as_ref().and_then(|t| t.from.clone()),
             "upstream_created_ref": transition.as_ref().map(|t| t.created),
+            // A deletion is an update to the zero oid: `new_oid` already names the transition, and
+            // this is the upstream's own confirmation that the ref is gone.
+            "upstream_deleted_ref": transition.as_ref().map(|t| t.deleted),
             "mirror_old_oid": mirror_old_oid,
             "carried": true,
             "transport": "git",
