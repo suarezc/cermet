@@ -199,11 +199,16 @@ const AGENT_RUNTIME_DIR: &str = "/var/cermetd-agents";
 /// Linux needs no analog: that daemon logs through journald.
 #[cfg(any(target_os = "macos", test))]
 const DAEMON_LOG_FILE: &str = "/var/log/cermetd.log";
-/// How long setup waits for a freshly bootstrapped daemon to actually SERVE before it refuses the
-/// install. Bounded and short: a healthy cold start binds its sockets in well under a second, and
-/// the throttled crash-loop this catches restarts every 5s, so 15s observes at least two failures.
+/// How long setup keeps watching a freshly bootstrapped daemon that shows NO failure evidence.
+/// Failure itself is not on a timer — the poll refuses the instant launchd reports an exit — so
+/// this cap only bounds the remaining case: a first boot that is merely slow (vault mint, catalog
+/// seed, a loaded machine). It errs long on purpose, and capping out is not a failure verdict —
+/// the report it earns says nothing has failed and a re-run is safe.
 #[cfg(any(target_os = "macos", test))]
-const SERVING_TIMEOUT_SECS: u64 = 15;
+const SERVING_TIMEOUT_SECS: u64 = 60;
+/// When a quiet wait starts to look like a hang to the human watching it, say what is happening.
+#[cfg(target_os = "macos")]
+const SERVING_PROGRESS_SECS: u64 = 15;
 /// The `file-protected` rung's key file: a plain service-account-owned `0600` file under
 /// `CERMET_HOME`, read by `cermet-daemon`'s `master_key::load_service_key_for_rung`. It is the ONLY
 /// rung on macOS (no systemd-creds analog, no login session for a Keychain item) and the bottom
@@ -933,12 +938,15 @@ fn run_linux(args: &SetupArgs) -> Result<(), String> {
     // Assets are installed and reloaded; NOW the daemon setup stopped may come back on the newly
     // published binary.
     cutover.finish();
+    // Membership needs no daemon, so it lands BEFORE the liveness gate: however the wait below
+    // ends, the human can already reach the ctl socket — a slow boot must never leave the box
+    // serving but unreachable by its own approver.
+    let membership_added = ensure_approver_membership(&approver);
     // Install ends with the service enabled and running, like every service-shaped package.
     // Starting the daemon changes no authority — a fresh corpus is deny-all — so there is no
     // second decision to reserve for a second command.
     ensure_service_live()?;
     enable_update_check_scheduler();
-    let membership_added = ensure_approver_membership(&approver);
 
     print_completion(&approver, membership_added, custody);
     report_cutover(&approver);
@@ -973,10 +981,12 @@ fn ensure_service_live() -> Result<(), String> {
 /// launchd equivalent: a plist under /Library/LaunchDaemons with RunAtLoad loads at every boot
 /// once bootstrapped, so "bootstrap now" is the whole enablement story.
 ///
-/// This step REFUSES rather than warns. On launchd the failure it catches is silent by
-/// construction — the crash-loop is loaded, and the log that would explain it is the file the child
-/// could not create — so an install that ends without a serving broker is a failed install, not an
-/// install with a footnote. The refusal carries the evidence that names which failure it was.
+/// This step REFUSES rather than warns — but only on EVIDENCE. On launchd the failure it catches
+/// is silent by construction — the crash-loop is loaded, and the log that would explain it is the
+/// file the child could not create — so an install whose daemon has EXITED is a failed install,
+/// refused the moment launchd says so, carrying the evidence that names which failure it was. A
+/// daemon that has never exited is a boot in progress however long it takes; if it outlasts the
+/// watch window the step reports patience (nothing failed, here is what to watch), never failure.
 #[cfg(target_os = "macos")]
 fn ensure_service_live() -> Result<(), String> {
     if !launchd_job_is_loaded() {
@@ -1289,11 +1299,14 @@ fn run_macos(args: &SetupArgs) -> Result<(), String> {
     // Assets are installed; NOW the daemon setup stopped may come back on the newly published
     // binary.
     cutover.finish();
+    // Membership needs no daemon, so it lands BEFORE the liveness gate: however the wait below
+    // ends, the human can already reach the ctl socket — a slow boot must never leave the box
+    // serving but unreachable by its own approver.
+    let membership_added = ensure_approver_membership(&approver);
     // Install ends with the job bootstrapped and running — same rationale
     // as the Linux path: a fresh corpus is deny-all, so starting the daemon grants nothing.
     ensure_service_live()?;
     enable_update_check_scheduler();
-    let membership_added = ensure_approver_membership(&approver);
 
     print_completion(&approver, membership_added, custody);
     report_cutover(&approver);
@@ -2662,6 +2675,38 @@ impl LaunchdJobStatus {
     fn is_running(&self) -> bool {
         self.state.as_deref() == Some("running")
     }
+
+    /// The daemon has exited at least once this load: crash evidence. A healthy job prints the
+    /// literal `(never exited)` for this field until its first exit.
+    fn has_exit_evidence(&self) -> bool {
+        matches!(self.last_exit_code.as_deref(), Some(code) if code != "(never exited)")
+    }
+}
+
+/// One launchctl snapshot, read three ways.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum ServingPoll {
+    /// Running with the ctl socket bound: the install's liveness claim holds.
+    Serving,
+    /// Alive or scheduled, never exited: a boot in progress. Not a verdict — keep watching.
+    StillStarting,
+    /// Evidence of failure: the daemon has exited, or launchd holds no job at all.
+    Failed,
+}
+
+/// PURE. Decide what one snapshot means. Failure requires EVIDENCE (an exit code, a missing job);
+/// elapsed time is deliberately not an input — a slow first boot and a fast one are
+/// indistinguishable at every instant, so time alone must never turn "starting" into "failed".
+#[cfg(any(target_os = "macos", test))]
+fn serving_poll(status: &LaunchdJobStatus, socket_present: bool) -> ServingPoll {
+    if status.is_running() && socket_present {
+        return ServingPoll::Serving;
+    }
+    if status.state.is_none() || status.has_exit_evidence() {
+        return ServingPoll::Failed;
+    }
+    ServingPoll::StillStarting
 }
 
 /// Read `launchctl print` output. Pure, so the states that matter are tested off a Mac.
@@ -2724,14 +2769,31 @@ fn serving_failure_report(
         )
     };
     format!(
-        "cermetd did not begin serving within {SERVING_TIMEOUT_SECS}s — the install is NOT \
-         usable\n\
+        "cermetd failed while starting — the install is NOT usable\n\
          [cermet-setup]      launchctl state: {state}\n\
          [cermet-setup]      last exit code: {exit}\n\
          [cermet-setup]      {log_line}\n\
          [cermet-setup]      ctl socket {}: {}\n\
          [cermet-setup]      full report: sudo launchctl print {}",
         crate::endpoint::DEFAULT_CTL_SOCK,
+        if socket_present { "present" } else { "absent" },
+        launchd_service_target(),
+    )
+}
+
+/// The cap-out on a boot that has produced NO failure evidence: the daemon is alive and has never
+/// exited, this box is just slower than the wait. Nothing is refused — the report says what is
+/// still true, what to watch, and that a re-run is safe. Deliberately free of the failure report's
+/// "NOT usable" verdict, which would be false here.
+#[cfg(any(target_os = "macos", test))]
+fn still_starting_report(status: &LaunchdJobStatus, socket_present: bool) -> String {
+    let state = status.state.as_deref().unwrap_or("(unknown)");
+    format!(
+        "cermetd is still starting after {SERVING_TIMEOUT_SECS}s — slow, but nothing has \
+         failed (state: {state}, never exited, ctl socket {})\n\
+         [cermet-setup]      watch it finish:  sudo launchctl print {}\n\
+         [cermet-setup]      then confirm:     cermet check\n\
+         [cermet-setup]      re-running `sudo cermet setup` is safe — it converges and re-checks",
         if socket_present { "present" } else { "absent" },
         launchd_service_target(),
     )
@@ -2761,19 +2823,34 @@ fn ctl_socket_present() -> bool {
 /// Poll, bounded, until the daemon is SERVING; on timeout hand back the discriminating refusal.
 #[cfg(target_os = "macos")]
 fn wait_until_serving() -> Result<(), String> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SERVING_TIMEOUT_SECS);
+    let started = std::time::Instant::now();
+    let mut said_still_starting = false;
     loop {
         let status = parse_launchd_print(&launchd_print_text());
         let socket = ctl_socket_present();
-        if status.is_running() && socket {
-            return Ok(());
+        match serving_poll(&status, socket) {
+            ServingPoll::Serving => return Ok(()),
+            // Evidence refuses NOW — a crash-loop never deserves the full wait.
+            ServingPoll::Failed => {
+                return Err(serving_failure_report(
+                    &status,
+                    Path::new(DAEMON_LOG_FILE).exists(),
+                    socket,
+                ));
+            }
+            ServingPoll::StillStarting => {}
         }
-        if std::time::Instant::now() >= deadline {
-            return Err(serving_failure_report(
-                &status,
-                Path::new(DAEMON_LOG_FILE).exists(),
-                socket,
-            ));
+        let waited = started.elapsed();
+        if waited >= std::time::Duration::from_secs(SERVING_TIMEOUT_SECS) {
+            return Err(still_starting_report(&status, socket));
+        }
+        if !said_still_starting && waited >= std::time::Duration::from_secs(SERVING_PROGRESS_SECS) {
+            println!(
+                "[cermet-setup]       cermetd is still starting ({SERVING_PROGRESS_SECS}s) — a \
+                 first boot mints the vault and seeds the catalog; waiting up to \
+                 {SERVING_TIMEOUT_SECS}s"
+            );
+            said_still_starting = true;
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
@@ -5320,8 +5397,8 @@ system/dev.cermet.cermetd = {
             "{report}"
         );
         assert!(
-            report.contains(&SERVING_TIMEOUT_SECS.to_string()),
-            "the refusal says how long it waited: {report}"
+            report.contains("NOT usable"),
+            "an evidenced failure is a failed install, said plainly: {report}"
         );
     }
 
@@ -5347,6 +5424,62 @@ system/dev.cermet.cermetd = {
         let report = serving_failure_report(&parse_launchd_print(MISSING), false, false);
         assert!(report.contains("no job"), "{report}");
         assert!(!report.contains("state: \n"), "{report}");
+    }
+
+    /// The poll's three-way read of one launchctl snapshot. Failure needs EVIDENCE — an exit code,
+    /// or no job loaded at all. Elapsed time is never evidence: a slow first boot (vault mint,
+    /// catalog seed, a loaded machine) reads exactly like a fast one at every instant, so a daemon
+    /// that has never exited is "still starting", however long that takes.
+    #[test]
+    fn the_poll_refuses_on_evidence_and_waits_on_none() {
+        // Running with the socket bound: serving.
+        assert_eq!(
+            serving_poll(&parse_launchd_print(RUNNING), true),
+            ServingPoll::Serving
+        );
+        // Running but not yet bound: alive, still starting.
+        assert_eq!(
+            serving_poll(&parse_launchd_print(RUNNING), false),
+            ServingPoll::StillStarting
+        );
+        // An exit code is crash evidence, whatever the current state reads — refuse NOW, not at
+        // the end of a window.
+        assert_eq!(
+            serving_poll(&parse_launchd_print(SPAWN_SCHEDULED), false),
+            ServingPoll::Failed
+        );
+        // No job loaded is failure evidence too.
+        assert_eq!(
+            serving_poll(&parse_launchd_print(MISSING), false),
+            ServingPoll::Failed
+        );
+        // Scheduled but never exited: the first instants of a normal boot. No evidence, no verdict.
+        let booting = "\
+system/dev.cermet.cermetd = {
+\tstate = spawn scheduled
+\tlast exit code = (never exited)
+}
+";
+        assert_eq!(
+            serving_poll(&parse_launchd_print(booting), false),
+            ServingPoll::StillStarting
+        );
+    }
+
+    /// The cap-out on a daemon that never exited is NOT a failure verdict: nothing has failed, the
+    /// box is slow. The report must say that, name the watch command, and say a re-run is safe —
+    /// and must not carry the failure report's "NOT usable" sentence, which would be false.
+    #[test]
+    fn a_slow_first_boot_earns_patience_not_a_failure_verdict() {
+        let report = still_starting_report(&parse_launchd_print(RUNNING), false);
+        assert!(report.contains("still starting"), "{report}");
+        assert!(!report.contains("NOT usable"), "{report}");
+        assert!(
+            report.contains("safe") && report.contains("cermet setup"),
+            "the remedy is patience plus a safe re-run: {report}"
+        );
+        assert!(report.contains("launchctl print"), "{report}");
+        assert!(report.contains("cermet check"), "{report}");
     }
 
     /// The path setup converges and the path launchd opens are ONE fact. The plist is the contract;
