@@ -54,7 +54,7 @@
 </style>
 <rect x="0.5" y="0.5" width="839" height="407" rx="8" fill="#0a0e14" stroke="#21262d"/>
 <line x1="0" y1="26" x2="840" y2="26" stroke="#21262d"/>
-<text x="24" y="17" fill="#8b949e" style="font-size:10px;letter-spacing:1px">cermet — the loop (40s; a scripted replica — the words are what the shipped CLI prints)</text>
+<text x="24" y="17" fill="#8b949e" style="font-size:10px;letter-spacing:1px">cermet — an example run, from installation to first action</text>
 <clipPath id="scr"><rect x="0" y="27" width="840" height="380"/></clipPath>
 <g clip-path="url(#scr)"><g class="scroll">
 <text class="b0" x="24.0" y="47" fill="#8b949e" textLength="270.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># a fresh box — install once, one consent</text>
