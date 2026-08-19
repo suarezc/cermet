@@ -180,6 +180,23 @@ credential nor a reusable signing/execution oracle.
 > `vercel.deploy` they are (the deploy publishes arbitrary content by design), which is exactly
 > why the missing-set digest gate was designed and NOT built.
 
+### One effect-bearing shape per window
+
+> A relay window's shape table is reads plus AT MOST ONE effect-bearing mutating shape — the
+> `once: true` hop the grant authorizes, and the hop the receipt's verdict pivots on (the audit
+> derivation counts only effect-bearing hops as the grant's effect; a read hop's failure after
+> the effect landed cannot falsify it). Binds still enforce on EVERY hop. Staging writes may
+> exist (`vercel.deploy`'s `POST /v2/files`) but only capped and ruled NON-effect in the ratified
+> document, with the concession argument written down — their authority must already be conceded
+> by the effect's own content freedom, or they are a second effect wearing a staging costume.
+> What the rule buys is burn honesty: any hop can burn the session, and a burn between two
+> mutations would leave provider-side partial state that no single-effect receipt can summarize —
+> the window would have DONE two things while the grant records one verdict. Between the one
+> effect and its observation reads, the same burn is safe by construction: the effect either
+> landed (post-effect refusals cannot falsify it) or never fired (nothing executed, nothing to
+> undo). A protocol that genuinely needs two mutations is two verbs — or one multi-step FROZEN
+> verb where the broker itself drives every step — never one window with two effects.
+
 ---
 
 ## Part II — Refinements the doctrine carries
