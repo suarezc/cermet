@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 408" role="img" aria-label="Cermet demo: an agent's git push is denied, the operator allows one sentence, the push carries, and every decision lands in the receipt log">
+<style>text{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:11px}
+.b0{animation:kb0 40294ms linear infinite}@keyframes kb0{0%,0.993%{opacity:0}0.995%,100%{opacity:1}}
+.b1{animation:kb1 40294ms linear infinite}@keyframes kb1{0%,1.737%{opacity:0}1.740%,100%{opacity:1}}
+.b2{animation:kb2 40294ms linear infinite}@keyframes kb2{0%,2.730%{opacity:0}2.732%,100%{opacity:1}}
+.b3{animation:kb3 40294ms linear infinite}@keyframes kb3{0%,4.333%{opacity:0}4.336%,100%{opacity:1}}
+.b4{animation:kb4 40294ms linear infinite}@keyframes kb4{0%,7.001%{opacity:0}7.004%,100%{opacity:1}}
+.b5{animation:kb5 40294ms linear infinite}@keyframes kb5{0%,9.235%{opacity:0}9.237%,100%{opacity:1}}
+.b6{animation:kb6 40294ms linear infinite}@keyframes kb6{0%,14.012%{opacity:0}14.014%,100%{opacity:1}}
+.b7{animation:kb7 40294ms linear infinite}@keyframes kb7{0%,14.757%{opacity:0}14.759%,100%{opacity:1}}
+.b8{animation:kb8 40294ms linear infinite}@keyframes kb8{0%,15.749%{opacity:0}15.752%,100%{opacity:1}}
+.b9{animation:kb9 40294ms linear infinite}@keyframes kb9{0%,18.090%{opacity:0}18.092%,100%{opacity:1}}
+.b10{animation:kb10 40294ms linear infinite}@keyframes kb10{0%,20.323%{opacity:0}20.326%,100%{opacity:1}}
+.b11{animation:kb11 40294ms linear infinite}@keyframes kb11{0%,22.557%{opacity:0}22.559%,100%{opacity:1}}
+.b12{animation:kb12 40294ms linear infinite}@keyframes kb12{0%,23.425%{opacity:0}23.428%,100%{opacity:1}}
+.b13{animation:kb13 40294ms linear infinite}@keyframes kb13{0%,27.086%{opacity:0}27.088%,100%{opacity:1}}
+.b14{animation:kb14 40294ms linear infinite}@keyframes kb14{0%,27.830%{opacity:0}27.833%,100%{opacity:1}}
+.b15{animation:kb15 40294ms linear infinite}@keyframes kb15{0%,28.823%{opacity:0}28.826%,100%{opacity:1}}
+.b16{animation:kb16 40294ms linear infinite}@keyframes kb16{0%,31.082%{opacity:0}31.084%,100%{opacity:1}}
+.b17{animation:kb17 40294ms linear infinite}@keyframes kb17{0%,37.348%{opacity:0}37.350%,100%{opacity:1}}
+.b18{animation:kb18 40294ms linear infinite}@keyframes kb18{0%,38.093%{opacity:0}38.095%,100%{opacity:1}}
+.b19{animation:kb19 40294ms linear infinite}@keyframes kb19{0%,39.085%{opacity:0}39.088%,100%{opacity:1}}
+.b20{animation:kb20 40294ms linear infinite}@keyframes kb20{0%,45.766%{opacity:0}45.769%,100%{opacity:1}}
+.b21{animation:kb21 40294ms linear infinite}@keyframes kb21{0%,47.876%{opacity:0}47.878%,100%{opacity:1}}
+.b22{animation:kb22 40294ms linear infinite}@keyframes kb22{0%,50.109%{opacity:0}50.112%,100%{opacity:1}}
+.b23{animation:kb23 40294ms linear infinite}@keyframes kb23{0%,50.978%{opacity:0}50.980%,100%{opacity:1}}
+.b24{animation:kb24 40294ms linear infinite}@keyframes kb24{0%,52.901%{opacity:0}52.904%,100%{opacity:1}}
+.b25{animation:kb25 40294ms linear infinite}@keyframes kb25{0%,55.135%{opacity:0}55.137%,100%{opacity:1}}
+.b26{animation:kb26 40294ms linear infinite}@keyframes kb26{0%,59.168%{opacity:0}59.170%,100%{opacity:1}}
+.b27{animation:kb27 40294ms linear infinite}@keyframes kb27{0%,59.912%{opacity:0}59.915%,100%{opacity:1}}
+.b28{animation:kb28 40294ms linear infinite}@keyframes kb28{0%,60.905%{opacity:0}60.907%,100%{opacity:1}}
+.b29{animation:kb29 40294ms linear infinite}@keyframes kb29{0%,63.163%{opacity:0}63.166%,100%{opacity:1}}
+.b30{animation:kb30 40294ms linear infinite}@keyframes kb30{0%,67.568%{opacity:0}67.571%,100%{opacity:1}}
+.b31{animation:kb31 40294ms linear infinite}@keyframes kb31{0%,68.313%{opacity:0}68.315%,100%{opacity:1}}
+.b32{animation:kb32 40294ms linear infinite}@keyframes kb32{0%,69.306%{opacity:0}69.308%,100%{opacity:1}}
+.b33{animation:kb33 40294ms linear infinite}@keyframes kb33{0%,70.745%{opacity:0}70.748%,100%{opacity:1}}
+.b34{animation:kb34 40294ms linear infinite}@keyframes kb34{0%,74.406%{opacity:0}74.408%,100%{opacity:1}}
+.b35{animation:kb35 40294ms linear infinite}@keyframes kb35{0%,75.150%{opacity:0}75.153%,100%{opacity:1}}
+.b36{animation:kb36 40294ms linear infinite}@keyframes kb36{0%,76.143%{opacity:0}76.145%,100%{opacity:1}}
+.b37{animation:kb37 40294ms linear infinite}@keyframes kb37{0%,78.647%{opacity:0}78.649%,100%{opacity:1}}
+.b38{animation:kb38 40294ms linear infinite}@keyframes kb38{0%,83.052%{opacity:0}83.055%,100%{opacity:1}}
+.b39{animation:kb39 40294ms linear infinite}@keyframes kb39{0%,84.045%{opacity:0}84.047%,100%{opacity:1}}
+.b40{animation:kb40 40294ms linear infinite}@keyframes kb40{0%,85.730%{opacity:0}85.732%,100%{opacity:1}}
+.cv0{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc0 40294ms linear infinite}@keyframes kc0{0%{transform:scaleX(1)}2.730%{transform:scaleX(1);animation-timing-function:steps(12,end)}3.713%,100%{transform:scaleX(0)}}
+.cv1{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc1 40294ms linear infinite}@keyframes kc1{0%{transform:scaleX(1)}15.749%{transform:scaleX(1);animation-timing-function:steps(21,end)}17.469%,100%{transform:scaleX(0)}}
+.cv2{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc2 40294ms linear infinite}@keyframes kc2{0%{transform:scaleX(1)}28.823%{transform:scaleX(1);animation-timing-function:steps(20,end)}30.461%,100%{transform:scaleX(0)}}
+.cv3{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc3 40294ms linear infinite}@keyframes kc3{0%{transform:scaleX(1)}39.085%{transform:scaleX(1);animation-timing-function:steps(74,end)}45.146%,100%{transform:scaleX(0)}}
+.cv4{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc4 40294ms linear infinite}@keyframes kc4{0%{transform:scaleX(1)}60.905%{transform:scaleX(1);animation-timing-function:steps(20,end)}62.543%,100%{transform:scaleX(0)}}
+.cv5{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc5 40294ms linear infinite}@keyframes kc5{0%{transform:scaleX(1)}69.306%{transform:scaleX(1);animation-timing-function:steps(10,end)}70.125%,100%{transform:scaleX(0)}}
+.cv6{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc6 40294ms linear infinite}@keyframes kc6{0%{transform:scaleX(1)}76.143%{transform:scaleX(1);animation-timing-function:steps(23,end)}78.027%,100%{transform:scaleX(0)}}
+.cv7{transform:scaleX(0);transform-box:fill-box;transform-origin:right;animation:kc7 40294ms linear infinite}@keyframes kc7{0%{transform:scaleX(1)}84.045%{transform:scaleX(1);animation-timing-function:steps(13,end)}85.109%,100%{transform:scaleX(0)}}
+.scroll{transform:translateY(-1245px);animation:ks 40294ms linear infinite}@keyframes ks{0%{transform:translateY(0)}23.423%{transform:translateY(-0px)}23.425%{transform:translateY(-60px)}27.083%{transform:translateY(-60px)}27.086%{transform:translateY(-75px)}27.828%{transform:translateY(-75px)}27.830%{transform:translateY(-90px)}31.079%{transform:translateY(-90px)}31.082%{transform:translateY(-375px)}37.346%{transform:translateY(-375px)}37.348%{transform:translateY(-390px)}38.090%{transform:translateY(-390px)}38.093%{transform:translateY(-405px)}45.764%{transform:translateY(-405px)}45.766%{transform:translateY(-435px)}47.873%{transform:translateY(-435px)}47.876%{transform:translateY(-450px)}50.975%{transform:translateY(-450px)}50.978%{transform:translateY(-465px)}52.899%{transform:translateY(-465px)}52.901%{transform:translateY(-480px)}55.132%{transform:translateY(-480px)}55.135%{transform:translateY(-585px)}59.165%{transform:translateY(-585px)}59.168%{transform:translateY(-600px)}59.910%{transform:translateY(-600px)}59.912%{transform:translateY(-615px)}63.161%{transform:translateY(-615px)}63.163%{transform:translateY(-750px)}67.566%{transform:translateY(-750px)}67.568%{transform:translateY(-765px)}68.310%{transform:translateY(-765px)}68.313%{transform:translateY(-780px)}70.743%{transform:translateY(-780px)}70.745%{transform:translateY(-855px)}74.403%{transform:translateY(-855px)}74.406%{transform:translateY(-870px)}75.148%{transform:translateY(-870px)}75.150%{transform:translateY(-885px)}78.644%{transform:translateY(-885px)}78.647%{transform:translateY(-1020px)}83.050%{transform:translateY(-1020px)}83.052%{transform:translateY(-1035px)}85.727%{transform:translateY(-1035px)}85.730%{transform:translateY(-1245px)}100%{transform:translateY(-1245px)}}
+@media (prefers-reduced-motion:reduce){text,rect,g{animation:none !important}}
+</style>
+<rect x="0.5" y="0.5" width="839" height="407" rx="8" fill="#0a0e14" stroke="#21262d"/>
+<line x1="0" y1="26" x2="840" y2="26" stroke="#21262d"/>
+<text x="24" y="17" fill="#8b949e" style="font-size:10px;letter-spacing:1px">cermet — an example run, from installation to first action</text>
+<clipPath id="scr"><rect x="0" y="27" width="840" height="380"/></clipPath>
+<g clip-path="url(#scr)"><g class="scroll">
+<text class="b0" x="24.0" y="47" fill="#8b949e" textLength="270.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># a fresh box — install once, one consent</text>
+<text class="b1" x="24.0" y="62" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b1" x="90.0" y="62" fill="#8b949e" textLength="19.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~ </text>
+<text class="b1" x="109.8" y="62" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b2" x="123.0" y="62" fill="#e6edf3" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet setup</text>
+<text class="b3" x="24.0" y="77" fill="#e6edf3" textLength="277.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Cermet needs administrator access once to:</text>
+<text class="b3" x="24.0" y="92" fill="#e6edf3" textLength="382.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">           • create the local broker's own service account</text>
+<text class="b3" x="24.0" y="107" fill="#e6edf3" textLength="468.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">           • create its credential vault (readable by the broker alone)</text>
+<text class="b3" x="24.0" y="122" fill="#e6edf3" textLength="349.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">           • install and start the background service</text>
+<text class="b3" x="24.0" y="137" fill="#e6edf3" textLength="343.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">           • create the isolated agent IPC endpoints</text>
+<text class="b4" x="24.0" y="152" fill="#e6edf3" textLength="165.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[sudo] password for you: </text>
+<text class="b5" x="24.0" y="167" fill="#8b949e" textLength="178.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">(…installer output elided…)</text>
+<text class="b5" x="24.0" y="197" fill="#3fb950" textLength="376.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup] ✓ broker running (cermetd, starts at boot)</text>
+<text class="b5" x="24.0" y="212" fill="#3fb950" textLength="415.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup] ✓ credential vault ready (custody: systemd-host)</text>
+<text class="b5" x="24.0" y="227" fill="#8b949e" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup]   persistent Cermet files do not contain the plaintext key; full host-image disclosure may permit recover</text>
+<text class="b5" x="24.0" y="242" fill="#8b949e" textLength="6.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">y</text>
+<text class="b5" x="24.0" y="257" fill="#3fb950" textLength="382.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup] ✓ git integration ready (git-remote-cermet)</text>
+<text class="b5" x="24.0" y="272" fill="#e6edf3" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup] update checks: daily against https://github.com/suarezc/cermet/releases, run as you and never by the daem</text>
+<text class="b5" x="24.0" y="287" fill="#e6edf3" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">on. The notice is LOCAL and nothing installs itself; applying an update stays `sudo cermet update`. Off: cermet update -</text>
+<text class="b5" x="24.0" y="302" fill="#e6edf3" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">-daily off</text>
+<text class="b5" x="24.0" y="317" fill="#e6edf3" textLength="422.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[cermet-setup] next: cermet connect github   (or vercel, stripe)</text>
+<text class="b6" x="24.0" y="332" fill="#8b949e" textLength="468.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># hand it the token once — into the broker's vault, not the agent's env</text>
+<text class="b7" x="24.0" y="347" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b7" x="90.0" y="347" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b7" x="169.2" y="347" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b8" x="182.4" y="347" fill="#e6edf3" textLength="138.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet connect github</text>
+<text class="b9" x="24.0" y="362" fill="#e6edf3" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">github token: </text>
+<text class="b10" x="24.0" y="377" fill="#e6edf3" textLength="739.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Route this repository's `origin` through Cermet? (git remote set-url origin cermet::github/you/your-app) [Y/n]: </text>
+<text class="b11" x="763.2" y="377" fill="#e6edf3" textLength="6.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">y</text>
+<text class="b12" x="24.0" y="392" fill="#3fb950" textLength="264.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">✓ github credential stored — cred_github</text>
+<text class="b12" x="24.0" y="407" fill="#e6edf3" textLength="198.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Label: (none); replaced: no.</text>
+<text class="b12" x="24.0" y="422" fill="#e6edf3" textLength="389.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Your token is in Cermet's vault. The agent never sees it.</text>
+<text class="b12" x="24.0" y="437" fill="#e6edf3" textLength="580.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Wired: origin → cermet::github/you/your-app. Plain `git push` now goes through Cermet.</text>
+<text class="b12" x="24.0" y="452" fill="#8b949e" textLength="244.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Verify anytime: cermet check github</text>
+<text class="b13" x="24.0" y="467" fill="#8b949e" textLength="772.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># your agent finishes a change and pushes — ordinary git, no token in its world, and no sentence admits this repo yet</text>
+<text class="b14" x="24.0" y="482" fill="#79c0ff" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">agent@laptop</text>
+<text class="b14" x="103.2" y="482" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b14" x="182.4" y="482" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b15" x="195.6" y="482" fill="#e6edf3" textLength="132.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">git push origin main</text>
+<text class="b16" x="24.0" y="497" fill="#8b949e" textLength="191.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Enumerating objects: 7, done.</text>
+<text class="b16" x="24.0" y="512" fill="#8b949e" textLength="231.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Counting objects: 100% (7/7), done.</text>
+<text class="b16" x="24.0" y="527" fill="#8b949e" textLength="257.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Delta compression using up to 8 threads</text>
+<text class="b16" x="24.0" y="542" fill="#8b949e" textLength="250.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Compressing objects: 100% (4/4), done.</text>
+<text class="b16" x="24.0" y="557" fill="#8b949e" textLength="396.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Writing objects: 100% (4/4), 512 bytes | 512.00 KiB/s, done.</text>
+<text class="b16" x="24.0" y="572" fill="#8b949e" textLength="343.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Total 4 (delta 2), reused 0 (delta 0), pack-reused 0</text>
+<text class="b16" x="24.0" y="587" fill="#f85149" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet: no standing authority for main on you/your-app (github.push denied by sentence authority: no rule matche</text>
+<text class="b16" x="24.0" y="602" fill="#f85149" textLength="99.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">s this request)</text>
+<text class="b16" x="24.0" y="617" fill="#f85149" textLength="455.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet: authority is human-only — ask your operator to apply:</text>
+<text class="b16" x="24.0" y="632" fill="#f85149" textLength="673.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet:   to allow: cermet rules allow 'github.push where owner = "you" and name = "your-app"'</text>
+<text class="b16" x="24.0" y="647" fill="#f85149" textLength="283.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet: this push touches 2 path(s)</text>
+<text class="b16" x="24.0" y="662" fill="#f85149" textLength="198.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet:   M src/app.ts</text>
+<text class="b16" x="24.0" y="677" fill="#f85149" textLength="244.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet:   A tests/app.test.ts</text>
+<text class="b16" x="24.0" y="692" fill="#e6edf3" textLength="198.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">To cermet::github/you/your-app</text>
+<text class="b16" x="24.0" y="707" fill="#f85149" textLength="323.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ! [remote rejected] main -&gt; main (hook declined)</text>
+<text class="b16" x="24.0" y="722" fill="#f85149" textLength="422.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">error: failed to push some refs to 'cermet::github/you/your-app'</text>
+<text class="b16" x="24.0" y="752" fill="#8b949e" textLength="468.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># one denied request, zero contact with GitHub — and the exact sentence</text>
+<text class="b16" x="24.0" y="767" fill="#8b949e" textLength="356.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># that would widen it, addressed to you, not the model</text>
+<text class="b17" x="24.0" y="782" fill="#8b949e" textLength="561.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># your call. paste the suggested sentence; your password — not the agent's — signs it</text>
+<text class="b18" x="24.0" y="797" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b18" x="90.0" y="797" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b18" x="169.2" y="797" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b19" x="182.4" y="797" fill="#e6edf3" textLength="488.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet rules allow 'github.push where owner = "you" and name = "your-app"'</text>
+<text class="b20" x="24.0" y="812" fill="#e6edf3" textLength="204.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Cermet understood this rule as:</text>
+<text class="b20" x="24.0" y="827" fill="#e6edf3" textLength="402.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  allow github.push where owner = "you" and name = "your-app"</text>
+<text class="b21" x="24.0" y="842" fill="#e6edf3" textLength="158.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Allow this rule? [y/N]: </text>
+<text class="b22" x="182.4" y="842" fill="#e6edf3" textLength="6.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">y</text>
+<text class="b23" x="24.0" y="857" fill="#e6edf3" textLength="765.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet: password required to authorize: add Cermet rule: allow github.push where owner = "you" and name = "your-app"</text>
+<text class="b24" x="24.0" y="872" fill="#e6edf3" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Password: </text>
+<text class="b25" x="24.0" y="887" fill="#3fb950" textLength="488.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">added rule #1: allow github.push where owner = "you" and name = "your-app"</text>
+<text class="b25" x="24.0" y="902" fill="#8b949e" textLength="132.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">receipt_state: known</text>
+<text class="b25" x="24.0" y="917" fill="#8b949e" textLength="508.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">live: sha256:4e1b09aa7c3d51f2b8460de9a2c7f31584d6c0b9e7a2158f3cd490b16ae72d05</text>
+<text class="b25" x="24.0" y="932" fill="#8b949e" textLength="521.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">occurrence_id: 9b04c1a7e52f38d6104b7e9c2a85f0d3c6e1284a5b9f70d2381c46e5a0b7f914</text>
+<text class="b25" x="24.0" y="947" fill="#8b949e" textLength="165.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">acceptance_path: presence</text>
+<text class="b25" x="24.0" y="962" fill="#8b949e" textLength="99.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">lockdown: clear</text>
+<text class="b25" x="24.0" y="977" fill="#8b949e" textLength="178.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">document_sync: repo_missing</text>
+<text class="b26" x="24.0" y="992" fill="#8b949e" textLength="514.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># the agent retries. nothing about the agent changed — only your authority did</text>
+<text class="b27" x="24.0" y="1007" fill="#79c0ff" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">agent@laptop</text>
+<text class="b27" x="103.2" y="1007" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b27" x="182.4" y="1007" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b28" x="195.6" y="1007" fill="#e6edf3" textLength="132.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">git push origin main</text>
+<text class="b29" x="24.0" y="1022" fill="#8b949e" textLength="191.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Enumerating objects: 7, done.</text>
+<text class="b29" x="24.0" y="1037" fill="#8b949e" textLength="231.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Counting objects: 100% (7/7), done.</text>
+<text class="b29" x="24.0" y="1052" fill="#8b949e" textLength="257.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Delta compression using up to 8 threads</text>
+<text class="b29" x="24.0" y="1067" fill="#8b949e" textLength="250.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Compressing objects: 100% (4/4), done.</text>
+<text class="b29" x="24.0" y="1082" fill="#8b949e" textLength="396.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Writing objects: 100% (4/4), 512 bytes | 512.00 KiB/s, done.</text>
+<text class="b29" x="24.0" y="1097" fill="#8b949e" textLength="343.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Total 4 (delta 2), reused 0 (delta 0), pack-reused 0</text>
+<text class="b29" x="24.0" y="1112" fill="#3fb950" textLength="580.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">remote: cermet: carried main@9f8734c2ab11 to you/your-app (request req_d374a1b84c02e9f7)</text>
+<text class="b29" x="24.0" y="1127" fill="#e6edf3" textLength="198.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">To cermet::github/you/your-app</text>
+<text class="b29" x="24.0" y="1142" fill="#3fb950" textLength="217.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">   e41f09a..9f8734c  main -&gt; main</text>
+<text class="b30" x="24.0" y="1157" fill="#8b949e" textLength="475.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># and none of it is a story — every decision is a row, the deny included</text>
+<text class="b31" x="24.0" y="1172" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b31" x="90.0" y="1172" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b31" x="169.2" y="1172" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b32" x="182.4" y="1172" fill="#e6edf3" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet log</text>
+<text class="b33" x="24.0" y="1187" fill="#3fb950" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">2026-08-18T17:42:31.104829557Z  ALLOW github.push req_d374a1b84c02e9f7 — allowed by: allow github.push where owner = "yo</text>
+<text class="b33" x="24.0" y="1202" fill="#3fb950" textLength="277.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">u" and name = "your-app" (corpus 4e1b09aa)</text>
+<text class="b33" x="24.0" y="1217" fill="#f85149" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">2026-08-18T17:40:02.882417203Z  DENIED github.push req_b81c22e07f3a5d94: github.push denied by sentence authority: no ru</text>
+<text class="b33" x="24.0" y="1232" fill="#f85149" textLength="792.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">le matches this request — branch=main mirror_old_oid=e41f09a8c3d2b7f6015e4a9c8d23b761f0a5c48e name=your-app new_oid=9f87</text>
+<text class="b33" x="24.0" y="1247" fill="#f85149" textLength="303.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">34c2ab11d8e6f05b3a7c412690de8b174c5a owner=you</text>
+<text class="b34" x="24.0" y="1262" fill="#8b949e" textLength="541.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># one more thing — your authority isn't app state. export it to a file in the repo</text>
+<text class="b35" x="24.0" y="1277" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b35" x="90.0" y="1277" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b35" x="169.2" y="1277" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b36" x="182.4" y="1277" fill="#e6edf3" textLength="151.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cermet doc check --init</text>
+<text class="b37" x="24.0" y="1292" fill="#e6edf3" textLength="270.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">initialized: /home/you/your-app/CERMET.md</text>
+<text class="b37" x="24.0" y="1307" fill="#8b949e" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">write: created</text>
+<text class="b37" x="24.0" y="1322" fill="#8b949e" textLength="125.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">durability: durable</text>
+<text class="b37" x="24.0" y="1337" fill="#8b949e" textLength="85.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">mode: applied</text>
+<text class="b37" x="24.0" y="1352" fill="#8b949e" textLength="105.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">interference: no</text>
+<text class="b37" x="24.0" y="1367" fill="#8b949e" textLength="132.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">final_file: intended</text>
+<text class="b37" x="24.0" y="1382" fill="#3fb950" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">state: aligned</text>
+<text class="b37" x="24.0" y="1397" fill="#8b949e" textLength="99.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">lockdown: clear</text>
+<text class="b37" x="24.0" y="1412" fill="#8b949e" textLength="125.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">live_changed: false</text>
+<text class="b38" x="24.0" y="1427" fill="#d4a017" textLength="66.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">you@laptop</text>
+<text class="b38" x="90.0" y="1427" fill="#8b949e" textLength="79.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ~/your-app </text>
+<text class="b38" x="169.2" y="1427" fill="#e6edf3" textLength="13.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">$ </text>
+<text class="b39" x="182.4" y="1427" fill="#e6edf3" textLength="85.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cat CERMET.md</text>
+<text class="b40" x="24.0" y="1442" fill="#e6edf3" textLength="118.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># Cermet Authority</text>
+<text class="b40" x="24.0" y="1472" fill="#e6edf3" textLength="495.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Only the managed block is authority input. Prose is guidance, never policy.</text>
+<text class="b40" x="24.0" y="1502" fill="#8b949e" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;!-- cermet:authority:v1 --&gt;</text>
+<text class="b40" x="24.0" y="1517" fill="#8b949e" textLength="772.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Pinned authority: `sha256:4e1b09aa7c3d51f2b8460de9a2c7f31584d6c0b9e7a2158f3cd490b16ae72d05` &lt;!-- cermet:pinned:v1 --&gt;</text>
+<text class="b40" x="24.0" y="1547" fill="#8b949e" textLength="59.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">```cermet</text>
+<text class="b40" x="24.0" y="1562" fill="#3fb950" textLength="389.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">allow github.push where owner = "you" and name = "your-app"</text>
+<text class="b40" x="24.0" y="1577" fill="#8b949e" textLength="19.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">```</text>
+<text class="b40" x="24.0" y="1592" fill="#8b949e" textLength="191.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;!-- /cermet:authority:v1 --&gt;</text>
+<text class="b40" x="24.0" y="1622" fill="#8b949e" textLength="541.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># that's the loop: sentences as the only authority, a receipt for every decision —</text>
+<text class="b40" x="24.0" y="1637" fill="#8b949e" textLength="613.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"># and the whole corpus is a file in your repo. commit it; a rebuilt box recovers it from git.</text>
+<rect class="cv0" x="123.0" y="51" width="80.2" height="15" fill="#0a0e14"/>
+<rect class="cv1" x="182.4" y="336" width="139.6" height="15" fill="#0a0e14"/>
+<rect class="cv2" x="195.6" y="471" width="133.0" height="15" fill="#0a0e14"/>
+<rect class="cv3" x="182.4" y="786" width="489.4" height="15" fill="#0a0e14"/>
+<rect class="cv4" x="195.6" y="996" width="133.0" height="15" fill="#0a0e14"/>
+<rect class="cv5" x="182.4" y="1161" width="67.0" height="15" fill="#0a0e14"/>
+<rect class="cv6" x="182.4" y="1266" width="152.8" height="15" fill="#0a0e14"/>
+<rect class="cv7" x="182.4" y="1416" width="86.8" height="15" fill="#0a0e14"/>
+</g></g>
+</svg>

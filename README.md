@@ -16,6 +16,11 @@ credentials the agent never holds, and writes every decision into a hash-chained
 ![Rust](https://img.shields.io/badge/rust-1.96-orange)
 ![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos-lightgrey)
 
+<a href="https://cermet.dev/#demo"><img src="docs/demo.svg" alt="Cermet demo: an agent's git push is denied with the sentence that would allow it, the operator applies that one sentence, the retried push carries, and both decisions land in the receipt log" width="840"></a>
+
+*An example run, from installation to first action — or
+[type it yourself](https://cermet.dev/#demo).*
+
 ```text
 Not  "this agent may use the Stripe credential."
 Not  "this agent may POST to api.stripe.com."
