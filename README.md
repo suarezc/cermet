@@ -18,8 +18,8 @@ credentials the agent never holds, and writes every decision into a hash-chained
 
 <a href="https://cermet.dev/#demo"><img src="docs/demo.svg" alt="Cermet demo: an agent's git push is denied with the sentence that would allow it, the operator applies that one sentence, the retried push carries, and both decisions land in the receipt log" width="840"></a>
 
-*The whole first session, replayed from the real CLI's output — or
-[type it yourself](https://cermet.dev/#demo).*
+*The whole first session as a scripted replica — the words are what the shipped CLI
+prints. Or [type it yourself](https://cermet.dev/#demo).*
 
 ```text
 Not  "this agent may use the Stripe credential."
