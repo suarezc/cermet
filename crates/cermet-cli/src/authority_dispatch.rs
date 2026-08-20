@@ -72,17 +72,49 @@ pub fn dispatch_authority_command(
             reconciliation::run_export(&reconciliation()?, cwd, *replace_draft).into()
         }
         CliCommand::Apply {
+            file,
             replace_live,
             recover,
         } => reconciliation::run_apply(
             &reconciliation()?,
             cwd,
+            file.as_ref().map(Path::new),
             *replace_live,
             *recover,
             terminal,
             presence.as_ref(),
         )
         .into(),
+        // `preset` reuses the corpus ceremony verbatim; the ONE difference is where the body
+        // comes from — the daemon's profile table instead of a repository document.
+        CliCommand::Preset(command) => {
+            let client = reconciliation()?;
+            match command {
+                crate::preset::PresetCommand::List => {
+                    crate::preset::run_preset_list(&client).into()
+                }
+                crate::preset::PresetCommand::Apply { name, recover } => {
+                    crate::preset::run_preset_apply(
+                        &client,
+                        &client,
+                        name,
+                        *recover,
+                        terminal,
+                        presence.as_ref(),
+                    )
+                    .into()
+                }
+                crate::preset::PresetCommand::Export { name, path, force } => {
+                    crate::preset::run_preset_export(
+                        &client,
+                        name,
+                        &crate::preset::export_target(path.as_deref()),
+                        *force,
+                    )
+                    .into()
+                }
+            }
+        }
         CliCommand::Allow { rule, yes } => run_allow(
             &custody()?,
             terminal,

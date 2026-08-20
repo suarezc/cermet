@@ -1409,6 +1409,9 @@ struct ApplyClient {
     stage_hook: RefCell<Option<Box<dyn FnOnce()>>>,
     status_calls: Cell<usize>,
     status_hook: CallHook,
+    /// What the post-commit verification read reports. The default is "nothing stored", which no
+    /// pinned-document test observes — that flow commits no profile and never asks.
+    stored_presets: RefCell<Result<Vec<String>, String>>,
 }
 
 impl ApplyClient {
@@ -1427,7 +1430,14 @@ impl ApplyClient {
             stage_hook: RefCell::new(None),
             status_calls: Cell::new(0),
             status_hook: RefCell::new(None),
+            stored_presets: RefCell::new(Ok(Vec::new())),
         }
+    }
+
+    /// What the post-commit verification read will report.
+    fn with_stored_presets(self, stored: Result<Vec<String>, String>) -> Self {
+        *self.stored_presets.borrow_mut() = stored;
+        self
     }
 
     fn with_prepare_hook(self, call: usize, hook: impl FnOnce() + 'static) -> Self {
@@ -1502,6 +1512,10 @@ impl ReconciliationClient for ApplyClient {
 }
 
 impl ApplyTransactionClient for ApplyClient {
+    fn stored_preset_names(&self) -> Result<Vec<String>, String> {
+        self.stored_presets.borrow().clone()
+    }
+
     fn stage(
         &self,
         candidate_text: String,
@@ -1522,7 +1536,7 @@ impl ApplyTransactionClient for ApplyClient {
         })
     }
 
-    fn commit(&self, _staging_token: String) -> ApplyCommitAttempt {
+    fn commit(&self, _staging_token: String, _preset: Option<String>) -> ApplyCommitAttempt {
         self.commits.set(self.commits.get() + 1);
         self.commit_attempts
             .borrow_mut()
@@ -1650,6 +1664,10 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
     }
 
     impl ApplyTransactionClient for DisabledProviderClient {
+        fn stored_preset_names(&self) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
+
         fn stage(
             &self,
             _candidate_text: String,
@@ -1657,7 +1675,7 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
             panic!("a disabled provider document must never stage")
         }
 
-        fn commit(&self, _staging_token: String) -> ApplyCommitAttempt {
+        fn commit(&self, _staging_token: String, _preset: Option<String>) -> ApplyCommitAttempt {
             panic!("a disabled provider document must never commit")
         }
     }
@@ -1678,6 +1696,7 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
     let output = run_apply(
         &DisabledProviderClient,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -1702,7 +1721,15 @@ fn apply_refuses_noncanonical_source_before_stage_confirmation_or_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(output.text.contains("canonical"), "{}", output.text);
@@ -1724,7 +1751,15 @@ fn apply_refuses_an_invalid_source_before_presence_or_commit() {
     let client = ApplyClient::new(vec![Ok(absent())], ApplyCommitAttempt::Unknown);
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
-    let output = run_apply(&client, invalid.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        invalid.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
     assert!(presence.reasons.lock().unwrap().is_empty());
@@ -1748,7 +1783,15 @@ fn marker_only_apply_repair_needs_no_stage_confirmation_or_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     assert!(
@@ -1781,7 +1824,15 @@ fn apply_binds_exact_body_review_presence_commit_and_marker_receipt() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     for fact in [
@@ -1830,7 +1881,15 @@ fn apply_requires_loud_replace_and_recovery_acknowledgements() {
     let client = ApplyClient::new(vec![Ok(served(old))], ApplyCommitAttempt::Unknown);
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 1, "{}", output.text);
     assert!(output.text.contains("--replace-live"), "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
@@ -1844,7 +1903,15 @@ fn apply_requires_loud_replace_and_recovery_acknowledgements() {
         "prose",
     );
     let client = ApplyClient::new(vec![Ok(corrupt())], ApplyCommitAttempt::Unknown);
-    let output = run_apply(&client, recovery.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        recovery.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 1, "{}", output.text);
     assert!(output.text.contains("--recover"), "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
@@ -1871,6 +1938,7 @@ fn replace_and_recovery_flags_acknowledge_anomalies_but_still_require_presence()
     let output = run_apply(
         &replace_client,
         replace_repo.path(),
+        None,
         true,
         false,
         &terminal,
@@ -1896,6 +1964,7 @@ fn replace_and_recovery_flags_acknowledge_anomalies_but_still_require_presence()
     let output = run_apply(
         &recovery_client,
         recovery_repo.path(),
+        None,
         false,
         true,
         &terminal,
@@ -1929,7 +1998,15 @@ fn apply_decline_and_unavailable_presence_never_commit() {
             reasons: std::sync::Mutex::new(Vec::new()),
             hook: std::sync::Mutex::new(None),
         };
-        let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+        let output = run_apply(
+            &client,
+            repo.path(),
+            None,
+            false,
+            false,
+            &terminal,
+            &presence,
+        );
         assert_ne!(output.exit_code, 0, "{}", output.text);
         assert_eq!(client.commits.get(), 0, "{}", output.text);
         assert_eq!(
@@ -1955,7 +2032,15 @@ fn apply_rejects_live_change_after_stage_before_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(
@@ -2001,7 +2086,15 @@ fn apply_lost_response_credits_only_exact_candidate_and_keeps_prior_or_third_unk
         let terminal = RecordingTerminal::new(true);
         let presence = RecordingPresence::confirmed();
 
-        let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+        let output = run_apply(
+            &client,
+            repo.path(),
+            None,
+            false,
+            false,
+            &terminal,
+            &presence,
+        );
 
         assert!(output.text.contains(expected_result), "{}", output.text);
         assert_eq!(
@@ -2033,7 +2126,15 @@ fn applying_empty_corpus_is_a_presence_accepted_authority_change() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     assert_eq!(presence.reasons.lock().unwrap().len(), 1);
@@ -2064,6 +2165,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2086,6 +2188,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &terminal,
@@ -2105,6 +2208,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2141,6 +2245,7 @@ fn apply_refuses_a_physical_repository_root_change_before_commit() {
     let output = run_apply(
         &client,
         &root,
+        None,
         false,
         false,
         &terminal,
@@ -2172,6 +2277,7 @@ fn stale_stage_cas_preserves_the_concurrent_winner_and_never_advances_marker() {
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2214,6 +2320,7 @@ fn post_commit_marker_cas_and_final_file_races_report_committed_but_unreconciled
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2251,6 +2358,7 @@ fn post_commit_marker_cas_and_final_file_races_report_committed_but_unreconciled
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2286,6 +2394,7 @@ fn apply_keeps_an_unavailable_post_commit_read_unknown_until_candidate_is_observ
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2327,6 +2436,7 @@ fn apply_in_flight_handler_completes_after_early_baseline_using_only_staged_toke
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2360,6 +2470,7 @@ fn apply_mismatched_ack_after_success_reconciles_exact_occurrence() {
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2392,6 +2503,7 @@ fn apply_timeout_then_restart_or_expiry_preserves_unknown_token_and_occurrence()
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2424,6 +2536,7 @@ fn apply_exact_unserved_occurrence_proves_commit_but_never_claims_served_or_alig
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2452,4 +2565,125 @@ fn apply_exact_unserved_occurrence_proves_commit_but_never_claims_served_or_alig
         1,
         "status proves the exact committed occurrence"
     );
+}
+
+/// The corpus body the profile tests install.
+const PROFILE_BODY: &str = "allow stripe.refund where amount <= 5000\n";
+
+/// A commit that carried a profile key is only DONE when the key is there.
+///
+/// The daemon writes the corpus and the profile as two steps. A fault in the second, a lost reply,
+/// or a daemon that dies between them all leave the same observable state: authority is live, and
+/// the profile is not stored. Reporting that as a success would tell an operator a profile exists
+/// that they could not then apply.
+#[test]
+fn a_commit_whose_profile_did_not_reach_the_store_is_not_reported_as_stored() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Ok(Vec::new()));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_ne!(output.exit_code, 0, "{}", output.text);
+    assert!(
+        output.text.contains("committed") && output.text.contains("live"),
+        "the report must say authority IS live: {}",
+        output.text
+    );
+    assert!(
+        output.text.contains("not stored") || output.text.contains("NOT stored"),
+        "the report must say the profile was not stored: {}",
+        output.text
+    );
+    assert!(
+        output.text.contains("designer"),
+        "the report names the key: {}",
+        output.text
+    );
+    assert!(
+        !output.text.contains("result: committed\n"),
+        "a not-stored profile must not read as a clean commit: {}",
+        output.text
+    );
+    // The message is prose, not a wrapped source literal with its indentation baked in.
+    assert!(
+        !output.text.contains("  "),
+        "the report carries a wrapped-literal space run: {:?}",
+        output.text
+    );
+}
+
+/// The same posture when the verification read itself cannot be made: unconfirmed is not confirmed.
+#[test]
+fn a_profile_that_cannot_be_confirmed_stored_is_not_reported_as_stored() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Err("ctl unreachable".into()));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_ne!(output.exit_code, 0, "{}", output.text);
+    assert!(output.text.contains("designer"), "{}", output.text);
+}
+
+/// The confirming case: the key IS there, so the ceremony reports a clean commit.
+#[test]
+fn a_commit_whose_profile_reached_the_store_reports_a_clean_commit() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Ok(vec!["designer".into()]));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_eq!(output.exit_code, 0, "{}", output.text);
+    assert!(output.text.contains("result: committed"), "{}", output.text);
+    assert!(output.text.contains("preset: designer"), "{}", output.text);
 }

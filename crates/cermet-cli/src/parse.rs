@@ -18,7 +18,7 @@ use cermet_ipc::wire::ArtifactRange;
 use serde_json::json;
 
 use super::{CliCommand, CliError};
-use crate::{connect, mcp, setup};
+use crate::{connect, mcp, preset, setup};
 
 const USAGE: &str = "\
 cermet — the capability broker CLI (authority changes are human-only, presence-gated)
@@ -40,8 +40,10 @@ AGENT WORK — capability requests and their receipts:
 AUTHORITY — human-only, presence-gated:
     rules                                          (numbered canonical rule list)
     rules allow \"<rule>\" [--yes] | revoke <n> [--yes] | refresh <n>
-    doc check [--fix|--init] | doc diff | doc apply [--replace-live] [--recover]
+    doc check [--fix|--init] | doc diff | doc apply [<file>] [--replace-live] [--recover]
     doc export [--replace-draft] | doc status [--json]
+    preset list | preset <name> | preset export <name> [<path>] [--force]
+                                                   (stored authority profiles, applied by name)
     owner status | owner lockdown [clear]          (root-only independent revocation root)
 
 CEREMONIES — one-time setup:
@@ -112,8 +114,31 @@ rules allow \"<rule>\" [--yes]  |  rules revoke <n> [--yes]  |  rules refresh <n
 
 const DOC_USAGE: &str = "\
 doc check [--fix|--init] | doc diff | doc status [--json]
-doc export [--replace-draft] | doc apply [--replace-live] [--recover]
-    The CERMET.md corpus flow: `doc check --fix` → `doc diff` → `doc apply`.";
+doc export [--replace-draft] | doc apply [<file>] [--replace-live] [--recover]
+    The CERMET.md corpus flow: `doc check --fix` → `doc diff` → `doc apply`.
+    `doc apply` with no file discovers this repository's CERMET.md, as it always has. Given a file
+    it applies THAT document: a CERMET.md path is the identical pinned flow, and a
+    CERMET_<name>.md path is an authority PROFILE — the same ceremony, and what it commits is also
+    stored under <name> for `cermet preset <name>` (see `cermet preset --help`).";
+
+const PRESET_USAGE: &str = "\
+preset list
+    Every stored authority profile: its name, how many rules it holds, and when it was stored.
+preset <name> [--recover]
+    Install that profile. A profile is a WHOLE corpus, so this REPLACES everything currently live —
+    every rule the profile does not carry is gone. The ceremony is the one `doc apply` runs: the
+    review shows the rule diff against what is live, then a terminal confirmation and the presence
+    gate, then the staged commit. There is no --yes.
+preset export <name> [<path>] [--force]
+    Write the stored body back out as `CERMET_<name>.md` (in this directory, or at <path>), which
+    `doc apply` re-ingests under the same name. Refuses to overwrite without --force.
+
+    A preset is a NAME and a body of rules — nothing else. It refers to no repository and no file
+    on this box, so `designer`, `builder` and `q3r982` are equally good names; a name may hold
+    letters, digits, `_` and `-`.
+    Profiles are written by applying a preset document: `cermet doc apply CERMET_<name>.md` runs
+    the full ceremony and stores what it commits under <name>. There is no other way to write one,
+    which is what makes every stored profile a body a human attested.";
 
 const OWNER_USAGE: &str = "owner status | owner lockdown [clear]\n\
     \x20   The root-only independent revocation root. `lockdown` engages deny-all; `lockdown clear`\n\
@@ -199,6 +224,7 @@ fn command_usage(command: &str) -> Option<&'static str> {
         "catalog" => CATALOG_USAGE,
         "rules" => RULES_USAGE,
         "doc" => DOC_USAGE,
+        "preset" => PRESET_USAGE,
         "owner" => OWNER_USAGE,
         "connect" => CONNECT_USAGE,
         "setup" => SETUP_USAGE,
@@ -281,6 +307,7 @@ pub fn parse(args: &[String]) -> Result<CliCommand, CliError> {
         "catalog" => parse_catalog(rest),
         "rules" => parse_rules(rest),
         "doc" => parse_doc(rest),
+        "preset" => parse_preset(rest),
         "owner" => parse_owner(rest),
         "connect" => parse_connect(rest),
         "setup" => Ok(CliCommand::Setup(setup::parse_setup(rest)?)),
@@ -559,22 +586,34 @@ fn parse_doc(args: &[String]) -> Result<CliCommand, CliError> {
         ("export", ["--replace-draft"]) => Ok(CliCommand::Export {
             replace_draft: true,
         }),
-        ("apply", flags) => {
+        // `doc apply` takes at most ONE positional: the document to apply. With none it discovers
+        // this repository's CERMET.md, exactly as before.
+        ("apply", arguments) => {
             let mut replace_live = false;
             let mut recover = false;
-            for flag in flags {
-                match *flag {
+            let mut file: Option<String> = None;
+            for argument in arguments {
+                match *argument {
                     "--replace-live" if !replace_live => replace_live = true,
                     "--recover" if !recover => recover = true,
-                    other => {
+                    other if other.starts_with("--") => {
                         return Err(CliError::Usage(format!(
                             "doc apply: unexpected argument {other:?}; expected only \
                              --replace-live or --recover, once each"
                         )));
                     }
+                    positional if file.is_none() => {
+                        file = Some(require_nonempty(positional, "doc apply <file>")?)
+                    }
+                    _ => {
+                        return Err(CliError::Usage(format!(
+                            "doc apply takes at most one document\n{DOC_USAGE}"
+                        )));
+                    }
                 }
             }
             Ok(CliCommand::Apply {
+                file,
                 replace_live,
                 recover,
             })
@@ -585,6 +624,95 @@ fn parse_doc(args: &[String]) -> Result<CliCommand, CliError> {
         (other, _) => Err(CliError::Usage(format!(
             "unknown doc subcommand {other:?}\n{DOC_USAGE}"
         ))),
+    }
+}
+
+/// The `preset` noun: the stored profiles — listed, installed, or written back out.
+///
+/// A BARE `preset` prints usage rather than guessing: there is no form that applies the document
+/// you are standing in, because that is already `doc apply`.
+fn parse_preset(args: &[String]) -> Result<CliCommand, CliError> {
+    let Some((sub, rest)) = args.split_first() else {
+        return Err(CliError::Usage(PRESET_USAGE.into()));
+    };
+    match sub.as_str() {
+        "list" if rest.is_empty() => return Ok(CliCommand::Preset(preset::PresetCommand::List)),
+        "list" => {
+            return Err(CliError::Usage(format!(
+                "preset list takes no arguments\n{PRESET_USAGE}"
+            )))
+        }
+        "export" => return parse_preset_export(rest),
+        flag if flag.starts_with("--") => {
+            return Err(CliError::Usage(format!(
+                "preset: expected `list`, `export`, or a profile name, got {flag:?}\n{PRESET_USAGE}"
+            )))
+        }
+        _ => {}
+    }
+    // `--recover` is `doc apply`'s, because the ceremony IS `doc apply`'s. `--replace-live` is
+    // absent: it acknowledges a pin marker naming a different live generation, and a profile —
+    // which is derived from no generation — carries no marker to acknowledge.
+    let mut recover = false;
+    for flag in rest {
+        match flag.as_str() {
+            "--recover" if !recover => recover = true,
+            other => {
+                return Err(CliError::Usage(format!(
+                    "preset: unexpected argument {other:?}; expected only --recover\n{PRESET_USAGE}"
+                )));
+            }
+        }
+    }
+    Ok(CliCommand::Preset(preset::PresetCommand::Apply {
+        name: preset_name(sub)?,
+        recover,
+    }))
+}
+
+/// `preset export <name> [<path>] [--force]`.
+fn parse_preset_export(args: &[String]) -> Result<CliCommand, CliError> {
+    let mut positionals: Vec<String> = Vec::new();
+    let mut force = false;
+    for argument in args {
+        match argument.as_str() {
+            "--force" if !force => force = true,
+            other if other.starts_with("--") => {
+                return Err(CliError::Usage(format!(
+                    "preset export: unexpected argument {other:?}\n{PRESET_USAGE}"
+                )));
+            }
+            positional => positionals.push(positional.to_string()),
+        }
+    }
+    let (name, path) = match positionals.as_slice() {
+        [name] => (preset_name(name)?, None),
+        [name, path] => (
+            preset_name(name)?,
+            Some(require_nonempty(path, "preset export <path>")?),
+        ),
+        _ => {
+            return Err(CliError::Usage(format!(
+                "preset export <name> [<path>] [--force]\n{PRESET_USAGE}"
+            )));
+        }
+    };
+    Ok(CliCommand::Preset(preset::PresetCommand::Export {
+        name,
+        path,
+        force,
+    }))
+}
+
+/// Validate a profile name at PARSE time — the same alphabet the daemon enforces. A name it would
+/// refuse then never reaches a ceremony, and the refusal never echoes the raw bytes it was given.
+fn preset_name(raw: &str) -> Result<String, CliError> {
+    let name = require_nonempty(raw, "preset <name>")?;
+    // One spelling of the rule: the refusal is the validator's own, so a name refused here reads
+    // the same as one refused at ingest or by the daemon.
+    match preset::validate_name(&name) {
+        Ok(()) => Ok(name),
+        Err(reason) => Err(CliError::Usage(format!("preset: {reason}"))),
     }
 }
 

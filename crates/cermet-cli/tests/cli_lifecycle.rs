@@ -432,7 +432,11 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     let help = String::from_utf8(help.stderr).unwrap();
     // The corpus flow is carried by the `doc` noun itself, not by a legend under it.
     assert!(help.contains("doc check [--fix|--init]"), "{help}");
-    assert!(help.contains("doc apply [--replace-live]"), "{help}");
+    // `doc apply` takes an optional document; with none it discovers this repository's CERMET.md.
+    assert!(
+        help.contains("doc apply [<file>] [--replace-live]"),
+        "{help}"
+    );
 
     // 1. No record and no file is deny-all.
     let denied = agent.request(

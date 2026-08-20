@@ -340,6 +340,48 @@ one sentence is one `+` line:
 
 Only the managed block is authority input. Prose in CERMET.md is guidance, never policy.
 
+**Named authority profiles — `cermet preset`.** One corpus is live at a time, and the set of rules
+an agent needs depends on what it is doing: a design session needs to read, a build session needs to
+push. A **preset** is a stored corpus body under a name, so switching between those sets is one
+command instead of an editing session.
+
+The name is just a key. It refers to no repository, no directory, and no file on this box —
+`designer`, `builder` and `q3r982` are equally good names, and a name may hold letters, digits, `_`
+and `-`.
+
+Write one by applying a document named `CERMET_<name>.md`:
+
+```bash
+cermet doc apply CERMET_designer.md   # the full ceremony; stores what it commits under `designer`
+```
+
+A profile is written only by a ceremony like that one — either this ingest, or a later
+`cermet preset <name>` that re-applies the stored body and re-stores it under the same key (which
+moves its `UPDATED` time and nothing else). It is the same ceremony as any other apply — the
+review, the terminal confirmation, the presence gate, the staged commit — and the body is stored as
+part of the commit that made it live. There is no write path that skips it, so every stored profile
+is a body a human read and attested, exactly like the live corpus.
+
+Then switch between them by name:
+
+```bash
+cermet preset list                    # every stored profile: name, rules, when it was stored
+cermet preset designer                # install that profile
+cermet preset export designer         # write it back out as CERMET_designer.md
+```
+
+**Applying a preset REPLACES the live corpus.** A profile is a whole corpus, not an addition to one:
+accepting `cermet preset designer` installs exactly the rules `designer` holds, and every rule the
+previous generation carried and this one does not is gone. The review shows that before you accept
+it — removals as `-` lines, additions as `+` lines, against what is live right now.
+
+`preset <name>` runs the ceremony `doc apply` runs, so there is no `--yes` on it either. What it
+does not have is a pin marker: a profile is not derived from the generation it replaces, so there
+is nothing for a marker to name, and `--replace-live` has no meaning here. `--recover` still does,
+and is required to replace an unserved or corrupt daemon record.
+
+Applying the CERMET.md of the repository you are standing in stays `cermet doc apply`.
+
 ## 6. Put the agent on the clock
 
 Your agent uses its native tools; the broker carries the credentialed hop.

@@ -134,6 +134,7 @@ pub async fn dispatch(client: &CtlBrokerClient, cmd: &CliCommand) -> Result<CliO
         | CliCommand::Status { .. }
         | CliCommand::Export { .. }
         | CliCommand::Apply { .. }
+        | CliCommand::Preset(_)
         | CliCommand::OwnerStatus
         | CliCommand::OwnerLockdown
         | CliCommand::OwnerLockdownClear
@@ -149,7 +150,7 @@ pub async fn dispatch(client: &CtlBrokerClient, cmd: &CliCommand) -> Result<CliO
         | CliCommand::UpdateApply { .. }
         | CliCommand::UpdateApplyDeb { .. }
         | CliCommand::McpInstall(_) => Err(CliError::Usage(
-            "the document, rules, connect, owner, log, check, setup, update, and mcp \
+            "the document, preset, rules, connect, owner, log, check, setup, update, and mcp \
              commands are driven by the CLI front-end"
                 .to_string(),
         )),

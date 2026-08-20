@@ -458,7 +458,9 @@ impl StagedSentenceClient for CtlStagedClient {
     fn commit(&self, staging_token: String) -> CommitResult {
         match self
             .rt
-            .block_on(self.client.commit_sentences(staging_token))
+            // The incremental rule ceremony installs a corpus, never a stored profile: a profile
+            // is authored as a whole document, and there is no rule-at-a-time form of one.
+            .block_on(self.client.commit_sentences(staging_token, None))
         {
             Ok(outcome) => CommitResult::Committed {
                 canonical_digest: outcome.canonical_digest().to_string(),

@@ -526,6 +526,9 @@ impl Broker {
         }
         // The artifact index (S3, first blob storage). Its own table, blobs under `dir/artifacts/`.
         crate::artifacts::ensure_schema(&state)?;
+        // Stored authority profiles, keyed by an opaque name. Its own table, and deliberately not
+        // the vault's — a corpus body is evidence an operator attested, never credential material.
+        crate::presets::ensure_schema(&state)?;
         // Startup retention sweep (no scheduler): drop artifacts past the window and their now-orphan
         // blobs. Best-effort — a purge fault must not refuse boot.
         let _ = crate::artifacts::purge_expired(

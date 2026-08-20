@@ -187,6 +187,14 @@ pub fn handle_ctl_connection(
                     DeadlineWriter::new(&stream, Instant::now() + timeouts.response_budget);
                 write_reply_view(&mut out, reply)
             }
+            // Stored authority profiles. A READ only: profiles are written exclusively by the
+            // commit arm below, so this surface can never introduce a body the ceremony did not.
+            CtlRequest::ListPresets => {
+                let reply = rt.block_on(broker.list_presets());
+                let mut out =
+                    DeadlineWriter::new(&stream, Instant::now() + timeouts.response_budget);
+                write_reply_view(&mut out, reply)
+            }
             CtlRequest::VerifyAudit => {
                 let reply = rt.block_on(broker.verify_audit());
                 let mut out =
@@ -348,7 +356,10 @@ pub fn handle_ctl_connection(
             // Commit a staged corpus (round two). The daemon flips the generation
             // atomically iff the token is still live (stale/superseded ⇒ typed refusal), then emits the
             // custody audit STRICTLY AFTER the commit via the broker (idempotent, occurrence-keyed).
-            CtlRequest::CommitSentences { staging_token } => {
+            CtlRequest::CommitSentences {
+                staging_token,
+                preset,
+            } => {
                 let mut out =
                     DeadlineWriter::new(&stream, Instant::now() + timeouts.response_budget);
                 let sink = BrokerAuditSink { broker, rt };
@@ -378,16 +389,41 @@ pub fn handle_ctl_connection(
                         }
                         Ok(staged_text)
                     });
+                // A preset name is validated BEFORE the flip: storing is part of what the
+                // operator accepted, so a name the daemon would refuse must not first change live
+                // authority and only then fail.
+                let gate = gate.and_then(|staged_text| match &preset {
+                    Some(name) => cermet_core::presets::validate_name(name).map(|()| staged_text),
+                    None => Ok(staged_text),
+                });
                 match gate {
-                    // Hard refusal (peek error or validation refusal): no commit call ⇒ no flip.
+                    // Hard refusal (peek error, validation refusal, or a bad preset name): no
+                    // commit call ⇒ no flip.
                     Err(e) => write_reply_view(&mut out, Err(e)),
-                    Ok(_staged_text) => {
+                    Ok(staged_text) => {
                         let outcome = record_admin.commit_attributed(
                             &staging_token,
                             peer.uid,
                             "presence",
                             &sink,
                         );
+                        // Store the profile only AFTER the body is live, and only from here: this
+                        // is the single write path into the presets table. The store is an upsert
+                        // of bytes already validated above, so the failure left to report is a
+                        // store fault — and it is reported rather than swallowed, because the
+                        // operator asked for both halves.
+                        let outcome = match (&outcome, &preset, &staged_text) {
+                            (Ok(_), Some(name), Some(text)) => rt
+                                .block_on(broker.store_preset(name.clone(), text.clone()))
+                                .map_err(|e| {
+                                    cermet_core::Error::Provider(format!(
+                                        "authority committed and is live, but storing it as a \
+                                         preset failed: {e}"
+                                    ))
+                                })
+                                .and(outcome),
+                            _ => outcome,
+                        };
                         write_reply_view(&mut out, commit_reply(outcome))
                     }
                 }

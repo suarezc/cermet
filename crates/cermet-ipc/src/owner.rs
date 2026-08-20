@@ -47,6 +47,7 @@ mod tests {
 
         let commit = serde_json::to_value(crate::ctl::CtlRequest::CommitSentences {
             staging_token: "a".repeat(64),
+            preset: None,
         })
         .unwrap();
         assert!(serde_json::from_value::<OwnerRequest>(commit).is_err());

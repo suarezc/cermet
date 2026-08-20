@@ -72,8 +72,11 @@ One non-comment line is one rule:
 
 Blank lines and `#` comments outside quoted strings are ignored. Canonical output uses one space
 between tokens, authored rule order, and one trailing LF when nonempty. `cermet doc check --fix` asks
-the daemon to resolve, validate, pin sets, and print that canonical form. `doc apply` refuses a
-noncanonical body.
+the daemon to resolve, validate, pin sets, and print that canonical form. The pinned `CERMET.md`
+flow refuses a noncanonical body — the document carries a marker naming exact bytes, so the bytes
+have to be exact. A preset document (`CERMET_<name>.md`) carries no marker and is canonicalized
+during the ceremony: what you review, commit, and store is the daemon's canonical form of what you
+wrote.
 
 Selectors:
 

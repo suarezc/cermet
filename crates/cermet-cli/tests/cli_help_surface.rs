@@ -63,6 +63,7 @@ fn every_command_answers_its_own_help() {
         "check",
         "rules",
         "doc",
+        "preset",
         "owner",
         "connect",
         "setup",

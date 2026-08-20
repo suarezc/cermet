@@ -184,6 +184,10 @@ pub struct ScriptedTerminal {
     /// The secret `read_secret` returns (obviously-fake in tests — never a real token).
     pub secret: SecretString,
     pub launched: std::sync::Mutex<Vec<String>>,
+    /// Every prompt `confirm` was asked, in order. A ceremony's review text is the thing a human
+    /// actually accepts, so a test that only checks the ANSWER checks the wrong half; recording the
+    /// question lets the suite assert what was on screen when it was answered.
+    pub prompts: std::sync::Mutex<Vec<String>>,
 }
 
 impl ScriptedTerminal {
@@ -193,6 +197,7 @@ impl ScriptedTerminal {
             confirms: std::sync::Mutex::new(confirms.into_iter().collect()),
             secret: SecretString::new(secret.to_string()),
             launched: std::sync::Mutex::new(Vec::new()),
+            prompts: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -201,7 +206,8 @@ impl Terminal for ScriptedTerminal {
     fn is_interactive(&self) -> bool {
         self.interactive
     }
-    fn confirm(&self, _prompt: &str, default: bool) -> bool {
+    fn confirm(&self, prompt: &str, default: bool) -> bool {
+        self.prompts.lock().unwrap().push(prompt.to_string());
         self.confirms.lock().unwrap().pop_front().unwrap_or(default)
     }
     fn launch(&self, url: &str) {

@@ -99,6 +99,7 @@ pub fn run(args: &[String]) -> ExitCode {
         | CliCommand::Status { .. }
         | CliCommand::Export { .. }
         | CliCommand::Apply { .. }
+        | CliCommand::Preset(_)
         | CliCommand::Allow { .. }
         | CliCommand::Rules
         | CliCommand::Revoke { .. }

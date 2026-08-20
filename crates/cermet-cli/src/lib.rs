@@ -28,6 +28,8 @@ pub mod git_remote;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod owner;
+/// `preset` — a stored authority profile, applied by name through the unchanged corpus ceremony.
+pub mod preset;
 pub mod receipt_log;
 pub mod reconciliation;
 pub mod rule_cli;
@@ -122,8 +124,19 @@ pub enum CliCommand {
     Status { as_json: bool },
     /// Project served authority into the document without staging or presence.
     Export { replace_draft: bool },
-    /// Presence-accept the exact canonical repository body as one whole-corpus transaction.
-    Apply { replace_live: bool, recover: bool },
+    /// Presence-accept the exact canonical body as one whole-corpus transaction.
+    ///
+    /// `file` is the document to apply; `None` is discovery from the working directory, unchanged.
+    /// A `CERMET_<name>.md` file is an authority PROFILE: the same ceremony, and on commit the
+    /// daemon stores the committed body under `<name>`.
+    Apply {
+        file: Option<String>,
+        replace_live: bool,
+        recover: bool,
+    },
+    /// The `preset` noun: the stored authority profiles — list them, install one (the SAME
+    /// whole-corpus ceremony [`CliCommand::Apply`] runs), or write one back out as a document.
+    Preset(preset::PresetCommand),
     /// Connect a provider — reuse/discover a token, vault it unused. Driven by the binary front-end
     /// (needs the terminal + token-source seams), NOT the ctl `dispatch`.
     Connect(connect::ConnectArgs),

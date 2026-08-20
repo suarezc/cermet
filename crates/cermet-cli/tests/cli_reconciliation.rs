@@ -208,6 +208,7 @@ async fn apply_runs_the_real_typed_stage_commit_and_marker_flow_over_ctl() {
         cermet_cli::reconciliation::run_apply(
             &client,
             &repo_path,
+            None,
             false,
             false,
             &cermet_cli::tty::ScriptedTerminal::new(true, "", vec![true]),

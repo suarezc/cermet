@@ -65,6 +65,8 @@ fn the_help_is_short_and_names_every_live_command() {
         "catalog",
         "rules",
         "doc",
+        // The `doc apply` ceremony reached by a stored profile's name instead of a document.
+        "preset list",
         "connect",
         "owner",
         "setup",
@@ -397,6 +399,7 @@ fn doc_is_a_noun_and_init_folds_into_check() {
     assert_eq!(
         parse(&argv(&["doc", "apply", "--replace-live", "--recover"])).unwrap(),
         CliCommand::Apply {
+            file: None,
             replace_live: true,
             recover: true,
         }
