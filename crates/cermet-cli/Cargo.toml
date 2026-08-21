@@ -1,6 +1,6 @@
 [package]
 name = "cermet-cli"
-description = "cermet-cli — the human OPERATOR CLI role of the one shipped `cermet` binary (composed by `cermet-bin`), a keyless ctl.sock client of the cermetd-hosted broker. Thirteen commands: `catalog`, `run` (decide and execute one capability), `log`, `artifact`, `audit-verify`, `check`, the `rules` and `doc` authority nouns, `owner`, `connect`, `setup`, `update`, and `mcp`. Everything runs through the SHARED CtlBrokerClient (no master key, no vault); authority mutations are gated by the client-side human-presence check. Grants are single-use; no secret is ever printed."
+description = "cermet-cli — the human OPERATOR CLI role of the one shipped `cermet` binary (composed by `cermet-bin`), a keyless ctl.sock client of the cermetd-hosted broker. Fifteen commands: `catalog`, `run` (decide and execute one capability), `log`, `artifact`, `audit-verify`, `check`, `journal` (this CLI's own record of what it printed), the `rules` and `doc` authority nouns, `preset` (stored authority profiles), `owner`, `connect`, `setup`, `update`, and `mcp`. Everything runs through the SHARED CtlBrokerClient (no master key, no vault); authority mutations are gated by the client-side human-presence check. Grants are single-use; no secret is ever printed."
 autobins = false
 version.workspace = true
 edition.workspace = true

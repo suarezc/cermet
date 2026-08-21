@@ -149,9 +149,10 @@ pub async fn dispatch(client: &CtlBrokerClient, cmd: &CliCommand) -> Result<CliO
         | CliCommand::UpdateDaily { .. }
         | CliCommand::UpdateApply { .. }
         | CliCommand::UpdateApplyDeb { .. }
+        | CliCommand::Journal { .. }
         | CliCommand::McpInstall(_) => Err(CliError::Usage(
-            "the document, preset, rules, connect, owner, log, check, setup, update, and mcp \
-             commands are driven by the CLI front-end"
+            "the document, preset, rules, connect, owner, log, check, setup, update, journal, and \
+             mcp commands are driven by the CLI front-end"
                 .to_string(),
         )),
     }

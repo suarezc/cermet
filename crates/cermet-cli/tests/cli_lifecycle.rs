@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -288,7 +288,7 @@ fn start_daemon(runtime: &tokio::runtime::Runtime, state: &Path, boot: usize) ->
 }
 
 fn connect_stripe(daemon: &RunningDaemon, repo: &Path) {
-    let mut child = Command::new(common::cermet_binary())
+    let mut child = common::cermet_command()
         .args(["connect", "stripe", "hermetic"])
         .current_dir(repo)
         .env("CERMET_CTL_SOCK", &daemon.socket)
@@ -428,7 +428,7 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     connect_stripe(&daemon, repo.path());
     let mut agent = AgentSession::connect(&daemon.agent_socket);
 
-    let help = Command::new(common::cermet_binary()).output().unwrap();
+    let help = common::cermet_command().output().unwrap();
     let help = String::from_utf8(help.stderr).unwrap();
     // The corpus flow is carried by the `doc` noun itself, not by a legend under it.
     assert!(help.contains("doc check [--fix|--init]"), "{help}");

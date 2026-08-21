@@ -246,3 +246,21 @@ pub fn cermet_binary() -> std::path::PathBuf {
     );
     binary
 }
+
+/// A [`Command`](std::process::Command) for that binary with its operator-local state ISOLATED.
+///
+/// Every operator-CLI invocation appends to the output journal under `$XDG_STATE_HOME`. A test that
+/// spawned the binary with the developer's own environment would write into THEIR journal, so every
+/// spawn points that variable at a directory inside the build tree — swept by `cargo clean` like any
+/// other build output, and never the machine's own state directory. Tests that assert ON the
+/// journal set the variable themselves and do not use this.
+pub fn cermet_command() -> std::process::Command {
+    let binary = cermet_binary();
+    let state = binary
+        .parent()
+        .expect("the binary lives in target/<profile>")
+        .join("cermet-test-state");
+    let mut command = std::process::Command::new(binary);
+    command.env("XDG_STATE_HOME", state);
+    command
+}

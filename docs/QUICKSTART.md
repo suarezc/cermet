@@ -576,6 +576,43 @@ Every decision — allow and deny alike — is a typed row in a hash-chained log
 enforcement point itself. When you want to know what your agent did while you were out, the
 answer is one command, and it is not a claim; it is a receipt.
 
+### What the CLI itself printed
+
+The receipts above are the *broker's* record of what was decided. They are not a record of what
+your terminal was told — and some of what it was told exists nowhere else: the review text of a
+ceremony, the reason a command refused, a confirmation somebody declined (nothing was decided, so
+nothing was receipted). For that, the CLI keeps its own journal:
+
+```bash
+cermet journal            # on or off, where the file is, how big it is, what bounds it
+tail -n1 ~/.local/state/cermet/journal.jsonl | jq .
+cermet journal off        # stop it; `cermet journal on` resumes
+```
+
+Every `cermet` command appends **one JSON line** to
+`$XDG_STATE_HOME/cermet/journal.jsonl` (by default `~/.local/state/cermet/journal.jsonl`, mode
+`0600`): when it ran, its arguments, the directory it ran in, its exit code, how long it took, and
+the first **4096 bytes** of what it printed. Longer output is counted in a `truncated` field rather
+than stored — a long `log` or `catalog` render re-reads a store that already exists durably, while
+the output that exists nowhere else is short. The file rotates whole at **32 MiB**, keeping one
+previous generation as `journal.jsonl.1`.
+
+Nothing you *type* is recorded: the capture is of output only, so the no-echo token prompt in
+`cermet connect` cannot appear in it. It stays on this machine and is sent nowhere (see §10). It is
+a convenience for reading back what a command said, not an audit surface — for that, use
+`cermet log` and `cermet audit-verify` above. Reading it is not a `cermet` command: it is a plain
+JSONL file, which is why `cermet journal` prints its path.
+
+The case it is built for is the one where you run a command and don't recognize what came back.
+Instead of re-running it and pasting the output, point your agent at the journal: `cermet journal`
+gives it the path, the last line gives it exactly what your terminal was shown — the same bytes, in
+the same order, with the exit code beside them — and `docs/FIELDS.md` gives it the meaning of each
+field in that output. The agent can then tell you what you are looking at without you reproducing
+anything, and without either of you guessing at output that has already scrolled away.
+
+The `cermet mcp` stdio server does not journal — its stdout is the agent protocol channel, and its
+traffic already has receipts.
+
 ## 10. What Cermet sends us
 
 Two things, both about releases, and both to GitHub — the host you installed from. That is the
@@ -623,6 +660,13 @@ Both platforms leave the daemon's own state behind on purpose. Remove it only wh
 sudo rm -rf /var/lib/cermetd          # WARNING: this destroys the vault — every stored credential
 sudo rm -rf /etc/cermetd              # config, including custody_profile
 sudo rm -f /etc/sudoers.d/cermet-agent
+```
+
+Your own per-operator files are separate from all of that, unprivileged, and left alone:
+
+```bash
+rm -f ~/.config/cermet/config.toml              # the update-check and journal switches
+rm -f ~/.local/state/cermet/journal.jsonl*      # the CLI's output journal (§9)
 ```
 
 Also drop the MCP registration from your agent client (`claude mcp remove cermet`) and repoint any
