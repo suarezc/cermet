@@ -329,7 +329,7 @@ pub fn run_check(
                 if prepared.canonical {
                     ""
                 } else {
-                    "\naction: run cermet check --fix"
+                    "\naction: run cermet doc check --fix"
                 }
             ),
             exit_code: if prepared.canonical { 0 } else { 1 },
@@ -794,7 +794,9 @@ pub fn run_apply(
         DocumentView::Unavailable => return malformed("apply: dataplane unavailable"),
     };
     if !document.canonical {
-        return malformed("apply: authority body is not canonical; run cermet check --fix first");
+        return malformed(
+            "apply: authority body is not canonical; run cermet doc check --fix first",
+        );
     }
     let baseline = match client.authority_status() {
         Ok(status) => status,

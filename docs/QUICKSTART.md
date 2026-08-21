@@ -96,7 +96,8 @@ deny-all: nothing is authorized until a human writes a sentence.
 
 ```
 [cermet-setup] fixed service: cermetd bootstrapped and running
-[cermet-setup] complete: cermetd is running — `cermet check` proves the plumbing.
+[cermet-setup] ✓ broker running (cermetd, starts at boot)
+[cermet-setup] ✓ credential vault ready (custody: systemd-host)
 ```
 
 If the human isn't yet in `cermet-approvers` (presence ceremonies require it), the closing
@@ -174,8 +175,10 @@ is `✗`, so it scripts. Real output from a working box:
 plumbing
   ✓ cermetd            serving on ctl.sock — 3 provider(s) connected
   ✓ build              cermet and cermetd are 0.1.0+<commit>
+  ✓ custody            systemd-host — persistent Cermet files do not contain the plaintext key
   ✓ git-remote-cermet  /opt/cermet/bin/git-remote-cermet
   ✓ git plane          git.sock at /var/cermetd-agents/git.sock; uid 501 (you): admitted (approver_uid)
+  · update check       running 0.1.0, nothing newer — last checked <timestamp>
   ✓ agent bridge       /var/cermetd-agents/agent.sock
 
 stale engines
