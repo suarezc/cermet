@@ -38,12 +38,10 @@ pub const CANONICALIZATION_RECEIPT_EVENT_TYPE: &str = "request_field_canonicaliz
 /// The receipt written when a supplied value could not be resolved. Access never follows.
 pub const CANONICALIZATION_FAILED_EVENT_TYPE: &str = "request_field_canonicalization_failed";
 
-/// Vercel identifies a team account by `team_…`; a personal account is the reserved literal
-/// `personal` (the relay's `omit:personal` bind, i.e. "send no `teamId` at all"). Both are already
-/// canonical, so both short-circuit before the vault is opened — a team-id or personal request costs
-/// no credential and makes no provider hop, exactly as before this profile existed.
+/// Vercel identifies a team account by `team_…`. A value already in that form is canonical and
+/// short-circuits before the vault is opened — a team-id request costs no credential and makes no
+/// provider hop, exactly as before this profile existed. Everything else is a name to resolve.
 pub const VERCEL_TEAM_ID_PREFIX: &str = "team_";
-pub const VERCEL_PERSONAL_SCOPE: &str = "personal";
 /// The read: the teams the connected token is a member of, each carrying its own `id` and `slug`.
 /// Chosen over `GET /v2/teams/{teamId}` (whose slug lookup is a QUERY override on a REQUIRED path
 /// segment the caller does not have) because it needs nothing but the credential, and because a
@@ -68,9 +66,7 @@ impl CanonicalizerKind {
     /// `true` means the request is untouched — no vault open, no provider read, no receipt.
     pub fn is_canonical(self, value: &str) -> bool {
         match self {
-            Self::VercelTeamScope => {
-                value == VERCEL_PERSONAL_SCOPE || value.starts_with(VERCEL_TEAM_ID_PREFIX)
-            }
+            Self::VercelTeamScope => value.starts_with(VERCEL_TEAM_ID_PREFIX),
         }
     }
 }
@@ -109,13 +105,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_canonical_forms_short_circuit_before_any_credential() {
+    fn the_canonical_form_short_circuits_before_any_credential() {
         let resolver = CanonicalizerKind::VercelTeamScope;
         assert!(resolver.is_canonical("team_abc123"));
-        assert!(resolver.is_canonical(VERCEL_PERSONAL_SCOPE));
         assert!(!resolver.is_canonical("cermet-test-team"));
-        // A slug that merely CONTAINS the reserved words is still a slug.
-        assert!(!resolver.is_canonical("personal-site"));
+        // Anything that is not a `team_…` id is a NAME to resolve — including words that once
+        // carried a reserved meaning here. There is no reserved literal left.
+        assert!(!resolver.is_canonical("personal"));
         assert!(!resolver.is_canonical("my-team_x"));
     }
 

@@ -8,7 +8,9 @@
 //!   `Authorization: Bearer <token>`); a template must never be able to steer where the token goes.
 //! - No `origin`/host field. A template carries URL *paths* only; the origin comes from the
 //!   provider's compiled-in, egress-pinned host.
-//! - No `requires_anchored_allow`. That is a provider-level property (`contract::requires_anchored_allow`).
+//! - No key declaring that allows over this provider must be scope-anchored. Whether a provider is
+//!   ratified at all is a property of the broker's own descriptor set, never of a document that
+//!   wants to extend it.
 //!
 //! `#[serde(deny_unknown_fields)]` on every struct makes all three refusals automatic at parse time.
 
@@ -442,6 +444,16 @@ pub struct RelayAssertion {
     pub key: String,
     pub field: String,
     pub absent_when: Option<String>,
+}
+
+/// Whether a relay comparison may name an OPTIONAL field. A `bind` may — an omitting request
+/// freezes the field as absence and the bind then constrains nothing, which is a coherent per-hop
+/// answer. An `assert` may not: it detects a landed outcome contradicting the approval, and there is
+/// nothing to contradict when nothing was frozen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayFieldPresence {
+    MayBeOptional,
+    MustBeRequired,
 }
 
 /// Parse a bind LOCATION: `body.<key>` (a top-level JSON body key), `query.<key>` (a query
@@ -1921,9 +1933,12 @@ impl ActionTemplate {
                     profile.field
                 )
             })?;
-            if field.ty != TemplateType::Str || !field.required {
+            // A string, because the resolvers rewrite one spelling into another. Optionality is
+            // fine: an omitted field has no spelling to rewrite, so the daemon simply resolves
+            // nothing and the request passes through untouched.
+            if field.ty != TemplateType::Str {
                 return Err(format!(
-                    "{ctx}: canonicalized field `{}` must be a required string",
+                    "{ctx}: canonicalized field `{}` must be a string",
                     profile.field
                 ));
             }
@@ -2586,8 +2601,12 @@ impl ActionTemplate {
                 }
                 let (field_name, _) = parse_bind_value(assert_value)
                     .map_err(|why| format!("{ctx}: predicate assert `{key}` {why}"))?;
-                let field =
-                    self.relay_comparable_field(ctx, &format!("assert `{key}`"), &field_name)?;
+                let field = self.relay_comparable_field(
+                    ctx,
+                    &format!("assert `{key}`"),
+                    &field_name,
+                    RelayFieldPresence::MustBeRequired,
+                )?;
                 bound_fields.insert(field);
             }
             if rule.bind.len() > MAX_PREDICATE_BINDS {
@@ -2681,8 +2700,25 @@ impl ActionTemplate {
                          is compared against what the APPROVAL froze"
                     ));
                 }
-                let field =
-                    self.relay_comparable_field(ctx, &format!("bind `{location}`"), &field_name)?;
+                // An `omit:` literal encodes "at THIS frozen value the key must be absent" — it
+                // exists for a required field one of whose legal values the provider expresses by
+                // sending no key. On an OPTIONAL field, absence is already the unconstrained case,
+                // so the literal would be a second and contradictory spelling of the same state.
+                if absent_when.is_some()
+                    && self.field(&field_name).is_some_and(|field| !field.required)
+                {
+                    return Err(format!(
+                        "{ctx}: predicate bind `{location}` carries an `omit:` transform on the \
+                         optional field `{field_name}`; an optional field already encodes absence \
+                         by being absent, and a bind reading it then constrains nothing"
+                    ));
+                }
+                let field = self.relay_comparable_field(
+                    ctx,
+                    &format!("bind `{location}`"),
+                    &field_name,
+                    RelayFieldPresence::MayBeOptional,
+                )?;
                 bound_fields.insert(field);
             }
         }
@@ -2703,23 +2739,36 @@ impl ActionTemplate {
     }
 
     /// The field checks every relay comparison shares — a request `bind` and an outcome `assert`
-    /// alike. The frozen value must be COMPARABLE (a required `str`; an absent or non-string value is
-    /// not), it must be authority-relevant (`identity`/`side_effect`), and it must be a value SOMEBODY
-    /// pinned: an execution target the sentence pins, or `fixed` in the template. Returns the field's
-    /// own name, which is what `consumes` must account for.
+    /// alike. The frozen value must be a `str` (nothing else is comparable against a wire value), it
+    /// must be authority-relevant (`identity`/`side_effect`), and it must be a value SOMEBODY pinned:
+    /// an execution target the sentence pins, or `fixed` in the template. Returns the field's own
+    /// name, which is what `consumes` must account for.
+    ///
+    /// `presence` is where the two comparisons part. A BIND may name an OPTIONAL field: an omitting
+    /// request freezes it as absence and the bind then constrains nothing, which is a coherent
+    /// per-hop answer ("this position was never pinned"). An ASSERT has no such answer — it exists to
+    /// DETECT a landed outcome contradicting the approval, and an assertion against a value that was
+    /// never frozen detects nothing at all, so it stays required.
     fn relay_comparable_field(
         &self,
         ctx: &str,
         what: &str,
         field_name: &str,
+        presence: RelayFieldPresence,
     ) -> Result<&str, String> {
         let field = self.field(field_name).ok_or_else(|| {
             format!("{ctx}: predicate {what} names undeclared field `{field_name}`")
         })?;
-        if field.ty != TemplateType::Str || !field.required {
+        if field.ty != TemplateType::Str {
             return Err(format!(
-                "{ctx}: predicate {what} names field `{field_name}`, which is not a required str \
-                 field (an absent or non-string frozen value is not comparable)"
+                "{ctx}: predicate {what} names field `{field_name}`, which is not a str field (a \
+                 non-string frozen value is not comparable against a wire value)"
+            ));
+        }
+        if presence == RelayFieldPresence::MustBeRequired && !field.required {
+            return Err(format!(
+                "{ctx}: predicate {what} names field `{field_name}`, which is optional; an \
+                 assertion against a value that may never have been frozen detects nothing"
             ));
         }
         if !matches!(
@@ -4011,7 +4060,7 @@ pub struct LoadedTemplate {
 }
 
 /// The ceiling a ratified provider descriptor sets on the templates that may extend it. Membership
-/// makes the provider template-extensible (rule 1) AND `requires_anchored_allow`.
+/// is what makes the provider template-extensible (rule 1).
 #[derive(Debug, Clone)]
 pub enum ProviderCeiling {
     /// An egress-pinned HTTP provider — its origin pin lives in the broker's provider map, so here we
@@ -4110,8 +4159,8 @@ impl TemplateRegistry {
         }
     }
 
-    /// Whether `p` has a ratified descriptor known to this registry (rule 1 + the view gate's
-    /// "could a template ever have existed for this provider" + `requires_anchored_allow`).
+    /// Whether `p` has a ratified descriptor known to this registry (rule 1, and the view gate's
+    /// "could a template ever have existed for this provider").
     pub fn provider_extensible(&self, p: &str) -> bool {
         self.providers
             .read()

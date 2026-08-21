@@ -15,35 +15,37 @@
 # Authority:
 #   project — frozen identity execution target; the sentence pins WHICH project may be deployed, and
 #             the relay refuses any create whose body `name` is not that project.
-#   team    — frozen identity execution target, request-authored and SENTENCE-adjudicated exactly
-#             like `target` below: the REQUEST names a Vercel scope and it freezes for the whole
-#             session, while WHICH scopes are admissible is the sentence's business
-#             (`allow vercel.deploy where … and team = "personal"`). A rule that does not mention
-#             `team` admits whatever the request names — unmentioned is unconstrained, uniformly —
-#             so pinning the scope is a corpus edit in the rule, not something this document can do
-#             for the operator.
-#             What the frozen value then buys: a team account's CLI stamps `?teamId=` on
-#             every scoped call, and that query VALUE is authority. Unbound, an injected `--scope`
-#             or an edited `.vercel/project.json` (T1), or a stale link file (T2), redirects the
-#             already-approved session's own hops into any team the vaulted token reaches — and
-#             Vercel AUTO-CREATES a project on an unknown name, so the blast radius was
-#             mint-and-deploy, not merely deploy. The bind is
-#             `omit:personal`: a personal-scope token sends no `teamId` at all, so the frozen
-#             literal `personal` means the key must be ABSENT; any other frozen value must appear
-#             verbatim as the query value, and a missing key refuses. The one shape that does NOT
-#             carry the bind is the read-only team-context call, which names its team in the PATH
-#             and sends no query at all (classified at its stanza).
-#             BOTH SPELLINGS ARE ACCEPTED: the request may name the team by its `team_…` id, by the
-#             literal `personal`, or by its SLUG (`cermet-test-team`) — the spelling humans, tasks
-#             and Vercel's own dashboard use. An id or `personal` passes through untouched, with no
-#             credential opened and no provider hop. A slug is resolved ONCE at REQUEST time by the
-#             compiled `request_canonicalization` profile below, inside the daemon, with the vaulted
-#             token (never exposed), and the resolved `team_…` ID is what freezes on the grant. So
-#             sentences keep pinning ids, the relay's `query.teamId` bind keeps enforcing the id per
-#             hop, and approved == executed still holds on the canonical value. A slug that resolves
-#             to nothing is a typed, audited DENY (fail closed — the resolution never guesses), and
-#             the resolution cannot widen anything: it decides how the requested scope is SPELT, not
-#             which scope the corpus admits.
+#   team    — OPTIONAL frozen identity execution target: the Vercel scope binds only when it is
+#             NAMED — by the request, or by a sentence that demands one.
+#             NAMED: the value freezes for the whole session, and `query.teamId` is pinned to it on
+#             every effect-bearing hop. A team account's CLI stamps `?teamId=` on every scoped call,
+#             and that query VALUE is authority: unbound, an injected `--scope` or an edited
+#             `.vercel/project.json` (T1), or a stale link file (T2), redirects the already-approved
+#             session's own hops into any team the vaulted token reaches — and Vercel AUTO-CREATES a
+#             project on an unknown name, so the blast radius is mint-and-deploy, not merely deploy.
+#             The hop must carry the frozen value verbatim; a missing or different key refuses. The
+#             one shape that does NOT carry the bind is the read-only team-context call, which names
+#             its team in the PATH and sends no query at all (classified at its stanza).
+#             BOTH SPELLINGS ARE ACCEPTED: the request may name the team by its `team_…` id or by
+#             its SLUG (`cermet-test-team`) — the spelling humans, tasks and Vercel's own dashboard
+#             use. An id passes through untouched, with no credential opened and no provider hop. A
+#             slug is resolved ONCE at REQUEST time by the compiled `request_canonicalization`
+#             profile below, inside the daemon, with the vaulted token (never exposed), and the
+#             resolved `team_…` ID is what freezes on the grant. So sentences keep pinning ids, the
+#             relay's `query.teamId` bind keeps enforcing the id per hop, and approved == executed
+#             still holds on the canonical value. A name that resolves to nothing is a typed,
+#             audited DENY (fail closed — the resolution never guesses), and the resolution cannot
+#             widen anything: it decides how the requested scope is SPELT, not which scope the
+#             corpus admits.
+#             OMITTED: the field freezes as ABSENCE and the `teamId` bind constrains nothing — the
+#             key may carry any value, or not appear at all, on every shape. WHICH scopes are
+#             admissible stays the sentence's business either way: a rule spelling
+#             `and team = "team_…"` matches only a request that NAMED that scope and refuses one
+#             that named none, and a rule that does not mention `team` admits whatever the request
+#             names, including nothing — unmentioned is unconstrained, uniformly.
+#             The trade-off, stated plainly: an unpinned deploy's scope follows whatever the native
+#             CLI's own workspace configuration selects, and the relay hop records — which capture
+#             each target's full query string — are then the only record of the scope actually used.
 #   target  — frozen side_effect execution target, request-authored and SENTENCE-adjudicated:
 #             `allow vercel.deploy where target = "preview"` lets previews flow while a
 #             production request falls to the fail-closed default deny (with a widening suggestion). Vercel's create API has no
@@ -70,12 +72,13 @@
 #      `body.name` to `project`, `body.target` to `target`, and `query.teamId` to `team` on every
 #      shape where that value decides WHERE the deploy lands. A ratified value that disagrees with
 #      the approval refuses as `bind_mismatch`. Both dimensions refuse BEFORE the credential is
-#      attached, and both burn.
+#      attached, and both burn. A bind whose field froze as ABSENCE — the optional `team`, when the
+#      request named no scope — constrains nothing; key closure is all that shape then has.
 # Admitting a key to either allowlist therefore means classifying the AUTHORITY OF ITS VALUE: either
 # it is value-bound to a frozen field, or it is declared authority-free right here in this document,
 # with the reason. There is no third state (docs/provider_design_principles.md). Exactly one position
 # is ratified authority-free: the read-only team-context shape's own team id (at its stanza) — every
-# effect-bearing hop's scope stays bound.
+# effect-bearing hop's scope stays bound to whatever the approval froze.
 #
 # The two dimensions above are REQUEST-side, and a session has two more positions that carry
 # authority:
@@ -124,7 +127,7 @@ request_canonicalization: vercel.deploy.team_scope.v1
 fields:
   - { name: project, type: str, required: true, class: identity,    binding: exact_resource_pin }
   - { name: target,  type: str, required: true, class: side_effect, binding: exact_resource_pin }
-  - { name: team,    type: str, required: true, class: identity,    binding: exact_resource_pin }
+  - { name: team,    type: str, required: false, class: identity,    binding: exact_resource_pin }
 consumes: [project, target, team]
 execution_targets: [project, target, team]
 execution: relay
@@ -171,7 +174,7 @@ predicate:
     bind:
       body.name: project
       body.target: "target|omit:preview"
-      query.teamId: "team|omit:personal"
+      query.teamId: team
     # The ONE consequence a later hop in this session may name — the deployment this
     # create returned. Read off the 2xx response's top-level `id` (the `dpl_…`), write-once.
     capture:
@@ -200,8 +203,9 @@ predicate:
   #     a deployment lands.
   #   * the `teamId` QUERY key stays admitted (an earlier CLI's trace appended it to every scoped
   #     call) and is authority-free for the same reason.
-  # The scope of every EFFECT-bearing hop stays pinned: the create, the uploads and the polls each
-  # carry their own `query.teamId` bind, so a redirected preamble read cannot move the deploy.
+  # The scope of every EFFECT-bearing hop stays pinned to whatever the approval froze: the create,
+  # the uploads and the polls each carry their own `query.teamId` bind, so a redirected preamble read
+  # cannot move the deploy.
   - { method: GET, path: /teams/*, query_keys: [teamId] }
   # Observed with CLI 58.4.4 (HOME isolated, no link file):
   # in an UNLINKED directory the CLI must resolve the team before it can do anything, and its
@@ -224,7 +228,8 @@ predicate:
   #     the token scopes what it can see. Nothing here writes or decides where a deployment lands.
   #   * the `teamId` QUERY key stays admitted (earlier CLI traces append it) and is authority-free
   #     for the same reason.
-  # The scope of every EFFECT-bearing hop stays pinned: create, uploads, polls, events.
+  # The scope of every EFFECT-bearing hop stays pinned to whatever the approval froze: create,
+  # uploads, polls, events.
   - method: GET
     path: /v9/projects/*
     query_keys: [teamId]
@@ -275,7 +280,7 @@ predicate:
       max_uses: 4096
       max_total_bytes: 268435456   # 256 MiB aggregate per session
     bind:
-      query.teamId: "team|omit:personal"
+      query.teamId: team
   # Post-create reads the CLI polls to report the preview URL and build outcome. The
   # wildcard is the deployment id, and it is pinned to the one THIS session created — a read of
   # someone else's deployment is not this grant's consequence.
@@ -284,13 +289,13 @@ predicate:
     query_keys: [withGitRepoInfo, teamId]
     bind:
       path.*: captured.deployment_id
-      query.teamId: "team|omit:personal"
+      query.teamId: team
   - method: GET
     path: /v2/deployments/*/events
     query_keys: [builds, delimiter, direction, follow, limit, name, since, statusCode, until, teamId]
     bind:
       path.*: captured.deployment_id
-      query.teamId: "team|omit:personal"
+      query.teamId: team
   # What CLI 58.4.4 ACTUALLY calls to follow build logs is
   # the legacy path with a `format` key (`/v3/now/deployments/{id}/events?direction=forward&
   # follow=1&format=lines`) — the documented /v2 shape above was wrong-at-birth for the CLI.
@@ -300,4 +305,4 @@ predicate:
     query_keys: [builds, delimiter, direction, follow, format, limit, name, since, statusCode, until, teamId]
     bind:
       path.*: captured.deployment_id
-      query.teamId: "team|omit:personal"
+      query.teamId: team

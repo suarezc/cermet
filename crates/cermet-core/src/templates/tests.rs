@@ -605,20 +605,21 @@ fn validator_refuses_path_field_missing_from_targets() {
 }
 
 #[test]
-fn validator_refuses_optional_execution_target() {
-    // An absent optional execution target escapes the broker's evaluate-time pin coverage (the
-    // required-pins set is built only from fields present in the frozen resource), so a request that
-    // OMITS the field would auto-allow under a broad allow while the provider default executes
-    // unpinned. `check_consistent` bans it at load: an execution target must be a required field.
+fn validator_refuses_an_optional_field_in_an_executed_url() {
+    // Optionality is legal on an execution target — an omitting request freezes the field as
+    // absence, and a rule that pins it then refuses that request rather than matching it. Where it
+    // is NOT legal is a position the executor must fill to build the outbound URL: an absent path
+    // placeholder has nothing to interpolate, so a request that omitted it would execute against a
+    // URL nobody approved. The narrower guard is the one that carries the weight.
     let doc = golden().replace(
             "  - { name: owner,   type: str, required: true,  class: identity,     binding: exact_resource_pin }",
             "  - { name: owner,   type: str, required: false, class: identity,     binding: exact_resource_pin }",
         );
     let err = TemplateRegistry::new()
         .load(&doc)
-        .expect_err("an optional execution-target field must be refused at load");
+        .expect_err("an optional path placeholder must be refused at load");
     assert!(
-        err.contains("owner") && err.contains("optional"),
+        err.contains("owner") && err.contains("required"),
         "the error names the field and the requirement: {err}"
     );
 }
@@ -2221,7 +2222,7 @@ fn relay_grammar_accepts_a_query_value_bind_on_any_method() {
         .replace(
             "  - { method: GET, path: /v13/deployments/* }",
             "  - { method: GET, path: /v13/deployments/*, query_keys: [teamId], \
-             bind: { query.teamId: \"scope|omit:personal\" } }",
+             bind: { query.teamId: \"scope|omit:default\" } }",
         )
         .replace(
             "consumes: [project, target]",
@@ -2249,7 +2250,7 @@ fn relay_grammar_accepts_a_query_value_bind_on_any_method() {
         vec![RelayBind {
             location: BindLocation::Query("teamId".into()),
             field: "scope".into(),
-            absent_when: Some("personal".into()),
+            absent_when: Some("default".into()),
         }],
         "a bodyless read binds a query VALUE, and declares no body_keys to do it"
     );
@@ -2306,7 +2307,7 @@ fn every_admitted_teamid_key_is_classified_in_the_shipped_relay_verb() {
                 Some(RelayBind {
                     location: BindLocation::Query("teamId".into()),
                     field: "team".into(),
-                    absent_when: Some("personal".into()),
+                    absent_when: None,
                 }),
                 "{} {}: an admitted `teamId` key whose value is neither bound nor ratified \
                  authority-free is a scope the sentence never froze",
@@ -2319,6 +2320,42 @@ fn every_admitted_teamid_key_is_classified_in_the_shipped_relay_verb() {
         seen_free.len(),
         RATIFIED_AUTHORITY_FREE.len(),
         "the authority-free list names a shape the shipped verb no longer has: {seen_free:?}"
+    );
+}
+
+/// The document-level half of the same rule: an `omit:` literal on an OPTIONAL bind field is
+/// refused at load. It would be a second spelling of a state the field already has — and a
+/// contradictory one, since the engine reads an absent optional field as UNCONSTRAINED while the
+/// literal claims a specific frozen value demands the key's absence.
+#[test]
+fn relay_grammar_refuses_an_omit_transform_on_an_optional_field() {
+    let doc = CANONICALIZE_DOC.replace("query.teamId: team", "query.teamId: \"team|omit:none\"");
+    let err = relay_load(&doc).expect_err("an optional field cannot also carry an omit literal");
+    assert!(
+        err.contains("team") && err.contains("optional"),
+        "the refusal names the field and why: {err}"
+    );
+
+    // ...and the same literal on a REQUIRED field stays legal, which is the shape it exists for.
+    let required = doc.replace(
+        "name: team, type: str, required: false",
+        "name: team, type: str, required: true",
+    );
+    relay_load(&required).expect("`omit:` on a required field is the sanctioned shape");
+}
+
+/// An `assert` may not name an optional field at all: it exists to DETECT a landed outcome
+/// contradicting the approval, and there is nothing to contradict when nothing was frozen.
+#[test]
+fn relay_grammar_refuses_an_assertion_on_an_optional_field() {
+    let doc = CANONICALIZE_DOC.replace(
+        "      query.teamId: team\n",
+        "      query.teamId: team\n    assert:\n      teamId: team\n",
+    );
+    let err = relay_load(&doc).expect_err("an assertion on an optional field detects nothing");
+    assert!(
+        err.contains("team") && err.contains("optional"),
+        "the refusal names the field and why: {err}"
     );
 }
 
@@ -2337,6 +2374,57 @@ fn the_shipped_deploy_is_the_only_relay_verb_and_binds_project_and_target() {
         }
     }
     assert_eq!(relay_verbs, vec!["vercel.deploy".to_string()]);
+}
+
+/// The shipped verb's `team`, at the document level: it is OPTIONAL and its `teamId` binds carry no
+/// transform. A bind whose source field can freeze as absence has no "safe absent value" to encode —
+/// absence IS the unconstrained case — so an `omit:` literal there would be a second, contradictory
+/// spelling of the same state. `target` keeps its `omit:` literal, which is the shape that transform
+/// exists for: a REQUIRED field one of whose legal values the provider expresses by sending no key.
+#[test]
+fn the_shipped_team_is_optional_and_its_scope_binds_carry_no_transform() {
+    let doc = VENDORED_CATALOG
+        .iter()
+        .copied()
+        .find(|doc| doc.contains("action: deploy"))
+        .expect("the vercel relay verb is vendored");
+    let template: ActionTemplate = serde_yaml::from_str(doc).unwrap();
+
+    let entry = template.catalog_entry(true, false);
+    let team = entry
+        .fields
+        .iter()
+        .find(|field| field.name == "team")
+        .expect("the shipped verb declares team");
+    assert!(
+        !team.required,
+        "a deploy that names no Vercel scope is a legal request"
+    );
+
+    let predicate = template.relay_predicate().expect("a relay predicate");
+    let scope_binds: Vec<RelayBind> = predicate
+        .iter()
+        .flat_map(|rule| rule.binds())
+        .filter(|bind| bind.field == "team")
+        .collect();
+    assert!(
+        !scope_binds.is_empty(),
+        "the scope is still bound wherever it decides where the deploy lands"
+    );
+    assert!(
+        scope_binds.iter().all(|bind| bind.absent_when.is_none()),
+        "an optional field's bind encodes absence by being absent, never by a literal: \
+         {scope_binds:?}"
+    );
+    // ...while the REQUIRED `target` still uses one, so this is a rule about optionality and not a
+    // retreat from the transform.
+    assert!(
+        predicate
+            .iter()
+            .flat_map(|rule| rule.binds())
+            .any(|bind| bind.field == "target" && bind.absent_when.as_deref() == Some("preview")),
+        "the required side-effect field keeps its `omit:` encoding"
+    );
 }
 
 /// A shape may declare a per-session BUDGET — how many hops it admits and how many
@@ -2869,7 +2957,7 @@ request_canonicalization: vercel.deploy.team_scope.v1
 fields:
   - { name: project, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: target, type: str, required: true, class: side_effect, binding: exact_resource_pin, fixed: preview }
-  - { name: team, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: team, type: str, required: false, class: identity, binding: exact_resource_pin }
 consumes: [project, target, team]
 execution_targets: [project, team]
 execution: relay
@@ -2882,7 +2970,7 @@ predicate:
     bind:
       body.name: project
       body.target: \"target|omit:preview\"
-      query.teamId: \"team|omit:personal\"
+      query.teamId: team
   - { method: POST, path: /v2/files }
   - { method: GET, path: /v13/deployments/* }
 ";
@@ -2919,24 +3007,24 @@ fn request_canonicalization_refuses_every_incoherent_declaration() {
         (
             "a profile whose field the document does not declare",
             CANONICALIZE_DOC.replace(
-                "  - { name: team, type: str, required: true, class: identity, binding: exact_resource_pin }\n",
+                "  - { name: team, type: str, required: false, class: identity, binding: exact_resource_pin }\n",
                 "",
             ),
             "undeclared field",
         ),
         (
-            "a canonicalized field that is optional",
+            "a canonicalized field that is not a string",
             CANONICALIZE_DOC.replace(
-                "name: team, type: str, required: true",
                 "name: team, type: str, required: false",
+                "name: team, type: int, required: false",
             ),
-            "must be a required string",
+            "must be a string",
         ),
         (
             "a canonicalized field that is not an identity or side effect",
             CANONICALIZE_DOC.replace(
-                "name: team, type: str, required: true, class: identity",
-                "name: team, type: str, required: true, class: read_filter",
+                "name: team, type: str, required: false, class: identity",
+                "name: team, type: str, required: false, class: read_filter",
             ),
             "must be identity or side_effect",
         ),

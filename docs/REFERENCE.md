@@ -274,8 +274,7 @@ refuses a parameter nobody ratified (`no_matching_shape`); a value bind pins an 
 carries authority to a frozen field (`bind_mismatch`). `vercel.deploy` needs both: `slug` is a second
 way to name a Vercel scope and dies at closure, while `teamId` IS admitted — a team account's CLI
 stamps it on every scoped call — so its value is bound to the frozen `team` on every shape where it
-decides where the deploy lands (`omit:personal`: a personal-scope token sends no `teamId`, so at that
-frozen value the key must be ABSENT). Admitting a key to a relay allowlist therefore requires
+decides where the deploy lands. Admitting a key to a relay allowlist therefore requires
 classifying the authority of its VALUE: bound, or declared authority-free in the ratified document,
 with the reason. There is no third state (`docs/provider_design_principles.md`). `vercel.deploy`
 ratifies exactly one position authority-free: the read-only team-context call, which names its team
@@ -284,10 +283,18 @@ beside it — a bind there refused the CLI's own third call and burned the grant
 attempted.
 
 What a bind pins is the value the APPROVAL froze; WHICH value that is remains the sentence's
-business. A rule that spells `and team = personal` admits only that scope; a rule that does not
+business. A rule that spells `and team = "team_…"` admits only that scope; a rule that does not
 mention `team` admits whatever the request names, exactly as an unmentioned `target` does. Unmentioned
 is unconstrained, uniformly — the relay's job is that the executed session cannot contradict what was
 approved, not that the approval was narrow.
+
+`team` is also OPTIONAL, which gives a bind a third state. A request that named no scope freezes the
+field as ABSENCE, and a bind reading an absent field constrains nothing — the key may carry any
+value, or none, and key closure is all that position then has. A rule PINNING an optional field still
+refuses the omitting request (`missing_required_field`, naming the field): absence is not a value, so
+optionality never satisfies a pin. The cost is stated where it is paid — an unpinned deploy's scope
+follows the native CLI's own workspace configuration, and the hop records are then the only account
+of the scope it used.
 
 **The session's own dataflow.** A relay session's read shapes carry a wildcard — the
 deployment id in `/v13/deployments/*` and in the two events paths — and matching "some segment is

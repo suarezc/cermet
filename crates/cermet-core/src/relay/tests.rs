@@ -4,21 +4,21 @@ use super::*;
 use crate::templates::ActionTemplate;
 
 /// A session over the SHIPPED `vercel.deploy` predicate — the tests judge the real verb, not a
-/// fixture that could drift from it. The default scope is `personal`, the frozen `team` value whose
-/// bind means "no `teamId` may ride along".
+/// fixture that could drift from it. The default is the UNSCOPED session: `team` is optional, this
+/// request named no scope, so it froze as ABSENCE and the `teamId` binds constrain nothing.
 fn session(project: &str) -> RelaySession {
-    session_scoped(project, "personal")
+    session_frozen(project, None, "preview")
 }
 
 /// The same session frozen to a NAMED team — the scope a team account's CLI stamps on every call.
 fn session_scoped(project: &str, team: &str) -> RelaySession {
-    session_frozen(project, team, "preview")
+    session_frozen(project, Some(team), "preview")
 }
 
 /// The same session frozen to a NAMED target — a production approval, whose create response Vercel
 /// answers with `target: "production"` rather than the preview case's absent/null key.
 fn session_targeted(project: &str, target: &str) -> RelaySession {
-    session_frozen(project, "personal", target)
+    session_frozen(project, None, target)
 }
 
 /// The SHIPPED `vercel.deploy` predicate, exactly as the daemon loads it.
@@ -35,12 +35,14 @@ fn shipped_predicate() -> Vec<PredicateRule> {
         .to_vec()
 }
 
-fn session_frozen(project: &str, team: &str, target: &str) -> RelaySession {
+/// `team: None` is the request that named no scope — the field froze as ABSENCE, which is a
+/// different state from "missing from the map" (that one is unreachable and fails closed).
+fn session_frozen(project: &str, team: Option<&str>, target: &str) -> RelaySession {
     let predicate = shipped_predicate();
     let mut frozen = BTreeMap::new();
-    frozen.insert("project".to_string(), project.to_string());
-    frozen.insert("target".to_string(), target.to_string());
-    frozen.insert("team".to_string(), team.to_string());
+    frozen.insert("project".to_string(), Some(project.to_string()));
+    frozen.insert("target".to_string(), Some(target.to_string()));
+    frozen.insert("team".to_string(), team.map(str::to_string));
     RelaySession::new(
         "HANDLEabcdefghij123456".into(),
         "gr_1".into(),
@@ -230,8 +232,8 @@ fn an_undeclared_shape_is_refused_and_burns_the_session() {
         ),
         (
             // `teamId` is an ADMITTED KEY (team accounts append it to every call), but its VALUE
-            // is bound to the frozen `team`, so on this personal-scope session the key must be
-            // absent — a create that carries one is a scope redirect and refuses at the bind,
+            // is bound to the frozen `team`, so on this scoped session it must carry that exact
+            // team — a create that names another is a scope redirect and refuses at the bind,
             // without the credential.
             "a create carrying teamId outside the frozen scope fails its bind",
             "POST",
@@ -263,8 +265,11 @@ fn an_undeclared_shape_is_refused_and_burns_the_session() {
             RelayRefusal::MalformedRequest,
         ),
     ];
+    // A SCOPED session: one case below is a scope redirect, which only has a bind to miss when the
+    // approval froze a team. Shape and syntax refusals precede the binds, so the other eight are
+    // decided identically either way.
     for (why, method, target, expected) in cases {
-        let mut s = session("website");
+        let mut s = session_scoped("website", "team_ours");
         let verdict = s.authorize(method, target, b"{}", NOW);
         assert_eq!(verdict, RelayVerdict::Refuse(expected.clone()), "{why}");
         s.note_refusal(expected.clone(), method, target);
@@ -683,28 +688,75 @@ fn a_scoped_create_is_pinned_to_the_frozen_team() {
     }
 }
 
-/// The `omit:` half of the same bind. A PERSONAL-scope token sends no `teamId` at all, so
-/// `team = personal` means the key must be ABSENT — the same "no legal value for the safe case"
-/// shape `body.target: target|omit:preview` already had.
+/// The other half of the same bind: `team` is OPTIONAL, and a request that named no scope froze it
+/// as ABSENCE. A bind with nothing frozen behind it constrains nothing — the `teamId` key rides with
+/// any value, or not at all, on every shape. This is the deploy whose scope follows the native CLI's
+/// own workspace configuration; the hop record's target is then the only account of which scope that
+/// turned out to be.
 #[test]
-fn a_personal_scope_admits_the_absent_key_and_refuses_a_present_one() {
-    let mut s = session("website");
-    assert_eq!(
-        s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true },
-        "a personal deploy sends no teamId, and that IS the frozen scope"
-    );
+fn an_unnamed_scope_binds_nothing_and_admits_every_team_id() {
     for target in [
+        "/v13/deployments",
         "/v13/deployments?teamId=team_ours",
-        "/v13/deployments?teamId=personal",
-        "/v13/deployments?forceNew=1&teamId=team_ours",
+        "/v13/deployments?teamId=team_other",
+        "/v13/deployments?forceNew=1&teamId=team_whatever",
+        // Even the degenerate spellings a PINNED scope refuses: a valueless key, and a repeat.
+        "/v13/deployments?teamId",
+        "/v13/deployments?teamId=team_ours&teamId=team_other",
     ] {
+        let mut s = session("website");
         assert_eq!(
             s.authorize("POST", target, &create_body("website"), NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
-            "a personal-scope approval never authorizes a team-scoped hop: {target}"
+            RelayVerdict::Forward { effect: true },
+            "nothing was frozen, so nothing about the scope is enforced: {target}"
+        );
+        assert!(
+            s.burned().is_none(),
+            "an unconstrained bind is not a refusal: {target}"
         );
     }
+}
+
+/// An absent bind relaxes ITS OWN position and nothing else. Key closure is untouched — `slug` is
+/// Vercel's other way to name a scope and still dies at the allowlist — and the frozen
+/// `project`/`target` binds still hold on the very same hop.
+#[test]
+fn an_unnamed_scope_relaxes_only_its_own_bind() {
+    let mut s = session("website");
+    assert_eq!(
+        s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours&slug=team-other",
+            &create_body("website"),
+            NOW
+        ),
+        RelayVerdict::Refuse(RelayRefusal::NoMatchingShape),
+        "an unratified query key refuses whether or not the scope is pinned"
+    );
+
+    let mut s = session("website");
+    assert_eq!(
+        s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &create_body("someone-elses-site"),
+            NOW
+        ),
+        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        "the frozen project still pins the create on an unscoped session"
+    );
+
+    let mut s = session("website");
+    assert_eq!(
+        s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            br#"{"name":"website","target":"production","files":[]}"#,
+            NOW
+        ),
+        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        "the frozen preview target still pins the create on an unscoped session"
+    );
 }
 
 /// The bind holds on every shape where the value decides WHERE the deploy lands, not only on the
@@ -885,7 +937,7 @@ fn the_linked_project_retrieve_is_ratified_authority_free() {
 /// flow the stub capture missed.
 #[test]
 fn the_live_linked_dir_preamble_forwards() {
-    let mut s = session_frozen("website", "team_ours", "preview");
+    let mut s = session_frozen("website", Some("team_ours"), "preview");
     for (hop, method, target) in [
         ("hop 1", "GET", "/v2/user"),
         ("hop 2", "GET", "/v9/projects/website"),
@@ -974,7 +1026,7 @@ fn the_captured_cli_deploy_sequence_forwards_hop_for_hop() {
         ),
     ];
 
-    let mut s = session_frozen("stubsite", "team_stub", "preview");
+    let mut s = session_frozen("stubsite", Some("team_stub"), "preview");
     for (seq, method, target, body) in hops {
         let verdict = s.authorize(method, target, body, NOW);
         let RelayVerdict::Forward { effect } = verdict else {

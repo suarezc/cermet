@@ -185,7 +185,17 @@ pub struct ActionContract {
     pub schema: &'static [FieldDecl],
     /// Fields the executor reads. Never contains `"parameters"`.
     pub consumes: &'static [&'static str],
-    /// Fields an `allow` rule must pin. `[]` ⇒ no scopable target.
+    /// The fields a sentence MAY pin to scope this action — the set a least-privilege `allow` is
+    /// shaped around. `[]` ⇒ no scopable target, and a bare allow is the only rule shape (the
+    /// `scope: account` case).
+    ///
+    /// It is not itself an obligation on any rule: no evaluate-time check demands that a matching
+    /// rule pin these. What reads it: SUGGESTION SHAPING — the pinned allow proposed for an unruled
+    /// request (`sentence::unruled_allow_hint`) and the deny's own shape key
+    /// (`broker::helpers::widening_shape`), both gated on
+    /// [`Self::has_fully_pinned_execution_targets`] — plus the template validator, which requires
+    /// membership here for every field that reaches an executed URL (path placeholders, path-mode
+    /// fields, query placeholders) or that a relay bind / outcome assertion compares against.
     pub execution_targets: &'static [&'static str],
     /// Deferred-membership edges.
     pub relations: &'static [Relation],
@@ -283,26 +293,32 @@ pub fn check_consistent(
         }
     }
     for t in execution_targets {
-        // An execution target must be a REQUIRED field. The broker builds its evaluate-time
-        // required-pins set only from fields PRESENT in the frozen resource, so an OMITTED optional
-        // target would never be covered — a request dropping it would auto-allow under a broad allow
-        // while the provider default executes unpinned. Express an API default with a required field
-        // plus an `omit:` transform, never an optional execution target.
-        match fields.iter().find(|(f, _, _, _, _)| *f == *t) {
-            None => {
-                return Err(format!(
-                    "{provider}.{action}: execution_target `{t}` is not a declared schema field (unpinnable)"
-                ));
-            }
-            Some((_, _, _, _, required)) if !*required => {
-                return Err(format!(
-                    "{provider}.{action}: execution_target `{t}` is an optional field; an absent \
-                     optional execution target would escape the broker's evaluate-time pin coverage \
-                     (the provider default would then execute unpinned). Express an API default with a \
-                     required field plus an `omit:` transform instead."
-                ));
-            }
-            Some(_) => {}
+        // An execution target names a field a sentence MAY pin, so it has to be a declared schema
+        // field — a target nothing backs is unpinnable by construction.
+        //
+        // An OPTIONAL target is legal, and means what optionality means everywhere else: a request
+        // that omits it freezes it as absence, and absence is not a value. A rule that pins it then
+        // refuses such a request (`missing_required_field`, naming the field); a rule that does not
+        // mention it admits the request with that field unconstrained — the same "unmentioned is
+        // unconstrained" every other field obeys. What an executor does with an absent target is the
+        // template's own business, declared in its own document.
+        //
+        // The narrower positions where a target must ALSO be required — a path placeholder, a
+        // slash-bearing path-mode field, a verified `expect_eq` identity — carry that requirement at
+        // their own validation sites, since those are where absence would leave EXECUTED URL
+        // authority unpinned.
+        //
+        // ONE execution-target position deliberately does NOT restate it: an HTTP query placeholder.
+        // Its own validation demands `exact_resource_pin` + identity/side_effect + membership here,
+        // but never required-ness — which this rule used to supply transitively, and no longer does.
+        // A future author must not read that silence as a guarantee. What actually holds the line is
+        // RENDER time: a whole-value `{field}` placeholder whose field is absent is a hard error, so
+        // the request is never built; only the explicitly optional `{field?}` spelling renders as an
+        // omitted parameter. Absence there fails closed or is declared — never silently defaulted.
+        if !fields.iter().any(|(f, _, _, _, _)| *f == *t) {
+            return Err(format!(
+                "{provider}.{action}: execution_target `{t}` is not a declared schema field (unpinnable)"
+            ));
         }
     }
     for (name, ty, class, binding, _required) in fields {
@@ -531,13 +547,6 @@ impl CanonicalResource {
 // `ALL_CONTRACTS` / `contract_for` / built-in constructors are gone; the live secret-field source of
 // truth is the template registry (built-ins ∪ loaded templates), reached through a broker.
 
-/// Whether an `allow` rule for this provider must pin the action's execution targets — true for any
-/// provider with a ratified, egress-pinned descriptor. With no broker in hand this falls back to the
-/// VENDORED (shipped) descriptor names; a broker uses its own loaded set via `TemplateContractSource`.
-pub fn requires_anchored_allow(provider: &str) -> bool {
-    crate::provider::vendored_provider_names().contains(provider)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,16 +764,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "optional")]
-    fn assert_consistent_rejects_an_optional_execution_target() {
-        // An absent optional execution target escapes the broker's evaluate-time pin coverage (the
-        // required-pins set is built only from fields PRESENT in the frozen resource), so the provider
-        // default would execute unpinned under a broad allow. The class is unrepresentable here: an
-        // execution target must be a required field (an API default belongs in a required field + an
-        // `omit:` transform, never an optional target).
-        const BAD: ActionContract = ActionContract {
+    fn an_optional_execution_target_is_a_legal_declaration() {
+        // An execution target names a field a sentence MAY pin; optionality is orthogonal to that.
+        // An omitting request freezes the field as absence, and absence is not a value — a rule that
+        // pins the field refuses that request rather than matching it, so nothing here can widen a
+        // pinned rule onto an unpinned run.
+        const OPTIONAL_TARGET: ActionContract = ActionContract {
             provider: "test",
-            action: "bad",
+            action: "optional_target",
             schema: &[FieldDecl {
                 name: "project",
                 ty: ScalarKind::Str,
@@ -777,6 +784,29 @@ mod tests {
             relations: &[],
             open: false,
         };
-        BAD.assert_consistent();
+        OPTIONAL_TARGET.assert_consistent();
+    }
+
+    /// The other half: a rule that PINS the optional target refuses a request that omitted it. The
+    /// pin is not silently satisfied by absence, which is what makes the relaxation above safe.
+    #[test]
+    fn a_pinned_optional_target_refuses_a_request_that_omitted_it() {
+        const OPTIONAL_TARGET: ActionContract = ActionContract {
+            provider: "test",
+            action: "optional_target",
+            schema: &[FieldDecl {
+                name: "project",
+                ty: ScalarKind::Str,
+                required: false,
+                class: FieldClass::Identity,
+                binding: AllowBinding::ExactResourcePin,
+            }],
+            consumes: &["project"],
+            execution_targets: &["project"],
+            relations: &[],
+            open: false,
+        };
+        let omitted = CanonicalResource::from_stored("{}", &OPTIONAL_TARGET).unwrap();
+        assert!(omitted.req_str("project").is_err());
     }
 }

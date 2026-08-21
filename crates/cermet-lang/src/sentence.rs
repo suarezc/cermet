@@ -949,9 +949,23 @@ impl<'a> SentenceEvaluator<'a> {
                 if contract.field_class(target) == Some(crate::contract::FieldClass::Secret) {
                     return None;
                 }
+                let Some(value) = resource.scalar(target) else {
+                    // An OPTIONAL target this request omitted: it froze as absence, so there is no
+                    // value to pin and pinning it would suggest a rule that refuses the very request
+                    // it is meant to admit. The suggestion leaves it unconstrained, which is exactly
+                    // what "the request named no scope" means. An absent REQUIRED target is a
+                    // resource the contract says cannot exist — no suggestion is made for it.
+                    if contract
+                        .field_decl(target)
+                        .is_some_and(|decl| decl.required)
+                    {
+                        return None;
+                    }
+                    continue;
+                };
                 conjuncts.push(Pred::Eq {
                     field: (*target).to_string(),
-                    value: sentence_scalar(resource.scalar(target)?),
+                    value: sentence_scalar(value),
                 });
             }
         }

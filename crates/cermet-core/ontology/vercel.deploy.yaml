@@ -3,7 +3,7 @@ provider: vercel
 action: deploy
 binds:
   provider_descriptor_sha256: 117444101b16b5b8dc83be5e1b894fed9316457312fac1e380e7aad3296f4382
-  action_template_sha256: 47853eee28bac74d6deb14692c77c1d729f53f7ae57e6f113f4f136ed4972255
+  action_template_sha256: c60c4d3cbd3439d71bc49cfbd8603214fbd905e1819a3bdb0f66c4b04feee01b
 semantics:
   resource_family: deployment
   provider_operation: relay_deploy
@@ -13,10 +13,11 @@ semantics:
   completion: asynchronous
   idempotency: non_idempotent
 review:
-  summary: Credential one native-CLI deploy of a pinned project at a frozen, sentence-adjudicated target, in a frozen Vercel scope, through the loopback relay.
+  summary: Credential one native-CLI deploy of a pinned project at a frozen, sentence-adjudicated target, through the loopback relay.
   cautions:
-    - The Vercel scope is frozen by the sentence; team is required and personal names a personal account.
-    - team accepts the team_ id, the literal personal, or the team slug; a slug is resolved once at request time with the vaulted token and the resolved team_ id is what freezes, so sentences keep pinning ids and an unresolvable name denies.
+    - team is optional and the Vercel scope binds only when named; omit it and the deploy follows whatever scope the native CLI configuration selects, recorded only on the relay hop targets.
+    - team accepts the team_ id or the team slug; a slug is resolved once at request time with the vaulted token and the resolved team_ id is what freezes, so sentences keep pinning ids and an unresolvable name denies.
+    - A rule that pins team refuses a request that named no scope; absent is not a value.
     - Deploy content is execute-time and unbound; approval is content-blind by design.
     - A deployment URL is public until the deployment is deleted, so review it after publication.
     - target is sentence-adjudicated; a bare allow of this verb includes production deploys.

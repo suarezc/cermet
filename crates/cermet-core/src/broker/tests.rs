@@ -6592,8 +6592,10 @@ fn gitnative_an_ordinary_http_verb_is_still_requestable() {
 // (adversaries T1/T2 on the predicate, T3 on the handle)
 // ---------------------------------------------------------------------------
 
+/// The default relay fixture is the UNSCOPED deploy: `team` is optional, this request names no
+/// Vercel scope, and the rule does not demand one. The scoped shape has its own fixtures below.
 const RELAY_ALLOW: &str =
-    "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"personal\"";
+    "allow vercel.deploy where project = \"website\" and target = \"preview\"";
 /// The vaulted credential in these tests. Every assertion that it never reaches a client-facing
 /// surface keys on this exact string.
 const RELAY_TOKEN: &str = "vercel_tok_NEVER_IN_A_CLIENT_RESPONSE";
@@ -6705,7 +6707,24 @@ fn relay_request(project: &str) -> CapabilityRequest {
     CapabilityRequest {
         provider: "vercel".into(),
         action: "deploy".into(),
-        resource: json!({ "project": project, "target": "preview", "team": "personal" }),
+        resource: json!({ "project": project, "target": "preview" }),
+        environment: None,
+        justification: None,
+        model: None,
+    }
+}
+
+/// The SCOPED shape of the same fixture: the request names a Vercel scope by its canonical
+/// `team_…` id (so nothing is resolved), and the rule pins that scope. This is what makes the
+/// per-hop `query.teamId` bind live.
+const RELAY_ALLOW_SCOPED: &str =
+    "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"";
+
+fn relay_request_scoped(project: &str, team: &str) -> CapabilityRequest {
+    CapabilityRequest {
+        provider: "vercel".into(),
+        action: "deploy".into(),
+        resource: json!({ "project": project, "target": "preview", "team": team }),
         environment: None,
         justification: None,
         model: None,
@@ -6714,8 +6733,12 @@ fn relay_request(project: &str) -> CapabilityRequest {
 
 /// Request -> allow -> execute, returning the minted relay handle and the execute receipt.
 fn open_relay(broker: &Broker, project: &str) -> (String, ExecutionResult) {
+    open_relay_for(broker, relay_request(project))
+}
+
+fn open_relay_for(broker: &Broker, request: CapabilityRequest) -> (String, ExecutionResult) {
     let outcome = broker
-        .request_capability("s1", relay_request(project))
+        .request_capability("s1", request)
         .expect("the allow admits the request");
     let result = broker
         .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
@@ -6776,7 +6799,7 @@ fn the_invocation_names_the_frozen_project_so_the_cli_never_guesses() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"cermet-site\" and target = \"preview\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"cermet-site\" and target = \"preview\"",
     );
     let (handle, result) = open_relay(&broker, "cermet-site");
 
@@ -6798,7 +6821,7 @@ fn a_production_target_renders_prod_in_the_invocation() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"cermet-site\" and target = \"production\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"cermet-site\" and target = \"production\"",
     );
     let outcome = broker
         .request_capability(
@@ -6806,7 +6829,7 @@ fn a_production_target_renders_prod_in_the_invocation() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "cermet-site", "target": "production", "team": "personal" }),
+                resource: json!({ "project": "cermet-site", "target": "production" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -6863,7 +6886,7 @@ fn a_shell_meaningful_project_is_quoted_in_the_invocation() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"site; touch /tmp/pwned\" and target = \"preview\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"site; touch /tmp/pwned\" and target = \"preview\"",
     );
     let (_, result) = open_relay(&broker, "site; touch /tmp/pwned");
 
@@ -7250,12 +7273,12 @@ fn a_production_target_is_refused_without_the_credential_and_burns_the_grant() {
 #[test]
 fn a_teamid_outside_the_frozen_scope_never_reaches_the_credentialed_hop() {
     let (base, rx, _server) = relay_upstream(vec![]);
-    let broker = relay_broker(&base);
-    let (handle, _) = open_relay(&broker, "website");
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
 
-    // The approval froze `team = personal`, whose bind means "no teamId at all". T1: injected
-    // "deploy it into the other team" — and Vercel auto-creates a project on an unknown name, so
-    // this is mint-and-deploy anywhere the vaulted token reaches.
+    // The approval froze `team = team_ours`. T1: injected "deploy it into the other team" — and
+    // Vercel auto-creates a project on an unknown name, so this is mint-and-deploy anywhere the
+    // vaulted token reaches.
     let refused = broker
         .relay_hop(
             &handle,
@@ -7299,7 +7322,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "preview" }),
+                resource: json!({ "project": "website" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -7313,12 +7336,16 @@ fn a_request_missing_a_required_field_is_told_which_one() {
         .as_deref()
         .expect("an invalid-request deny names the caller's next move");
     assert!(
-        hint.contains("team"),
+        hint.contains("target"),
         "the hint must name the missing field: {hint}"
     );
     assert!(
-        !hint.contains("project") && !hint.contains("target"),
+        !hint.contains("project"),
         "only the MISSING fields are named — the supplied ones were fine: {hint}"
+    );
+    assert!(
+        !hint.contains("team"),
+        "an OPTIONAL field is not missing when it is omitted, so it is never named here: {hint}"
     );
 
     // Two missing fields are both named, and a request that is invalid for some OTHER reason keeps
@@ -7329,7 +7356,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website" }),
+                resource: json!({}),
                 environment: None,
                 justification: None,
                 model: None,
@@ -7338,7 +7365,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
         .expect("a decision");
     let hint = outcome.hint.as_deref().unwrap_or_default();
     assert!(
-        hint.contains("target") && hint.contains("team"),
+        hint.contains("target") && hint.contains("project"),
         "both missing fields are named: {hint}"
     );
     let outcome = broker
@@ -7362,65 +7389,97 @@ fn a_request_missing_a_required_field_is_told_which_one() {
     );
 }
 
-/// The request layer's half of the same invariant: `team` is a REQUIRED identity field, so a request
-/// that names no scope has no frozen value to enforce against and never becomes a grant — fail
-/// closed by construction. Named, it FREEZES onto the session and only the in-scope hop forwards.
+/// The request layer's half of the scope story, both directions.
+///
+/// `team` is OPTIONAL. A request that names no scope is admitted by a rule that does not demand one,
+/// its `teamId` binds enforce nothing, and the hop record's own target is the only account of the
+/// scope the native CLI actually used. A request that DOES name a scope freezes it, and only the
+/// in-scope hop forwards.
 #[test]
-fn a_relay_request_that_names_no_team_never_becomes_a_grant() {
-    let (base, _rx, _server) = relay_upstream(vec![]);
-    let broker = relay_broker(&base);
-    let outcome = broker.request_capability(
-        "s1",
-        CapabilityRequest {
-            provider: "vercel".into(),
-            action: "deploy".into(),
-            resource: json!({ "project": "website", "target": "preview" }),
-            environment: None,
-            justification: None,
-            model: None,
-        },
-    );
-    match outcome {
-        Err(_) => {}
-        Ok(outcome) => {
-            assert_ne!(
-                outcome.decision,
-                Decision::Allow,
-                "a request naming no scope must not be allowed"
-            );
-            assert!(outcome.grant_id.is_none());
-        }
-    }
-    assert_eq!(broker.live_relay_sessions(), 0);
-
+fn an_unnamed_scope_deploys_under_a_rule_that_demands_none() {
     let (base, rx, _server) = relay_upstream(vec![(
         200,
         r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
     )]);
-    let broker = relay_broker_with_allow(
-        &base,
-        "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
-    );
-    let outcome = broker
-        .request_capability(
-            "s1",
-            CapabilityRequest {
-                provider: "vercel".into(),
-                action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "preview", "team": "team_ours" }),
-                environment: None,
-                justification: None,
-                model: None,
-            },
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+
+    // The CLI's own workspace configuration selected this scope; nothing was approved about it, so
+    // nothing is enforced about it.
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_whatever",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
         )
-        .expect("the allow admits the scoped request");
-    let result = broker
-        .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
-        .expect("executing a relay verb opens its session");
-    let handle = result.result["relay"]["handle"]
-        .as_str()
-        .expect("the receipt names the handle")
-        .to_string();
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(
+        rx.try_recv().is_ok(),
+        "an unpinned scope is forwarded, credentialed, like any other admitted hop"
+    );
+    assert!(
+        audit_events_of_type(&broker, "relay_request_refused").is_empty(),
+        "nothing was refused"
+    );
+
+    // ...and the hop RECORD carries the full target, query string included — the only record of
+    // which scope the deploy actually landed in.
+    let hops = audit_events_of_type(&broker, "relay_request_forwarded");
+    assert!(
+        hops.iter().any(|hop| hop["target"]
+            .as_str()
+            .is_some_and(|t| t.contains("teamId=team_whatever"))),
+        "the observed scope lives in the hop record: {hops:?}"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The sentence keeps its grip on scope: a rule that PINS `team` refuses a request that named none.
+/// Absent is not a value, so the pin is not silently satisfied — the deny is typed and names the
+/// field the failing rule constrained.
+#[test]
+fn a_rule_that_pins_the_scope_refuses_a_request_that_named_none() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .expect("the request is decided");
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(outcome.grant_id.is_none());
+    assert_eq!(broker.live_relay_sessions(), 0);
+
+    let row = broker
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.request_id.as_deref() == Some(outcome.request_id.as_str()))
+        .expect("the deny is in history");
+    // The typed reason is `missing_required_field`, naming `team`: a conjunct pinning a field the
+    // request left ABSENT refuses on the absence, before any value comparison happens.
+    let deny = row.deny_reason.expect("a typed deny reason");
+    assert!(
+        matches!(&deny, crate::sentence::DenyReason::MissingField { field, .. } if field == "team"),
+        "the deny names the field the rule pinned and the request left absent: {deny:?}"
+    );
+    assert!(
+        outcome.reason.contains("team"),
+        "and the prose says so too: {}",
+        outcome.reason
+    );
+}
+
+/// A NAMED scope still freezes onto the session, and only the in-scope hop forwards.
+#[test]
+fn a_named_scope_freezes_and_only_the_in_scope_hop_forwards() {
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
     let forwarded = broker
         .relay_hop(
             &handle,
@@ -7622,7 +7681,7 @@ fn a_production_target_is_adjudicated_by_the_sentence_not_the_template() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "production", "team": "personal" }),
+                resource: json!({ "project": "website", "target": "production" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -9236,37 +9295,209 @@ fn a_team_slug_resolves_to_the_id_the_sentence_pins() {
     assert!(broker.verify_integrity().unwrap().verified);
 }
 
-/// The other half of the ruling: a request that already names the canonical form is the request it
-/// always was — no provider hop, no receipt, nothing to go wrong.
+/// `team` has NO reserved literals. Every value that is not a `team_…` id is a NAME to resolve, and
+/// `personal` is one of those names like any other: nothing short-circuits on the word, so it walks
+/// the same resolution path, finds no such team, and denies typed and audited. The way to deploy
+/// without naming a scope is to OMIT the field — there is no spelling that means "no scope", and
+/// nothing on this path teaches one.
 #[test]
-fn a_canonical_team_passes_through_without_a_single_provider_hop() {
-    for (team, allow) in [
+fn the_word_personal_is_just_a_name_that_resolves_to_nothing() {
+    let (base, rx, _server) = relay_upstream(vec![(200, TEAM_LISTING)]);
+    let broker = relay_broker_with_allow(
+        &base,
+        "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
+    );
+
+    let outcome = broker
+        .request_capability("s1", deploy_request("personal"))
+        .expect("the request is decided");
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(outcome.grant_id.is_none());
+
+    // It took the resolution path like any other name — one credentialed listing read, then a miss.
+    let listing_hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(listing_hop.starts_with("GET /v2/teams?limit=100 "));
+
+    assert!(
+        outcome.reason.contains("team") && outcome.reason.contains("provider_not_found"),
+        "the agent is told which field failed and how: {}",
+        outcome.reason
+    );
+    // Nothing anywhere teaches a sentinel: the way to deploy without naming a scope is to OMIT the
+    // field, which the reason's own advice ("supply the identifier itself, or a name this connection
+    // reaches") does not contradict.
+    assert!(
+        !outcome.reason.contains("omit") && !outcome.reason.contains("absent"),
+        "the refusal describes no reserved spelling: {}",
+        outcome.reason
+    );
+    let failures = audit_events_of_type(&broker, "request_field_canonicalization_failed");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["supplied"], json!("personal"));
+    assert_eq!(failures[0]["failure_class"], json!("provider_not_found"));
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The scope a request DID name is still enforced verbatim per hop, now that the field is optional:
+/// a create pointed at another team is refused before the credential is attached, and the grant is
+/// burned. Optionality relaxes the ABSENT case only; it never loosens a named one.
+#[test]
+fn a_named_scope_is_still_enforced_verbatim_on_every_hop() {
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(refused.status, 422);
+    assert!(
+        rx.try_recv().is_err(),
+        "a redirected scope never reaches the credentialed hop"
+    );
+    assert_eq!(broker.live_relay_sessions(), 0, "the grant is burned");
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+
+    // ...and the honest in-scope create on a FRESH session forwards.
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(rx.try_recv().is_ok());
+}
+
+/// The fourth corner of the scope 2x2: the rule is SILENT on `team` and the request NAMES one.
+///
+/// Silence in the rule is about ADMISSION — it declines to constrain which scope may be asked for.
+/// It is not a decision to stop enforcing: the value the request named still freezes on the grant,
+/// and the per-hop bind still holds it verbatim. What relaxes the bind is the field freezing as
+/// ABSENCE, which only an omitting REQUEST can do; no rule can do it on the request's behalf.
+#[test]
+fn a_named_scope_binds_even_when_the_rule_never_mentioned_it() {
+    // Unscoped rule (`RELAY_ALLOW`), scoped request.
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let outcome = broker
+        .request_capability("s1", relay_request_scoped("website", "team_ours"))
+        .expect("a rule that does not mention team admits whatever the request names");
+    assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
+
+    // The named scope froze, unmentioned by any sentence.
+    let grant = broker
+        .load_grant(outcome.grant_id.as_deref().expect("an allowed grant"))
+        .unwrap();
+    assert_eq!(
+        grant.resource_json,
+        r#"{"project":"website","target":"preview","team":"team_ours"}"#
+    );
+
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
+        .expect("executing a relay verb opens its session");
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .expect("the receipt names the handle")
+        .to_string();
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(
+        refused.status, 422,
+        "the bind holds on what the REQUEST froze, whatever the rule did or did not say"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a redirected scope never reaches the credentialed hop"
+    );
+    assert_eq!(broker.live_relay_sessions(), 0, "the grant is burned");
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+
+    // ...and the create in the scope the request named forwards, on a fresh session.
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(rx.try_recv().is_ok());
+}
+
+/// The two shapes that cost NO credential: a request that already names the canonical `team_…` id
+/// (nothing to respell), and a request that names no scope at all (nothing to respell either —
+/// absence reads the same in every dialect). Both are the request they always were: no vault open,
+/// no provider hop, no resolution receipt.
+#[test]
+fn a_canonical_or_absent_team_passes_through_without_a_single_provider_hop() {
+    for (team, allow, frozen) in [
         (
-            "team_ours",
+            Some("team_ours"),
             "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
+            r#"{"project":"website","target":"preview","team":"team_ours"}"#,
         ),
         (
-            "personal",
-            "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"personal\"",
+            None,
+            "allow vercel.deploy where project = \"website\" and target = \"preview\"",
+            r#"{"project":"website","target":"preview"}"#,
         ),
     ] {
         let (base, rx, _server) = relay_upstream(vec![]);
         let broker = relay_broker_with_allow(&base, allow);
+        let request = match team {
+            Some(team) => deploy_request(team),
+            None => relay_request("website"),
+        };
         let outcome = broker
-            .request_capability("s1", deploy_request(team))
+            .request_capability("s1", request)
             .expect("the request is decided");
         assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
         let grant = broker
             .load_grant(outcome.grant_id.as_deref().expect("an allowed grant"))
             .unwrap();
         assert_eq!(
-            grant.resource_json,
-            format!(r#"{{"project":"website","target":"preview","team":"{team}"}}"#),
-            "a canonical value freezes verbatim"
+            grant.resource_json, frozen,
+            "a canonical value freezes verbatim, and an omitted field freezes as absence"
         );
         assert!(
             rx.try_recv().is_err(),
-            "`{team}` needs no resolution, so nothing is read"
+            "`{team:?}` needs no resolution, so nothing is read"
         );
         assert!(
             audit_events_of_type(&broker, "request_field_canonicalized").is_empty(),

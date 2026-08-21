@@ -397,7 +397,7 @@ Or drive one verb directly. The verb is **dotted**, spelled exactly as the corpu
 
 ```bash
 cermet run stripe.get_charge --resource '{"charge":"ch_..."}'
-cermet run vercel.deploy --resource '{"project":"your-site","target":"preview","team":"personal"}'
+cermet run vercel.deploy --resource '{"project":"your-site","target":"preview"}'
 ```
 
 A successful run prints one JSON receipt on stdout and exits `0`. Same envelope for every verb —
@@ -436,7 +436,7 @@ carries its signature and the sentence that admits it:
 ```
 allowed now (22 verbs) — a standing sentence admits each of these; request it directly.
   stripe.get_charge(charge:str) [http_api_call] — allowed by: allow stripe.get_charge
-  vercel.deploy(project:str, target:str, team:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" and team = "personal" | ...
+  vercel.deploy(project:str, target:str, team?:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" | ...
 ```
 
 `?` marks an optional field; provider-resolved fields are omitted because the broker fills them.
@@ -444,13 +444,17 @@ allowed now (22 verbs) — a standing sentence admits each of these; request it 
 
 Two prerequisites worth knowing up front:
 
-- **`vercel.deploy` names a Vercel scope.** `team` is a required REQUEST field: use `personal` for
-  a personal account, or the team id (`team_…`) the deploy must land in. Whatever the request names
-  is frozen for the whole session and pins the `?teamId=` the CLI stamps on every scoped call, so
-  the deploy cannot wander into another scope mid-session. **Pinning WHICH scope is the sentence's
-  job, exactly like `target`**: a rule that spells `and team = personal` admits only that scope,
-  while a rule that does not mention `team` leaves the choice to the requester — any scope the
-  connected token can reach. Unmentioned means unconstrained, uniformly, for every field.
+- **`vercel.deploy` can name a Vercel scope, and usually does not need to.** `team` is an
+  OPTIONAL request field. Omit it and the deploy simply lands wherever your Vercel CLI is already
+  configured to deploy — nothing about the scope is pinned, and the scope each hop actually used is
+  recorded on the relay hops (`cermet log --hops`). Name it — by team id (`team_…`) or by the team
+  slug your Vercel dashboard shows — and that scope is frozen for the whole session and pins the
+  `?teamId=` the CLI stamps on every scoped call, so the deploy cannot wander into another scope
+  mid-session. A slug is resolved to its id once, inside the daemon, before the sentence judges the
+  request; a name your connection does not reach denies. **Pinning WHICH scope is the sentence's
+  job, exactly like `target`**: a rule that spells `and team = "team_…"` admits only that scope and
+  refuses a request that named none, while a rule that does not mention `team` leaves the choice to
+  the requester. Unmentioned means unconstrained, uniformly, for every field.
 - **`vercel.deploy` is a relay verb** — it prints the exact `vercel deploy` invocation to run, so
   the **Vercel CLI must be on PATH**. `cermet check` flags this: *"'vercel' not found on PATH — a
   relay invocation will fail as written."*
@@ -484,7 +488,7 @@ widen it — for **you** to apply, never the agent. Approvals are human-only; no
 ever exposed on the agent surface.
 
 ```bash
-cermet run vercel.deploy --resource '{"project":"not-my-site","target":"preview","team":"personal"}' --ask-only
+cermet run vercel.deploy --resource '{"project":"not-my-site","target":"preview"}' --ask-only
 ```
 
 ```json
