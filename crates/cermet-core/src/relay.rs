@@ -390,8 +390,11 @@ pub struct RelaySession {
     /// authority change closes the session rather than letting a revoked allow keep deploying.
     pub policy_fingerprint: String,
     predicate: Vec<PredicateRule>,
-    /// The frozen str fields the predicate binds, by name.
-    frozen: BTreeMap<String, String>,
+    /// The frozen str fields the predicate binds, by name. `None` is the third state a bind has to
+    /// distinguish: the field is declared OPTIONAL and this request OMITTED it, so it froze as
+    /// ABSENCE and its binds constrain nothing. A name MISSING from the map is not that — it is a
+    /// state a validated template cannot produce, and every read of it fails closed.
+    frozen: BTreeMap<String, Option<String>>,
     /// What this session DERIVED from its own effect's response, by capture name. It is a
     /// second map, not more entries in `frozen`, because the two have different authorities: `frozen`
     /// is what a human approved, `captured` is what the approved effect then produced. Write-once —
@@ -461,7 +464,7 @@ impl RelaySession {
         action: String,
         policy_fingerprint: String,
         predicate: Vec<PredicateRule>,
-        frozen: BTreeMap<String, String>,
+        frozen: BTreeMap<String, Option<String>>,
         opened_at: i64,
         ttl_secs: u64,
     ) -> Self {
@@ -609,9 +612,13 @@ impl RelaySession {
         key: &str,
         object: &serde_json::Map<String, Value>,
     ) -> bool {
-        let Some(frozen) = self.frozen.get(&bind.field) else {
-            // Unreachable for a validated template (a bound field is required), and fail closed.
-            return false;
+        let frozen = match self.frozen.get(&bind.field) {
+            Some(Some(frozen)) => frozen,
+            // The field froze as ABSENCE — declared optional, omitted by the request — so this bind
+            // constrains nothing: any value, or none, passes.
+            Some(None) => return true,
+            // Missing from the map: unreachable for a validated template, and fail closed.
+            None => return false,
         };
         let present = object.get(key);
         match &bind.absent_when {
@@ -624,17 +631,22 @@ impl RelaySession {
 
     /// Does one QUERY bind hold? Same shape as the body form on the other authority-bearing
     /// wire position — Vercel's `teamId` names the account SCOPE a request lands in, and an approval
-    /// that froze one team never authorizes a hop into another. The `omit:` literal is the
-    /// personal-scope case: a personal token sends no `teamId` at all, so the key must be ABSENT.
+    /// that froze one team never authorizes a hop into another. An approval that froze NO team —
+    /// the field is optional and the request named no scope — constrains the key not at all, and
+    /// the hop record's own target is then the only account of the scope used.
     ///
     /// The value is compared RAW. CLI 58.4.4 sends a bare Vercel team id (`team_XXXX`, in
     /// `[A-Za-z0-9_]`), which percent-encoding never touches, so no decoder is built for a shape no
     /// client sends — an encoded value simply is not the frozen one and fails closed. A REPEATED key
     /// is ambiguous about which value the upstream would honor, and fails closed for the same reason.
     fn query_bind_holds(&self, bind: &RelayBind, key: &str, query: &[QueryPair]) -> bool {
-        let Some(frozen) = self.frozen.get(&bind.field) else {
-            // Unreachable for a validated template (a bound field is required), and fail closed.
-            return false;
+        let frozen = match self.frozen.get(&bind.field) {
+            Some(Some(frozen)) => frozen,
+            // Froze as ABSENCE: the key rides free, repeats and all. Key closure still applies —
+            // an unratified parameter never reaches this check.
+            Some(None) => return true,
+            // Missing from the map: unreachable for a validated template, and fail closed.
+            None => return false,
         };
         let mut present = query.iter().filter(|(name, _)| *name == key);
         let first = present.next();
@@ -783,10 +795,11 @@ impl RelaySession {
         // The assertion, before the capture — a session whose outcome disagrees with its
         // approval is done, and has no business capturing anything to poll with.
         for assertion in asserts {
-            // Unreachable for a validated template: an asserted field is required, and
-            // `open_relay_session` freezes every one. Skipping it loses DETECTION only — it grants
-            // nothing — so there is no reason to burn a live session over an impossible state.
-            let Some(frozen) = self.frozen.get(&assertion.field) else {
+            // Unreachable for a validated template: an asserted field is REQUIRED (unlike a bound
+            // one, which may be optional), and `open_relay_session` freezes every one. Skipping it
+            // loses DETECTION only — it grants nothing — so there is no reason to burn a live
+            // session over an impossible state.
+            let Some(Some(frozen)) = self.frozen.get(&assertion.field) else {
                 continue;
             };
             let observed = string(&assertion.key);

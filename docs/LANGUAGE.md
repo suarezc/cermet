@@ -981,7 +981,9 @@ predicate:
     bind:
       body.name: project               # a body key must equal this frozen field
       body.target: "target|omit:preview"   # ...or, at this frozen value, be ABSENT
-      query.teamId: "team|omit:personal"   # a query VALUE must equal this frozen field
+      query.teamId: team                 # a query VALUE must equal this frozen field
+                                         # (…and constrains nothing when the field is optional
+                                         #  and the request omitted it)
     capture:
       deployment_id: id                # session state DERIVED from this effect's own 2xx response
     assert:

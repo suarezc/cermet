@@ -132,7 +132,7 @@ credential nor a reusable signing/execution oracle.
 > A relay verb's allowlists (`query_keys`, `body_keys`) admit KEYS; authority lives in their
 > VALUES. Admitting a key is therefore only half a ratification: the same change must classify
 > what its value can do — either the value is **bound** to a frozen field (`bind: query.teamId:
-> "team|omit:personal"`), or it is declared **authority-free** in the ratified document's own
+> team`), or it is declared **authority-free** in the ratified document's own
 > comment, with the reason. There is no third state, and "the key is in the allowlist" is not one.
 > The defect this closes: `teamId` was widened onto every `vercel.deploy` shape (a team
 > account's CLI stamps it on every call), the matcher checked only key MEMBERSHIP, and the

@@ -1,8 +1,6 @@
 //! Keyless provider facts used while authoring sentence rules.
 
-use std::collections::HashSet;
 use std::io::Read;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
@@ -138,17 +136,6 @@ pub fn product_availability(provider: &str, _action: &str) -> ProductAvailabilit
         return ProductAvailability::Enabled;
     }
     ProductAvailability::ProviderDisabled
-}
-
-/// Names of providers whose shipped descriptors pin an egress origin.
-pub fn vendored_provider_names() -> &'static HashSet<String> {
-    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
-    NAMES.get_or_init(|| {
-        ["github", "vercel", "stripe"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    })
 }
 
 /// Authoring-only Stripe customer-name lookup. This is a narrow read adapter, not the broker's

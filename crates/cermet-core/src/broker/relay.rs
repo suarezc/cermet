@@ -323,13 +323,26 @@ impl super::Broker {
         }
         // Freeze the bound fields' approved values onto the session. Only str fields are bindable, so
         // this is the whole comparable surface.
-        let mut frozen: BTreeMap<String, String> = BTreeMap::new();
+        //
+        // A BOUND field may be declared optional, and a request that omitted one froze it as
+        // ABSENCE: it enters the map as `None`, and its binds then constrain nothing per hop. The
+        // absence is read, never guessed — canonicalization refuses a resource missing a REQUIRED
+        // declared field long before this point, so a field absent here is one the template declared
+        // optional. (An ASSERTED field is still required by the template validator, so the same read
+        // can only produce `Some` for those.)
+        let mut frozen: BTreeMap<String, Option<String>> = BTreeMap::new();
+        let freeze = |field: &str| -> Result<Option<String>> {
+            match resource.scalar(field) {
+                None => Ok(None),
+                Some(_) => Ok(Some(resource.req_str(field)?.to_string())),
+            }
+        };
         for rule in &predicate {
             // An outcome assertion compares the same frozen fields the request binds, so
             // both are frozen here — the assertion may name a field no request location binds.
             for assertion in rule.asserts() {
-                let value = resource.req_str(&assertion.field)?;
-                frozen.insert(assertion.field, value.to_string());
+                let value = freeze(&assertion.field)?;
+                frozen.insert(assertion.field, value);
             }
             for bind in rule.binds() {
                 // A path bind reads what the session CAPTURES from its own effect, not
@@ -337,8 +350,8 @@ impl super::Broker {
                 if bind.captured_name().is_some() {
                     continue;
                 }
-                let value = resource.req_str(&bind.field)?;
-                frozen.insert(bind.field.clone(), value.to_string());
+                let value = freeze(&bind.field)?;
+                frozen.insert(bind.field.clone(), value);
             }
         }
         // The invocation below NAMES the frozen project. Left unnamed, the CLI guesses it
@@ -347,14 +360,16 @@ impl super::Broker {
         // deploy is ever attempted. The value is read out of `frozen`, which IS the map the per-hop
         // bind compares against, so the flag and the enforcement can never disagree; a verb whose
         // predicate binds no project has nothing enforceable to name, and fails closed here.
-        let project_arg = shell_arg(frozen.get("project").ok_or_else(|| {
-            Error::Provider(
-                "a relay verb must bind `project`: the invocation names the frozen project so the \
-                 native CLI never guesses one from the directory name"
-                    .into(),
-            )
-        })?);
-        let prod_flag = match frozen.get("target").map(String::as_str) {
+        let project_arg = shell_arg(frozen.get("project").and_then(Option::as_ref).ok_or_else(
+            || {
+                Error::Provider(
+                    "a relay verb must bind `project`: the invocation names the frozen project so \
+                     the native CLI never guesses one from the directory name"
+                        .into(),
+                )
+            },
+        )?);
+        let prod_flag = match frozen.get("target").and_then(Option::as_deref) {
             Some("production") => " --prod",
             _ => "",
         };
