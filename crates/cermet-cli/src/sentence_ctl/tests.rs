@@ -483,7 +483,7 @@ fn lost_response_allow_and_numbered_revoke_retry_only_the_exact_commit_without_p
     for expected in [
         "live: sha256:",
         "occurrence_id:",
-        "document_sync: unavailable",
+        "document_sync: document state not observed",
     ] {
         assert!(added.text.contains(expected), "{}", added.text);
     }
@@ -495,7 +495,9 @@ fn lost_response_allow_and_numbered_revoke_retry_only_the_exact_commit_without_p
     *backend.commit_transport_losses.lock().unwrap() = 1;
     let revoked = run_revoke(&custody, &ConfirmingTerminal, 1, false).expect("run_revoke succeeds");
     assert!(
-        revoked.text.contains("document_sync: unavailable"),
+        revoked
+            .text
+            .contains("document_sync: document state not observed"),
         "{}",
         revoked.text
     );
@@ -580,7 +582,9 @@ fn run_refresh_preserves_set_history_and_reports_unexported_live_without_touchin
         refreshed.text
     );
     assert!(
-        refreshed.text.contains("document_sync: unavailable"),
+        refreshed
+            .text
+            .contains("document_sync: document state not observed"),
         "{}",
         refreshed.text
     );

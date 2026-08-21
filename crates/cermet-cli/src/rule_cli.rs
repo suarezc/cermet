@@ -535,7 +535,7 @@ fn render_mutation_receipt(receipt: &crate::sentence_custody::CorpusMutationRece
     let document_sync = match receipt.document_sync {
         CorpusDocumentSync::State(state) => state,
         CorpusDocumentSync::Required => "required",
-        CorpusDocumentSync::Unavailable => "unavailable",
+        CorpusDocumentSync::Unavailable(reason) => reason,
     };
     let mut output = match receipt.state {
         CorpusMutationReceiptState::Known => format!(

@@ -473,7 +473,7 @@ fn mutation_document_sync_receipts_reuse_the_formal_repository_drift_model() {
             &tempfile::tempdir().unwrap().path().join("not-a-repository"),
             Some(&served(live)),
         ),
-        CorpusDocumentSync::Unavailable
+        CorpusDocumentSync::Unavailable("no CERMET.md found from this directory")
     );
     assert_eq!(
         observe_mutation_document_sync(&FakeClient::new(Vec::new()), stale.path(), None),

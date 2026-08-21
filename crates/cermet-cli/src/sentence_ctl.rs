@@ -230,7 +230,7 @@ impl SentenceCustody for StagedSentenceCustody {
             .as_ref()
             .map(|observer| observer.observe(final_status.as_ref()))
             .unwrap_or(CorpusDocumentObservation {
-                sync: CorpusDocumentSync::Unavailable,
+                sync: CorpusDocumentSync::Unavailable("document state not observed"),
                 status: final_status.clone(),
             });
         final_status = document_observation.status;

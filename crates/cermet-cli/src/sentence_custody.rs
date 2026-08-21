@@ -91,7 +91,7 @@ pub enum CorpusMutationReceiptState {
 pub enum CorpusDocumentSync {
     State(&'static str),
     Required,
-    Unavailable,
+    Unavailable(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

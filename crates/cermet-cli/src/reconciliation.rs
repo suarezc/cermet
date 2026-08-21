@@ -402,7 +402,7 @@ pub fn observe_mutation_document(
     };
     let Ok(store) = DocumentStore::discover(start) else {
         return CorpusDocumentObservation {
-            sync: CorpusDocumentSync::Unavailable,
+            sync: CorpusDocumentSync::Unavailable("no CERMET.md found from this directory"),
             status: client.authority_status().ok(),
         };
     };
@@ -411,7 +411,7 @@ pub fn observe_mutation_document(
     let current_status = client.authority_status().ok();
     if matches!(document, DocumentView::Unavailable) {
         return CorpusDocumentObservation {
-            sync: CorpusDocumentSync::Unavailable,
+            sync: CorpusDocumentSync::Unavailable("sentence dataplane unavailable"),
             status: current_status,
         };
     }
