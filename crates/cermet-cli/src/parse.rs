@@ -1,7 +1,7 @@
 //! Operator CLI argument parsing: the top-level `parse` dispatcher plus the per-command
 //! flag/positional helpers and the shared `USAGE` banner. Pure (no I/O); unit-tested via `tests.rs`.
 //!
-//! The surface is thirteen commands. Two of them are nouns — `rules` and `doc` —
+//! The surface is fifteen commands. Two of them are nouns — `rules` and `doc` —
 //! because their subcommands are the same three or five operations on one thing, and one of
 //! them, `run`, is the fusion of the old `request` + `execute`: an operator who is allowed to do
 //! a thing does not then need a second command's permission to do it. `catalog` is the one an
@@ -36,6 +36,7 @@ AGENT WORK — capability requests and their receipts:
     artifact <handle> [--range <unit>:<start>[-<end>] | --path '$.a.b']
     audit-verify                                   (check the audit hash-chain)
     check [<provider>]                             (read-only plumbing checklist: all, or one provider)
+    journal [on|off]                               (this CLI's own record of what it printed, per run)
 
 AUTHORITY — human-only, presence-gated:
     rules                                          (numbered canonical rule list)
@@ -198,6 +199,23 @@ update --apply <sha256>  |  update --apply-deb <path> --sha256 <hex>
     The two privileged halves `update` re-execs itself as through sudo, one per channel. Each
     re-verifies the staged bytes against that digest before installing them. Not for hand use.";
 
+const JOURNAL_USAGE: &str = "\
+journal
+    What the output journal is doing: on or off, the file it writes, how big that file is now, and
+    the two bounds it enforces. Every `cermet` command appends ONE JSON line to that file: when it
+    ran, its arguments, the directory it ran in, its exit code, how long it took, and the first
+    4096 bytes of what it PRINTED. Output past that is counted in a `truncated` field, not stored —
+    long renders (`log`, `catalog`) re-read stores that already exist durably, while the output that
+    exists nowhere else (a ceremony's review text, a refusal, a status line) is short and always
+    fits. The file rotates whole at 32 MiB, keeping one previous generation as `journal.jsonl.1`.
+    Nothing you TYPE is recorded — the capture is of output only, so the no-echo token prompt in
+    `cermet connect` cannot appear in it. It stays on this machine and is sent nowhere.
+    READING it is not a cermet command: it is a plain JSONL file, and this prints its path so you
+    can `tail`, `grep` or `jq` it with your own tools. For the BROKER's record of what was decided,
+    use `cermet log` and `cermet audit-verify` — those are the receipts; this is a convenience.
+journal on|off
+    The switch, kept in your own settings file (~/.config/cermet/config.toml). Default: on.";
+
 const MCP_USAGE: &str = "\
 mcp
     Run the keyless MCP stdio server agents speak. Takes no arguments.
@@ -222,6 +240,7 @@ fn command_usage(command: &str) -> Option<&'static str> {
         "audit-verify" => AUDIT_VERIFY_USAGE,
         "check" => CHECK_USAGE,
         "catalog" => CATALOG_USAGE,
+        "journal" => JOURNAL_USAGE,
         "rules" => RULES_USAGE,
         "doc" => DOC_USAGE,
         "preset" => PRESET_USAGE,
@@ -305,6 +324,7 @@ pub fn parse(args: &[String]) -> Result<CliCommand, CliError> {
         }
         "check" => parse_check(rest),
         "catalog" => parse_catalog(rest),
+        "journal" => parse_journal(rest),
         "rules" => parse_rules(rest),
         "doc" => parse_doc(rest),
         "preset" => parse_preset(rest),
@@ -528,6 +548,23 @@ fn parse_catalog(args: &[String]) -> Result<CliCommand, CliError> {
         [] => Ok(CliCommand::Catalog { all: false }),
         ["--all"] => Ok(CliCommand::Catalog { all: true }),
         _ => Err(CliError::Usage(CATALOG_USAGE.into())),
+    }
+}
+
+/// `journal` — the status, or the switch. There is no read form: the journal is a plain file, and
+/// the status prints its path so the reader's own tools can open it.
+fn parse_journal(args: &[String]) -> Result<CliCommand, CliError> {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => Ok(CliCommand::Journal { enabled: None }),
+        [switch] => Ok(CliCommand::Journal {
+            enabled: Some(parse_switch(switch, "journal")?),
+        }),
+        _ => Err(CliError::Usage(JOURNAL_USAGE.into())),
     }
 }
 

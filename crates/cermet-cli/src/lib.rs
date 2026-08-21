@@ -25,6 +25,8 @@ pub mod endpoint;
 /// explicit argument slice.
 pub mod entry;
 pub mod git_remote;
+/// The CLI's own output journal: one JSON line per invocation, recording what it printed.
+pub mod journal;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod owner;
@@ -168,6 +170,11 @@ pub enum CliCommand {
         /// The full dump — every row, unwindowed.
         all: bool,
     },
+    /// `cermet journal [on|off]` — the CLI's own output journal. Bare: what it is doing, where the
+    /// file is, and the bounds it enforces. `on`/`off`: the persisted switch, in the operator's own
+    /// settings file. Reading the journal is NOT a command — it is a plain JSONL file, and the
+    /// status form prints its path for exactly that reason.
+    Journal { enabled: Option<bool> },
     /// Register the `cermet mcp` stdio server (a client of cermetd) with the agent client.
     /// Driven by the binary front-end.
     McpInstall(mcp::McpInstallArgs),

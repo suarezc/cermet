@@ -26,20 +26,55 @@ use crate::{CliCommand, CliError, CliOutput};
 use cermet_ctl_client::broker_client::CtlBrokerClient;
 
 /// The operator CLI role. `args` is the invocation WITHOUT the program name.
+///
+/// Everything this invocation prints is TEE'd into the operator's output journal
+/// ([`crate::journal`]) around the whole run — the capture is at the descriptor level because most
+/// CLI output goes through plain `println!`/`eprintln!` rather than any single seam. What never
+/// journals is the `cermet mcp` stdio server: its stdout IS the agent protocol channel, and its
+/// traffic already has receipts. Capture is best effort — an invocation whose plumbing cannot be
+/// established simply runs un-journaled.
 pub fn run(args: &[String]) -> ExitCode {
+    let capture = journals(args).then(crate::journal::start).flatten();
+    let exit = run_cli(args);
+    if let Some(capture) = capture {
+        capture.finish(args, exit);
+    }
+    ExitCode::from(exit)
+}
+
+/// Does this invocation of the CLI role journal?
+///
+/// Everything does except what the MCP bridge front-end claims — decided by SHAPE, not by outcome.
+/// That is the whole rule, and it deliberately includes `cermet mcp <typo>`, which the front-end
+/// answers with a usage error rather than a protocol session: the alternative would be knowing
+/// whether a session started before deciding whether to capture its stdout. The cost is that a
+/// mistyped `mcp` subcommand goes unrecorded, which is accepted (see [`crate::journal`]).
+///
+/// Help is checked first, because `cermet mcp --help` is an operator question answered by the CLI.
+fn journals(argv: &[String]) -> bool {
+    if crate::help_text(argv).is_some() {
+        return true;
+    }
+    let (_socket, rest) = crate::mcp_bridge::split_global_flags(argv);
+    !is_mcp_bridge_command(&rest)
+}
+
+/// The role's actual work, as the exit CODE rather than an [`ExitCode`] — the journal entry records
+/// the number, and `ExitCode` does not give it back.
+fn run_cli(args: &[String]) -> u8 {
     let argv: Vec<String> = args.to_vec();
     print_update_notice(&argv);
     // Help is a FIRST-CLASS surface — stdout, exit 0. Checked ahead of the MCP bridge so
     // `cermet mcp --help` answers here rather than falling into the bridge's own argument parser.
     if let Some(help) = crate::help_text(&argv) {
         println!("{help}");
-        return ExitCode::SUCCESS;
+        return 0;
     }
     // so is `--version`, and for the same reason — it is a question about this binary,
     // answerable with no daemon, no socket, and no config.
     if let Some(version) = crate::version_text(&argv) {
         println!("{version}");
-        return ExitCode::SUCCESS;
+        return 0;
     }
     if let Some(exit) = run_mcp_bridge(&argv) {
         return exit;
@@ -54,14 +89,14 @@ pub fn run(args: &[String]) -> ExitCode {
                 return finish_reconciliation(crate::reconciliation::status_json_failure());
             }
             eprintln!("cermet: {m}");
-            return ExitCode::from(2);
+            return 2;
         }
         Err(e) => {
             if status_json {
                 return finish_reconciliation(crate::reconciliation::status_json_failure());
             }
             eprintln!("cermet: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -111,7 +146,7 @@ pub fn run(args: &[String]) -> ExitCode {
                         return finish_reconciliation(crate::reconciliation::status_json_failure());
                     }
                     eprintln!("cermet: {error}");
-                    return ExitCode::from(2);
+                    return 2;
                 }
             };
             let cwd = match std::env::current_dir() {
@@ -121,7 +156,7 @@ pub fn run(args: &[String]) -> ExitCode {
                         return finish_reconciliation(crate::reconciliation::status_json_failure());
                     }
                     eprintln!("cermet: cannot resolve the current repository path");
-                    return ExitCode::from(2);
+                    return 2;
                 }
             };
             let output = match crate::dispatch_authority_command(
@@ -136,7 +171,7 @@ pub fn run(args: &[String]) -> ExitCode {
                 Err(error) => return finish(Err(error)),
             };
             println!("{}", output.text);
-            return ExitCode::from(output.exit_code);
+            return output.exit_code;
         }
         CliCommand::McpInstall(args) => {
             // Before repointing the registered MCP server, drive the daemon-held quiesce barrier:
@@ -171,7 +206,7 @@ pub fn run(args: &[String]) -> ExitCode {
                 Ok(rt) => rt,
                 Err(e) => {
                     eprintln!("cermet: cannot start the runtime: {e}");
-                    return ExitCode::FAILURE;
+                    return 1;
                 }
             };
             return finish(rt.block_on(run_check(
@@ -194,6 +229,16 @@ pub fn run(args: &[String]) -> ExitCode {
                 *enabled,
             ))
         }
+        // `journal` reads and writes the operator's own settings file and reports on a file in the
+        // operator's own state directory. No daemon is involved in either half, and the journal
+        // must stay readable on a box whose daemon is down.
+        CliCommand::Journal { enabled } => {
+            let config = crate::settings::config_path();
+            return finish(match enabled {
+                Some(enabled) => crate::journal::run_setting(&config, *enabled),
+                None => crate::journal::run_status(&config),
+            });
+        }
         CliCommand::UpdateApply { sha256 } => return finish(crate::update::run_apply(sha256)),
         CliCommand::UpdateApplyDeb { package, sha256 } => {
             return finish(crate::update::run_apply_deb(
@@ -203,10 +248,10 @@ pub fn run(args: &[String]) -> ExitCode {
         }
         CliCommand::Setup(args) => {
             return match crate::setup::run(args) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => 0,
                 Err(error) => {
                     eprintln!("[cermet-setup] REFUSED: {error}");
-                    ExitCode::FAILURE
+                    1
                 }
             };
         }
@@ -225,7 +270,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("cermet: cannot start the runtime: {e}");
-            return ExitCode::FAILURE;
+            return 1;
         }
     };
 
@@ -370,7 +415,7 @@ pub fn run_git_remote_helper(args: &[String]) -> ExitCode {
 /// agent's whole interface, and the argv the installed sudoers rule pins), and `cermet mcp install`
 /// — handled by the operator CLI below — registers it. There is no one-shot subcommand family, so
 /// anything else under `mcp` is a usage error naming the two that exist.
-fn run_mcp_bridge(argv: &[String]) -> Option<ExitCode> {
+fn run_mcp_bridge(argv: &[String]) -> Option<u8> {
     let (socket_flag, rest) = crate::mcp_bridge::split_global_flags(argv);
     if !is_mcp_bridge_command(&rest) {
         return None;
@@ -383,15 +428,15 @@ fn run_mcp_bridge(argv: &[String]) -> Option<ExitCode> {
              cermet mcp install [--client claude|opencode]  (register it with an agent client)",
             rest[1]
         );
-        return Some(ExitCode::from(2));
+        return Some(2);
     }
 
     let socket = resolve_agent_socket(socket_flag, std::env::var_os("CERMET_AGENT_SOCK"));
     Some(match crate::mcp_bridge::server::run(socket) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("cermet mcp: {error}");
-            ExitCode::FAILURE
+            1
         }
     })
 }
@@ -444,10 +489,10 @@ fn mcp_repoint_barrier(socket_override: Option<String>) -> Option<CtlRepointBarr
 /// `CERMET_DAEMON_UID` remain dev overrides. Fails closed (a non-zero [`ExitCode`]) on a
 /// missing/ambiguous account or an unparseable uid — never guess the peer we hand a request (and, in
 /// `connect`, a token) to. Peer-uid verification at connect time is unchanged.
-fn build_client(socket_override: Option<String>) -> Result<CtlBrokerClient, ExitCode> {
+fn build_client(socket_override: Option<String>) -> Result<CtlBrokerClient, u8> {
     resolve_client(socket_override).map_err(|msg| {
         eprintln!("cermet: {msg}");
-        ExitCode::FAILURE
+        1
     })
 }
 
@@ -468,9 +513,9 @@ fn doc_status_json_requested(args: &[String]) -> bool {
         && args.iter().skip(2).any(|argument| argument == "--json")
 }
 
-fn finish_reconciliation(output: crate::reconciliation::ReconciliationOutput) -> ExitCode {
+fn finish_reconciliation(output: crate::reconciliation::ReconciliationOutput) -> u8 {
     println!("{}", output.text);
-    ExitCode::from(output.exit_code)
+    output.exit_code
 }
 
 /// Presence used by both whole-document apply and incremental sentence-corpus mutations.
@@ -489,7 +534,7 @@ fn sentence_presence() -> std::sync::Arc<dyn cermet_ctl_client::presence::Presen
     presence
 }
 
-fn finish(result: Result<CliOutput, CliError>) -> ExitCode {
+fn finish(result: Result<CliOutput, CliError>) -> u8 {
     match result {
         Ok(out) => {
             // `update --apply` succeeds having already printed setup's own receipt, so it carries
@@ -498,18 +543,18 @@ fn finish(result: Result<CliOutput, CliError>) -> ExitCode {
                 println!("{}", out.text);
             }
             if out.ok {
-                ExitCode::SUCCESS
+                0
             } else {
-                ExitCode::FAILURE
+                1
             }
         }
         Err(CliError::Usage(m)) => {
             eprintln!("cermet: {m}");
-            ExitCode::from(2)
+            2
         }
         Err(e) => {
             eprintln!("cermet: {e}");
-            ExitCode::FAILURE
+            1
         }
     }
 }

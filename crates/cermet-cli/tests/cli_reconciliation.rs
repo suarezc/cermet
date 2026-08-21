@@ -7,7 +7,7 @@ mod common;
 use common::{BrokerFixture, TEST_POLICY};
 
 fn cermet() -> Command {
-    Command::new(common::cermet_binary())
+    common::cermet_command()
 }
 
 fn assert_json_failure(output: Output) {
@@ -76,6 +76,10 @@ fn status_json_deleted_cwd_failure_emits_one_json_envelope() {
         )
         .env("BROKEN_CWD", &cwd)
         .env("CERMET_BIN", common::cermet_binary())
+        // The CLI journals what it prints under the operator's own state directory; keep this
+        // spawn — which reaches the binary through `sh`, not through `cermet_command` — out of the
+        // developer's.
+        .env("XDG_STATE_HOME", parent.path().join("state"))
         .env("CERMET_CTL_SOCK", parent.path().join("missing.sock"))
         .env(
             "CERMET_DAEMON_UID",

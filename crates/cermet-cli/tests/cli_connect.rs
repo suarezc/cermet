@@ -270,13 +270,13 @@ async fn connect_adopts_an_env_token_and_warns_about_sole_custody() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cermet_connect_stripe_binary_routes_to_the_daemon_vault() {
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let fx = BrokerFixture::new("");
     let socket = fx.sock_path().to_path_buf();
     let daemon_uid = nix::unistd::getuid().as_raw().to_string();
     let output = tokio::task::spawn_blocking(move || {
-        let mut child = Command::new(common::cermet_binary())
+        let mut child = common::cermet_command()
             .args(["connect", "stripe"])
             .env("CERMET_CTL_SOCK", socket)
             .env("CERMET_DAEMON_UID", daemon_uid)

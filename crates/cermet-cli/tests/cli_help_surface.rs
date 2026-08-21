@@ -5,12 +5,12 @@
 //! exist". Asking what a tool can do is a successful invocation. A BAD invocation is unchanged:
 //! usage on stderr, exit 2.
 
-use std::process::{Command, Output};
+use std::process::Output;
 
 mod common;
 
 fn run(args: &[&str]) -> Output {
-    Command::new(common::cermet_binary())
+    common::cermet_command()
         .args(args)
         .output()
         .expect("the cermet binary runs")
@@ -61,6 +61,7 @@ fn every_command_answers_its_own_help() {
         "artifact",
         "audit-verify",
         "check",
+        "journal",
         "rules",
         "doc",
         "preset",

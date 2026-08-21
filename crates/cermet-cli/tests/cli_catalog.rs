@@ -1,4 +1,4 @@
-//! `cermet catalog` — the CLI's capability-discovery surface, the twelfth command.
+//! `cermet catalog` — the CLI's capability-discovery surface.
 //!
 //! What these tests pin: the two zooms exist, they render the DAEMON's join (the admitting
 //! sentences by their canonical text, no rule numbers), the dictionary's authority stamp cannot be
