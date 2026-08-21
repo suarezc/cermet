@@ -1518,3 +1518,21 @@ Every key is the §1.1 field of the same name. Two are specific to this projecti
 
 The trailing `→` line states the one next action the decision admits, naming the tool and the id to
 hand it.
+
+## 10. The output journal entry
+
+One JSONL object per operator-CLI invocation, appended to the file `cermet journal` names.
+Not printed output: this is the record an agent reads when a human asks what a command
+said, resolving each printed field it finds inside `output` against the sections above.
+
+| field | meaning |
+|---|---|
+| `ts` | RFC3339 time the invocation finished. |
+| `argv` | The full argument vector after the program name, uncapped, verbatim. |
+| `cwd` | The working directory the command ran in. |
+| `exit` | The process exit code the shell saw. |
+| `duration_ms` | Wall-clock milliseconds from entry to exit. |
+| `output` | Everything the command wrote to stdout and stderr, interleaved in write order, capped. |
+| `truncated` | Present only when `output` was capped: `kept` is the stored byte count, `total` what the command actually printed. Derived dumps of ever-growing stores truncate; unique content fits. |
+| `kept` | (inside `truncated`) Bytes of `output` stored — the first ones, verbatim. |
+| `total` | (inside `truncated`) Bytes the command printed in total. |

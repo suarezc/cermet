@@ -160,7 +160,7 @@ const NOT_A_FIELD: &[&str] = &[
 // ---------------------------------------------------------------------------------------------
 
 /// Collect the object keys of a sample value, one level deep, plus the keys of any object member
-/// this reference documents as fields in its own right (`wire_stats`, `envelope`).
+/// this reference documents as fields in its own right (`wire_stats`, `envelope`, `truncated`).
 fn keys_of(sample: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let Some(object) = sample.as_object() else {
@@ -168,7 +168,7 @@ fn keys_of(sample: &Value) -> BTreeSet<String> {
     };
     for (key, value) in object {
         out.insert(key.clone());
-        if matches!(key.as_str(), "wire_stats" | "envelope") {
+        if matches!(key.as_str(), "wire_stats" | "envelope" | "truncated") {
             if let Some(nested) = value.as_object() {
                 out.extend(nested.keys().cloned());
             }
@@ -338,6 +338,22 @@ fn derived_fields() -> BTreeSet<String> {
     out.extend(keys_of(
         &serde_json::to_value(&span).expect("an artifact span serializes"),
     ));
+
+    // The output journal's entry (a JSONL line in the file the operator CLI appends; not printed,
+    // but the reference documents it because its reader is an agent resolving a human's question
+    // about what a command said). Truncation populated so the nested keys are inventoried.
+    let mut captured = cermet_cli::journal::Captured::default();
+    captured.push(&vec![b'x'; 5000]);
+    let journal_entry: Value = serde_json::from_str(&cermet_cli::journal::entry_line(
+        "2026-01-02T03:04:05Z",
+        &["log".into()],
+        std::path::Path::new("/repo"),
+        0,
+        37,
+        &captured,
+    ))
+    .expect("a journal entry is one JSON object");
+    out.extend(keys_of(&journal_entry));
 
     out
 }
