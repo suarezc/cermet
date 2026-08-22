@@ -273,6 +273,7 @@ fn derived_fields() -> BTreeSet<String> {
         justification: Some("j".into()),
         effect_id: Some("eff_0".into()),
         effect_outcome: Some(EffectOutcome::Succeeded),
+        effect_state: Some(cermet_lang::types::EffectState::Burned),
         events: vec![event.clone()],
         relay_hops: vec![hop.clone()],
         relay_session: Some(json!({})),

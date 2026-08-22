@@ -564,12 +564,22 @@ cermet audit-verify       # the hash-chain, checked from genesis
 ```
 
 `cermet log` renders the 100 most recent rows unless you pass `--all`, and the filters
-(`--since`, `--provider`, `--denied`, `--hops`) narrow the log *first*, then the window applies:
+(`--since`, `--provider`, `--denied`, `--burned`, `--hops`) narrow the log *first*, then the window
+applies:
 
 ```
 2026-08-14T10:12:03.481202Z  DENIED vercel.deploy: vercel.deploy denied by sentence authority: rule 2 predicate 1 did not match (field `project`) — project=not-my-site target=preview
-2026-08-14T09:47:55.062114Z  ALLOW github.fetch — allowed by: allow github.fetch where owner = "acme" and name = "api" (corpus 1f2e3d4c)
+2026-08-14T09:51:18.204551Z  ALLOW vercel.deploy — allowed by: allow vercel.deploy where project = "site" (corpus 1f2e3d4c) →burned(bind_mismatch)
+2026-08-14T09:47:55.062114Z  ALLOW github.fetch — allowed by: allow github.fetch where owner = "acme" and name = "api" (corpus 1f2e3d4c) →ok
 ```
+
+A row ends with what became of the effect its decision authorized, where the record determines one:
+`→ok` (it landed), `→burned(<reason>)` (a refused hop ended the relay session — authority said yes
+and nothing deployed), `→expired_unused` (the window ended having driven nothing), `→unresolved`
+(it ended after hops with nothing saying the effect landed). No suffix means the record does not
+say, most often a window still in flight. `cermet log --burned` is the same question `--denied` asks,
+one layer down: `--denied` finds what authority refused, `--burned` finds what it allowed and the
+effect layer then ended.
 
 `cermet log <request_id>` returns the row as JSON — decision, reason, resource, principal,
 session, and the `authority_fingerprint` of the corpus that ruled on it. `cermet audit-verify`

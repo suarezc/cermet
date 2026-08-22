@@ -103,6 +103,7 @@ HMAC and the complete audit chain agree on its identity and terminal event schem
 | `integrity_ok` | Whether the row still authenticated against its per-grant HMAC at read time. Evidence is only projected when this holds. |
 | `justification` | The agent's own stated reason for making the request, whole. The list form truncates for width; this does not. `null` when the request carried none. |
 | `effect_id`, `effect_outcome` | As above. |
+| `effect_state` | What became of the effect this request authorized, **derived at read time** from the events, hops and session record below plus a clock read — nothing stores it. It is here because the derivation is otherwise arithmetic the reader has to do by hand: "closed by `ttl` with `hops: 0`" and "closed by `ttl` after four hops and no effect verdict" are different fates, and a window whose daemon restarted has no `relay_session` at all. Absent when the record determines nothing. The values, and the rule that picks one, are in §1.6. |
 | `events` | The verified effect-start and terminal events (§1.5). |
 | `relay_hops` | The relay hops this grant authorized, oldest first (§1.7). Absent for every non-relay verb. |
 | `relay_session` | The relay session's terminal receipt, verbatim as the broker derived it from what the relay observed (§1.8). Absent while the session is still live. |
@@ -206,6 +207,44 @@ classification, never the taxonomy itself. Every class is an observation, never 
 | `local_execution_failure` | Our own execution subsystem failed, before or beside any provider answer: the vault could not be opened, egress was refused, the daemon was locked down. Fix the box. |
 | `failed` | The honest residual: the effect failed and no typed signal says how. Every status outside the ranges above lands here, including `404` and `409` — a `404` means "no such object" on one provider and "your token may not see it" on another, and a `409` is a state conflict this vocabulary has no behavior for. Guessing between them is exactly what the residual prevents. |
 
+**`effect_state`** — *what became of the effect*, on the axis the decision word cannot answer.
+`decision` says what authority ruled; `status` says how far the grant's own lifecycle got; this says
+whether anything happened at the far end. **Nothing stores it.** The view join derives it from
+signals already recorded — the session's open and close rows, the forwarded hops and their upstream
+statuses, the burning refusal's reason word, the terminal execution event — plus the clock at the
+moment of the read.
+
+| value | meaning |
+|---|---|
+| `ok` | The last word recorded about the grant's effect is a success: a `2xx` on the session's effect-bearing hop, or a terminal `provider_action_succeeded` on a verb the daemon ran itself. *Last* word, because a session may attempt its effect more than once — the native two-phase create is answered `400 missing files` before the create that lands. |
+| `burned` | A refusal ended the session, and no effect-bearing hop is recorded as having landed. The class that ended it rides beside this as the reason word (§8.6), so the row names *which* refusal. |
+| `expired_unused` | A relay window that ended having forwarded **zero** hops: the grant was spent minting authority nothing ever drove. |
+| `unresolved` | A relay window that ended after forwarding hops with nothing recorded saying whether its effect landed. This is the honest gap — not a claim the effect failed, which would carry a `failure_class` instead. |
+
+The rule that picks one, in order: the effect landed (`ok`); else a refusal ended the session
+(`burned`); else the window ended with no hops (`expired_unused`) or with hops (`unresolved`).
+`ok` outranks `burned` deliberately — a window whose deploy landed and which then refused a probe on
+a later read hop *did* deploy, and reporting only the burn would be the same disclosure failure in
+the other direction. An effect whose own response contradicted the approval is not a success: the
+mismatch is recorded as a failure, and `burned` names it.
+
+**`burned` is not "the effect did not land."** It says a refusal ended the session and nothing
+recorded an effect-bearing hop landing — which includes the case where landing is genuinely
+*unknown*. An effect hop that never got a response head is spent with its outcome unknown; the
+native client retries; the retry is refused as `effect_already_used`; the session burns. That row
+reads `— effect failed: transport_no_response →burned(effect_already_used)`, and it is the
+`failure_class` beside the suffix that says what to do — reconcile, never blind-retry.
+
+**Absence is load-bearing.** No value means the record does not determine one — a window still in
+flight, a request decided and never executed, a denial that ran nothing, or an effect whose failure
+the row already names with its `failure_class`. It never means an outcome was determined and
+withheld.
+
+**Termination is derived, not read.** A relay window has ended when its terminal record exists *or*
+the clock is past the `expires_at` the approval set. The second half matters: a daemon that restarts
+drops its live sessions from memory without closing them, and a window with no terminal record would
+otherwise read as in-flight forever.
+
 **`principal_id` / `principal_label`**: `principal_id` is the requesting principal as the daemon
 stored it — the string `uid:N`, derived from the kernel's peer credentials on the socket, and covered
 by the per-grant HMAC. `principal_label` is that uid's OS username resolved from the passwd database
@@ -225,7 +264,7 @@ upstream answered.
 
 | field | meaning |
 |---|---|
-| `event_type` | `relay_session_opened` (the grant was spent and the session minted), `relay_request_forwarded` (a hop passed authorization and went upstream), `relay_request_refused` (a hop was refused before the credential was attached), `relay_request_failed` (a forwarded hop did not complete), `relay_session_closed` (the session's terminal record). |
+| `event_type` | `relay_session_opened` (the grant was spent and the session minted), `relay_request_forwarded` (a hop passed authorization and went upstream), `relay_request_refused` (a hop was refused before the credential was attached), `relay_request_failed` (a forwarded hop did not complete), `relay_outcome_mismatch` (a forwarded hop *answered*, and the answer contradicted a field the approval froze), `relay_session_closed` (the session's terminal record). |
 | `at` | When the broker chained the event (RFC3339). |
 | `provider`, `action` | The verb whose grant opened the session. |
 | `grant_id` | The grant the session belongs to. Operator-side only. |
@@ -237,13 +276,20 @@ upstream answered.
 | `detail` | What that refusal knew beyond its reason word, in one line: the offending field or key, the frozen constraint *as it was enforced*, the value the hop offered, and — where one is computable — the remedy. Absent on the classes whose reason word is the whole fact. The reason word does not move: `detail` is additional to it, never a rewriting of it, so anything matching on `reason` keeps matching. See §8.6. |
 | `effect` | Whether this hop is the grant's single effect. A relay session authorizes exactly one effect-bearing shape; every other hop is read traffic. |
 | `burned` | Whether this refusal burned the session. A hop that misses the predicate or contradicts a frozen field is a session being probed, so the session is done: every later hop renders as an unknown handle. A lapsed TTL or an unknown handle burns nothing (there is nothing live to burn), and an oversized body is a transport limit rather than a probe. |
-| `closed` | On the `relay_session_closed` row only: how the session ended. `burned` (a refusal ended it), `ttl` (the declared lifetime lapsed), `authority_changed` (the sentence corpus the session was minted under is no longer live), `lockdown_engaged` (the owner's revocation root was pulled). |
+| `closed` | On the `relay_session_closed` row only: how the session ended. `burned` (a refusal ended it), `ttl` (the declared lifetime lapsed), `authority_changed` (the sentence corpus the session was minted under is no longer live), `lockdown_engaged` (the owner's revocation root was pulled), `outcome_mismatch` (the effect's own response contradicted the approval). |
 
 In the `--hops` list rendering, `event_type` is printed as a word — `OPENED`, `HOP`, `REFUSED`,
-`FAILED`, `CLOSED` — and an event type the renderer does not know is printed verbatim rather than
-guessed at. `burned` renders as the suffix `(burned the session)`; `effect` renders as
+`FAILED`, `MISMATCH`, `CLOSED` — and an event type the renderer does not know is printed verbatim
+rather than guessed at. `burned` renders as the suffix `(burned the session)`; `effect` renders as
 `[the grant's single effect]`. `detail` renders last, after those marks: the reason word keeps its
 short column where a reader and a `grep` both already find it, and the sentence follows.
+
+A `MISMATCH` row carries the same three marks a burning `REFUSED` row does — `reason`
+(`outcome_mismatch`), `burned`, and a `detail` naming the frozen field, what the approval froze, and
+what the response answered instead — so `--burned` finds every hop that ended a session with one
+filter. It gets its own word rather than `REFUSED` because nothing was refused: the hop was
+authorized, forwarded, and *answered*, and by the time the contradiction is visible the effect has
+landed. Its own row's `detection` line says exactly that, and nothing undoes it.
 
 ### 1.8 The relay session receipt
 
@@ -253,7 +299,7 @@ plus how it ended.
 | field | meaning |
 |---|---|
 | `grant_id`, `request_id`, `provider`, `action` | The grant and request the session belonged to. |
-| `closed` | How it ended — the same four values as the hop view's `closed`. |
+| `closed` | How it ended — the same five values as the hop view's `closed`. |
 | `opened_at`, `expires_at` | Epoch seconds: when the session was minted, and when its TTL would have lapsed. |
 | `hops` | How many hops the relay forwarded. |
 | `refusals` | How many hops it refused. |
@@ -300,7 +346,7 @@ A row is built left to right, and every part after the verb is omitted when the 
 nothing to put there — there are no placeholders and no empty quotes.
 
 ```
-<created_at>  <OUTCOME> <provider>.<action> <request_id> — <provenance>[: <reason>] [<[deny_code]>] [— <field>=<value> …] [— "<justification>"] [— effect failed: <class>] [— effect <disposition>]
+<created_at>  <OUTCOME> <provider>.<action> <request_id> — <provenance>[: <reason>] [<[deny_code]>] [— <field>=<value> …] [— "<justification>"] [— effect failed: <class>] [— effect <disposition>] [→<effect_state>]
 ```
 
 | part | meaning |
@@ -317,6 +363,17 @@ nothing to put there — there are no placeholders and no empty quotes.
 | `"<justification>"` | The justification the agent had to supply to make the request at all. Bounded to 120 characters here for width, with the ellipsis inside the quotes; `log <request_id>` carries it whole. |
 | `— effect failed: <class>` | Present only when the authorized effect failed: the `failure_class` word from §1.6. Its absence says nothing failed, not that the cause is unknown — the unknown cause is the value `failed`. |
 | `— effect <disposition>` | The effect's disposition with the action it implies: `pre_effect; request a fresh effect`, `succeeded; do not retry`, `definitely_failed; do not retry`, `ambiguous; retry only with the same effect handle`. |
+| `→<effect_state>` | Last on the row, and the only part that answers *and then what*: what became of the effect the decision authorized — `→ok`, `→burned(<reason>)`, `→expired_unused`, `→unresolved`. It is the §1.6 `effect_state`, derived at read time and stored nowhere. It is a **suffix**: every column before it keeps its position, so anything grepping the row today still matches. |
+
+The suffix is the answer to a question the rest of the row cannot reach. Up to it, a request whose
+relay grant burned on a refused hop, one whose window lapsed having driven nothing, and one whose
+deploy landed all render the identical `ALLOW vercel.deploy <id> — allowed by: …`. `→burned(…)`
+names the class that ended the session in the same reason word §8.6 and the hop log use, so one grep
+matches all three surfaces.
+
+A row with no suffix is one the record does not resolve — see §1.6 on why absence is load-bearing.
+In particular a failed effect carries `— effect failed: <class>` and no suffix: the class *is* the
+state, and a token repeating it would add nothing.
 
 A row whose grant no longer authenticates against its HMAC renders as a single suppressed line
 instead — no provenance, no fields, nothing reconstructed:
@@ -349,6 +406,7 @@ belongs to `log <request_id>` and the audit rows.
 | `--since <RFC3339>` | Only rows at or after that instant. One shape only — an RFC3339 instant, exactly as the log prints its own timestamps. |
 | `--provider <name>` | Only that provider's rows. |
 | `--denied` | Only refusals. On the receipt view that means a `deny`/`unsupported`/`unregistered` decision or a `denied` status; on the hop view it means the refused and failed hops. |
+| `--burned` | The same question one layer down: `--denied` finds what authority *refused*, `--burned` finds what it *allowed* and the effect layer then ended. On the receipt view it is the rows whose §1.6 `effect_state` is `burned`; on the hop view it is the burning hops themselves — the refusals that ended a session **and** the `MISMATCH` row, which `--denied` does not match because nothing was refused. This is the drill-down a `→burned(<reason>)` suffix sends a reader to. |
 | `--hops` | The relay hop view instead of the grant receipt. |
 | `--all` | Every row, unwindowed. |
 

@@ -165,6 +165,9 @@ pub enum CliCommand {
         /// Narrow to one provider's rows.
         provider: Option<String>,
         denied_only: bool,
+        /// Narrow to the rows whose relay grant burned — what authority allowed and the effect
+        /// layer then ended.
+        burned_only: bool,
         /// Render the relay hop log instead of the grant receipt.
         hops: bool,
         /// The full dump — every row, unwindowed.
