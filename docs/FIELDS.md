@@ -626,33 +626,32 @@ managed `cermet:authority:v1` block is untouched prose.
 
 ### 4.1 `doc status`
 
+Two lines, answering two independent questions — what the daemon is serving, and what is in the
+directory you are standing in:
+
 ```
-state: <state>
-document: <document>
-candidate: <candidate>
-marker: <marker>
-live: <live>
-live_state: <live_state>
-canonical: <yes|no|unknown>
-lockdown: <lockdown>
+active_profile: designer 4b8004bd4e13
+directory_file: CERMET.md 4b8004bd4e13
 ```
 
-`--json` prints the same eight keys as a JSON object.
+`--json` prints the same two values, plus `lockdown`, as a JSON object.
 
 | field | meaning |
 |---|---|
-| `state` | The three-way drift verdict (§4.2). |
-| `document` | Whether the repository document could be read and prepared at all: `valid`, `missing` (no `CERMET.md`), `invalid` (present but unparseable, or the daemon refused its body semantically), `unavailable` (no repository root, or the root could not be opened safely), `provider_disabled`. |
-| `candidate`, `marker` | The digests above. Rendered as `unknown` when the document is not `valid` — there is nothing to digest. |
-| `live` | The live corpus digest, or `none`. |
-| `live_state` | What the daemon's own record is doing: `absent` (no corpus was ever committed), `served` (the daemon is actively enforcing this corpus), `unserved` (a record exists on disk but the enforcement gate is down — the crash-recovery boundary), `corrupt` (a record exists and its bytes fail integrity checks; the bytes are never exposed), `unknown` (the daemon could not be asked). |
-| `canonical` | Whether the document's raw fenced-body bytes are byte-identical to what the daemon's canonicalizer prints for that body. A document can be semantically valid but not canonical — extra whitespace, comments, unnormalized ordering. `doc check --fix` rewrites the fence to canonical form without touching the marker. |
-| `lockdown` | The owner-lockdown latch as observed: `clear`, `engaged`, or `unknown`. `doc` reads it and prints it; only `cermet owner lockdown` sets it. |
+| `active_profile` | The DAEMON's live corpus — one global answer, the same from every directory on the box. The name is the FIRST stored profile whose body is exactly that corpus, joined at read time (`(unnamed)` when no stored profile matches), followed by the corpus digest. When nothing is being served it reads `none` and says why: no corpus has been applied, a stored corpus is not being served, the record is unreadable, or the daemon could not be asked. |
+| `directory_file` | The `CERMET.md` reachable from this directory, and the digest of the body it would commit. With no such file it reads `none — no CERMET.md found from this directory`, which is an absence, not a fault. A file that exists but yields no candidate says so and points at `cermet doc check`. |
+| `pin` | Printed ONLY when the document's body is already live under a pin naming an older corpus (the `marker_stale` drift state, §4.2). That is the one nonzero state the two digest lines cannot show — the body matches, so both prefixes agree and the surface would otherwise read as full agreement while exiting `1`, and `doc diff` would add only `rules: unchanged`. The line names the condition and the remedy: `pin: stale — this file's body is already live; its pin names an older corpus, and cermet doc apply repairs the pin without changing a rule`. |
+| `lockdown` | The owner-lockdown latch: `clear`, `engaged`, or `unknown`. The TEXT form prints this line only while the latch is ENGAGED, because an engaged latch means the corpus named above is authorizing nothing — reporting the two lines alone would describe a box you are not on. `--json` always carries it. Only `cermet owner lockdown` sets it. |
+
+Both digests are truncated to the same 12 hex characters on purpose: equal prefixes mean this
+directory's file is what the daemon is serving, and unequal prefixes mean it is not. The drift
+verdict itself is not printed — the EXIT CODE carries it (§4.2), and `doc diff` shows the change.
 
 ### 4.2 `state` — the drift verdict
 
-The verdict is a pure function of how candidate, marker, and live relate. Exit codes are in the
-table because this surface is scripted against.
+The verdict is a pure function of how candidate, marker, and live relate. `doc status` and `doc
+diff` report it as their EXIT CODE; the mutating commands (`doc check --init`, `doc export`,
+`doc apply`) print it as a `state:` line on their own receipts.
 
 | value | exit | meaning |
 |---|---|---|
@@ -670,10 +669,10 @@ table because this surface is scripted against.
 
 `doc status --json` is the one place a usage error does not go to stderr as prose. When the first
 argument is `doc` and the CLI fails before it can dispatch, it prints a parseable failure object
-instead, so a scripted caller always gets JSON on stdout:
+instead, so a scripted caller always gets JSON on stdout. Nothing was read, and both lines say so:
 
 ```json
-{"state":"dataplane_unknown","document":"unknown","candidate":null,"marker":null,"live":null,"live_state":"unknown","canonical":null,"lockdown":"unknown"}
+{"active_profile":"none — the daemon could not be asked","directory_file":"none — the daemon could not be asked","lockdown":"unknown"}
 ```
 
 ### 4.3 `doc check` and `doc check --fix`
@@ -684,6 +683,10 @@ canonical: yes|no
 rules: <n>
 action: run cermet doc check --fix        (only when the body is not canonical)
 ```
+
+| field | meaning |
+|---|---|
+| `canonical` | Whether the document's raw fenced-body bytes are byte-identical to what the daemon's canonicalizer prints for that body. A document can be semantically valid and not canonical — extra whitespace, comments, unnormalized ordering. `--fix` rewrites the fence to canonical form without touching the marker. |
 
 `rules` is the number of rule statements the canonical corpus parses to. Exit is 0 when canonical,
 1 when not.
@@ -710,7 +713,7 @@ live_changed: yes|no|unknown
 
 ### 4.5 `doc diff`
 
-The state block from `doc status`, then either `rules: unchanged` or a unified diff:
+The two lines from `doc status`, then either `rules: unchanged` or a unified diff:
 
 ```
 --- live
@@ -984,7 +987,8 @@ there is no standalone create.
 
 ```
 PRESET    RULES  UPDATED
-builder   14     2026-08-19T09:12:44Z
+builder   14     2026-08-19T09:12:44Z  ● live
+designer  6      2026-08-18T17:03:10Z
 ```
 
 | column | meaning |
@@ -992,6 +996,7 @@ builder   14     2026-08-19T09:12:44Z
 | `PRESET` | The stored name. Every printed name is sanitized on the way out — anything outside letters, digits, `_`, and `-` becomes `?`, over-long names are truncated, and an empty one renders `(empty)`. Stored names are already validated; the sanitizer is applied unconditionally so that stays true for names a caller merely typed. |
 | `RULES` | How many rules that stored corpus holds. |
 | `UPDATED` | When the row was last written, RFC3339, set daemon-side at write time. |
+| `● live` | Marks the FIRST stored profile whose body matches the corpus the daemon is serving right now — the same read-time join `doc status` names on its `active_profile` line, so two profiles storing identical bodies put the mark on one of them, not both. No row carries it when the live corpus is not one of these bodies. Nothing records it: a profile is live exactly while its body is being served, so applying another profile moves the mark with no write to this table. |
 
 An empty store says so and names the one way to write one:
 
@@ -1010,6 +1015,7 @@ presence — and prints the same review and receipt fields as §4.8 and §4.9, w
 |---|---|
 | `preset` | The profile's stored name. |
 | `source` | Where the body came from: `stored profile` when `cermet preset <name>` invoked it, or the file path when `doc apply CERMET_<name>.md` did. |
+| `live_state` | What the daemon's own record is doing after the flip: `absent` (no corpus was ever committed), `served` (the daemon is enforcing this corpus), `unserved` (a record exists and the enforcement gate is down — the crash-recovery boundary), `corrupt` (a record exists and its bytes fail integrity checks; the bytes are never exposed), `unknown` (the daemon could not be asked). |
 
 There is no document and no pin here, so there is no `marker_update` and no `state`. The receipt
 reports `live_state` and `lockdown` instead.

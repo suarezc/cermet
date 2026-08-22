@@ -132,6 +132,7 @@ doc export [--replace-draft] | doc apply [<file>] [--replace-live] [--recover]
 const PRESET_USAGE: &str = "\
 preset list
     Every stored authority profile: its name, how many rules it holds, and when it was stored.
+    The profile whose body the daemon is serving right now is marked `● live`.
 preset <name> [--recover]
     Install that profile. A profile is a WHOLE corpus, so this REPLACES everything currently live —
     every rule the profile does not carry is gone. The ceremony is the one `doc apply` runs: the

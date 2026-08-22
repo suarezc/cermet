@@ -304,6 +304,7 @@ pub fn handle_ctl_connection(
                 let status = record_admin
                     .snapshot()
                     .map(|sentence| SentenceAuthorityStatus {
+                        profile: served_profile_name(broker, rt, &sentence),
                         sentence,
                         lockdown: if lockdown_source.is_engaged() {
                             LockdownSnapshot::Engaged
@@ -489,6 +490,27 @@ fn snapshot_reply(result: cermet_core::Result<SentenceSnapshot>) -> Reply {
             cermet_core::Error::Provider(format!("sentence snapshot encode failed: {e}"))
         })
     })
+}
+
+/// The stored profile whose body is EXACTLY the served corpus.
+///
+/// Derived at read from a comparison of canonical bodies — the daemon stores no "current profile",
+/// so there is no state to fall out of date. An unserved, absent, or corrupt record is named by no
+/// profile: the question is which stored body is being enforced, and nothing is.
+fn served_profile_name(
+    broker: &BrokerHandle,
+    rt: &tokio::runtime::Handle,
+    sentence: &SentenceSnapshot,
+) -> Option<String> {
+    let SentenceSnapshot::Served { rules_text, .. } = sentence else {
+        return None;
+    };
+    let view = rt.block_on(broker.list_presets()).ok()?;
+    let stored: Vec<cermet_core::presets::StoredPreset> = serde_json::from_str(&view).ok()?;
+    stored
+        .into_iter()
+        .find(|profile| &profile.rules_text == rules_text)
+        .map(|profile| profile.name)
 }
 
 fn authority_status_reply(result: cermet_core::Result<SentenceAuthorityStatus>) -> Reply {
