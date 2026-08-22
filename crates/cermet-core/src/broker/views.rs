@@ -1,5 +1,6 @@
 use super::helpers::*;
 use super::*;
+use crate::types::EffectState;
 
 struct AllGrantsSnapshot {
     grants: Vec<GrantView>,
@@ -182,6 +183,10 @@ impl Broker {
             effect_id,
             effect_outcome: None,
             failure_class: None,
+            // Stamped by `history()` alone (`project_grant_effect_states`): what became of the
+            // effect is derived from the audit log and a clock read, and is never a stored column.
+            effect_state: None,
+            burn_reason: None,
             environment,
             resource,
             status,
@@ -284,6 +289,7 @@ impl Broker {
         let mut all = self.list_all_grants()?;
         self.project_grant_effect_outcomes(&mut all);
         self.project_grant_failure_classes(&mut all)?;
+        self.project_grant_effect_states(&mut all)?;
         self.project_grant_terminal_times(&mut all)?;
         self.project_request_authority(&mut all)?;
         all.extend(self.denial_history_views()?);
@@ -487,9 +493,13 @@ impl Broker {
             }
         }
         self.project_grant_effect_outcomes(std::slice::from_mut(&mut view));
+        // The same derivation the list row's suffix carries, from the same one read — so the per-id
+        // answer can never disagree with the list's about how a request ended.
+        self.project_grant_effect_states(std::slice::from_mut(&mut view))?;
         Ok(crate::types::RequestEvidenceView {
             relay_hops,
             relay_session,
+            effect_state: view.effect_state,
             justification: self.request_justification(request_id)?,
             request_id: request_id.to_string(),
             grant_id: view.grant_id,
@@ -609,6 +619,29 @@ impl Broker {
         Ok(())
     }
 
+    /// Stamp each row with WHAT BECAME OF ITS EFFECT — the derivation that turns the recorded
+    /// signals into the one word a receipt row can carry.
+    ///
+    /// The same one-read shape as [`Self::project_grant_failure_classes`], and the same scope: a row
+    /// whose grant HMAC did not authenticate is not evidence of anything, so it is left alone.
+    fn project_grant_effect_states(&self, grants: &mut [GrantView]) -> Result<()> {
+        if !grants.iter().any(|view| view.integrity_ok) {
+            return Ok(());
+        }
+        let signals = self.audit.effect_signals()?;
+        let now = self.now_epoch();
+        for view in grants.iter_mut().filter(|view| view.integrity_ok) {
+            let Some(recorded) = signals.get(&view.grant_id) else {
+                continue;
+            };
+            view.effect_state = effect_state(recorded, now);
+            if view.effect_state == Some(crate::types::EffectState::Burned) {
+                view.burn_reason = recorded.burned.clone();
+            }
+        }
+        Ok(())
+    }
+
     fn project_grant_effect_outcomes(&self, grants: &mut [GrantView]) {
         for view in grants {
             if view.effect_id.is_none() || !view.integrity_ok {
@@ -711,8 +744,11 @@ impl Broker {
                 action: denial.action,
                 effect_id: None,
                 effect_outcome: None,
-                // A refusal never ran an effect, so there is no effect failure to classify.
+                // A refusal never ran an effect, so there is no effect failure to classify and
+                // nothing became of an effect that never existed.
                 failure_class: None,
+                effect_state: None,
+                burn_reason: None,
                 environment: None,
                 resource: denial.resource,
                 status: "denied".to_string(),
@@ -734,6 +770,65 @@ impl Broker {
             })
             .collect())
     }
+}
+
+/// THE derivation: recorded signals plus a clock read, in, one [`EffectState`] out.
+///
+/// It is a free function and a pure one so the whole rule is readable in one place and testable
+/// without a broker. Order is the rule, and each step is a claim the record supports:
+///
+/// 1. **The effect landed.** The last word about an effect-bearing hop (or a plain verb's terminal
+///    event) is a success. This outranks a burn: a window whose deploy landed and which then refused
+///    a probe on a later read hop DID deploy, and a row that said only `burned` there would be the
+///    same disclosure failure in the other direction. An effect whose own response contradicted the
+///    approval is not a success — the mismatch is recorded as a failure and the burn below names it.
+/// 2. **A refusal ended it.** A burning class stopped the session and nothing recorded an
+///    effect-bearing hop landing. This is the case that read as a bare `ALLOW` before: authority
+///    said yes, and the session ended anyway. It is NOT a claim the effect did not land — an effect
+///    hop that never got a response head is spent with its outcome unknown, and the retry that
+///    burns as `effect_already_used` lands here with its `failure_class` beside it saying to
+///    reconcile.
+/// 3. **The window ended empty.** Terminated with zero hops forwarded — the grant was spent minting
+///    authority nothing ever drove.
+/// 4. **The window ended without a verdict.** Terminated after hops, with nothing recorded saying
+///    whether the effect landed.
+///
+/// Anything else is `None`, and that is load-bearing: a live window, a request decided and never
+/// executed, a denial. Silence means the record does not say, never "nothing happened".
+///
+/// A row whose effect the record says FAILED lands in none of these — step 1 does not fire, nothing
+/// burned, and a `failed` token would only repeat the `failure_class` the same row already renders.
+/// The suffix is what the row could not otherwise say.
+///
+/// **Termination is derived, not read.** A window ends when its terminal record exists OR the clock
+/// is past the `expires_at` the approval set. The second half matters: a daemon that restarts drops
+/// its live sessions from memory without closing them, and a window with no terminal record would
+/// otherwise read as in-flight forever.
+fn effect_state(signals: &crate::audit::EffectSignals, now: i64) -> Option<EffectState> {
+    if signals.landed() == Some(true) {
+        return Some(EffectState::Ok);
+    }
+    if signals.burned.is_some() {
+        return Some(EffectState::Burned);
+    }
+    if !signals.relay {
+        return None;
+    }
+    // Only `Some(false)` can reach here, and it is a DETERMINED outcome: the record says the effect
+    // failed, and the same row renders its `failure_class`. A token repeating that adds nothing.
+    if signals.landed().is_some() {
+        return None;
+    }
+    let ended =
+        signals.closed.is_some() || signals.expires_at.is_some_and(|deadline| now > deadline);
+    if !ended {
+        return None;
+    }
+    Some(if signals.hops == 0 {
+        EffectState::ExpiredUnused
+    } else {
+        EffectState::Unresolved
+    })
 }
 
 /// Project ONE chain-verified relay event onto the closed operator view. Every field is

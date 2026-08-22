@@ -764,6 +764,14 @@ impl super::Broker {
                 "field": mismatch.field,
                 "frozen": mismatch.expected,
                 "observed": mismatch.observed,
+                // The same three marks a burning REFUSAL row carries. A hop that ended a session is
+                // ONE kind of thing to the operator surfaces — one filter (`cermet log --hops
+                // --burned`) and one renderer serve every such row — and this is the only one that
+                // arrives on a hop the relay authorized and forwarded. The class is read off the
+                // refusal vocabulary rather than spelled again, so it cannot drift from it.
+                "reason": RelayRefusal::OutcomeMismatch.reason(),
+                "burned": RelayRefusal::OutcomeMismatch.burns(),
+                "detail": mismatch.detail(),
                 // Said on the row itself, because the row is the artifact an operator reads months
                 // later: the effect had already landed when this was decided.
                 "detection": "the effect already landed; the session is burned, nothing is undone",

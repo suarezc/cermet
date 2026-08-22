@@ -8512,6 +8512,249 @@ fn request_status_carries_the_burned_relay_sessions_receipt() {
     assert_eq!(session["burned_target"], "/v13/deployments");
 }
 
+/// The receipt row's own `effect_state`, on the request whose window BURNED.
+///
+/// The decision word says `allow` for a window that deployed and for one whose grant a refused
+/// effect hop burned, and those are not the same event. An agent that reads the burned one as a
+/// working example copies fields that were never accepted.
+#[test]
+fn a_burned_window_says_so_on_the_row_that_says_it_was_allowed() {
+    let (base, _server) = relay_chunked_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"other-site","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let row = one_relay_row(&broker);
+    assert_eq!(row.decision, "allow", "authority still said yes");
+    assert_eq!(row.effect_state, Some(crate::types::EffectState::Burned));
+    assert_eq!(
+        row.burn_reason.as_deref(),
+        Some("bind_mismatch"),
+        "the row names the class that ended it, not just that something did"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The window that drove NOTHING. It is spent authority with no effect anywhere, and before this it
+/// was indistinguishable from a window mid-flight.
+#[test]
+fn a_window_that_lapsed_having_driven_nothing_reads_expired_unused() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, result) = open_relay(&broker, "website");
+    let expires_at = result.result["relay"]["expires_at"].as_i64().unwrap();
+
+    // Live, and nothing has happened: the record does not say how this ends, so it says nothing.
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        None,
+        "a live window with no hops is in flight, not expired"
+    );
+
+    broker.set_now(expires_at + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::ExpiredUnused)
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// Derived from the CLOCK, not only from the close record: a daemon that restarts drops its live
+/// sessions from memory without closing them, and a window with no terminal record would otherwise
+/// read as in-flight forever.
+#[test]
+fn a_window_past_its_deadline_reads_expired_even_with_no_close_record() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, result) = open_relay(&broker, "website");
+    let expires_at = result.result["relay"]["expires_at"].as_i64().unwrap();
+
+    broker.set_now(expires_at + 1);
+    assert!(
+        audit_events_of_type(&broker, "relay_session_closed").is_empty(),
+        "no sweep has run, so there is no terminal record to read"
+    );
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::ExpiredUnused)
+    );
+}
+
+/// The deploy that LANDED. `ok` is the word that was missing: nothing on the row said an effect had
+/// actually happened.
+#[test]
+fn a_landed_deploy_reads_ok() {
+    let (base, server) = relay_chunked_upstream(vec![(
+        200,
+        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#
+            .to_string(),
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, result) = open_relay(&broker, "website");
+    let created = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(created.status, 200);
+
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Ok),
+        "the effect landed, and the row says so while the window is still open"
+    );
+
+    // And the window then lapsing does not un-land it: the effect is the last word about the
+    // effect, never how the window happened to end.
+    broker.set_now(result.result["relay"]["expires_at"].as_i64().unwrap() + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Ok)
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The window that ended UNRESOLVED: it forwarded read traffic, its effect-bearing hop never ran,
+/// and the deadline passed. The operator who read this as "cermet hanged" had nothing anywhere
+/// recording that the window was over.
+#[test]
+fn a_window_that_ended_after_reads_with_no_effect_reads_unresolved() {
+    let (base, server) = relay_chunked_upstream(vec![(
+        200,
+        r#"{"id":"prj_website","name":"website"}"#.to_string(),
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, result) = open_relay(&broker, "website");
+    let read = broker
+        .relay_hop(&handle, "GET", "/v9/projects/website", &[], Vec::new())
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(read.status, 200);
+
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        None,
+        "a live window that has only read is still in flight"
+    );
+
+    broker.set_now(result.result["relay"]["expires_at"].as_i64().unwrap() + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Unresolved),
+        "hops happened, the window is over, and nothing says the effect landed"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// A relay grant's terminal `provider_action_succeeded` records the SESSION being minted — handing
+/// out live relay authority is the invocation boundary — and reading it as the effect's outcome
+/// would report every freshly opened window as a landed deploy.
+#[test]
+fn minting_a_window_is_not_a_landed_effect() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, _) = open_relay(&broker, "website");
+    assert!(
+        !audit_events_of_type(&broker, "provider_action_succeeded").is_empty(),
+        "the mint IS a successful execution — that is exactly the row this must not misread"
+    );
+    assert_eq!(one_relay_row(&broker).effect_state, None);
+}
+
+/// The plain (non-relay) half: a verb the daemon runs itself already records its own terminal
+/// event, so its row carries `ok` from what is stored, with nothing added to store it.
+#[test]
+fn a_verb_the_daemon_ran_itself_reads_ok_from_its_terminal_event() {
+    let b = audit_fake_github_broker();
+    let outcome = b
+        .request_capability("s1", audit_fake_github_request())
+        .unwrap();
+    b.execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let row = b
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.provider == "github")
+        .expect("the executed verb has a receipt row");
+    assert_eq!(row.effect_state, Some(crate::types::EffectState::Ok));
+    assert_eq!(row.burn_reason, None);
+}
+
+/// `cermet log <request_id>` answers with the SAME derivation the list row's suffix carries, from
+/// the same read — the per-id zoom can never disagree with the list about how a request ended.
+///
+/// It earns its place in the JSON because the alternative is arithmetic: `closed: "ttl"` with
+/// `hops: 0` and `closed: "ttl"` after four hops are different fates, and a window whose daemon
+/// restarted has no `relay_session` at all.
+#[test]
+fn one_requests_evidence_carries_the_same_derived_state_as_its_row() {
+    let (base, _server) = relay_chunked_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .unwrap();
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"other-site","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let evidence = broker.evidence(&outcome.request_id).unwrap();
+    assert_eq!(
+        evidence.effect_state,
+        Some(crate::types::EffectState::Burned)
+    );
+    assert_eq!(
+        evidence.effect_state,
+        one_relay_row(&broker).effect_state,
+        "the two zoom levels read one derivation"
+    );
+    // Derived, never stored: the session's own terminal record carries the raw observations it was
+    // computed from and no state word of its own.
+    let session = evidence.relay_session.as_ref().expect("a closed session");
+    assert!(session.get("effect_state").is_none(), "{session}");
+    assert_eq!(session["closed"], "burned");
+}
+
+/// The one relay receipt row in the log. Every relay test above drives one request, so naming it
+/// this way keeps the assertions about the STATE rather than about list plumbing.
+fn one_relay_row(broker: &Broker) -> GrantView {
+    broker
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.provider == "vercel")
+        .expect("the relay request has a receipt row")
+}
+
 /// The operator's cross-session view: `cermet log --hops` reads this projection, newest
 /// first, so a burn is diagnosable without sudo and sqlite.
 #[test]
@@ -8602,6 +8845,54 @@ fn the_create_response_confines_the_sessions_polls_to_its_own_deployment() {
     assert!(
         broker.relay_session_snapshot(&handle).is_none(),
         "a session probed for a deployment it never created is done"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The drill-down half of the detection: the receipt row advertises `→burned(outcome_mismatch)`,
+/// and `cermet log --hops --burned` is where an operator goes to see WHAT disagreed. The mismatch
+/// row was absent from that view entirely, so the one burn reason whose whole value is
+/// frozen-vs-observed was the one the drill-down could not answer.
+#[test]
+fn an_outcome_mismatch_is_a_burning_hop_in_the_hop_view() {
+    let (base, _rx, server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_prod","url":"u","name":"website","target":"production"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+    server.join().unwrap();
+
+    let hops = broker.relay_hops().unwrap();
+    let mismatch = hops
+        .iter()
+        .find(|hop| hop.event_type == "relay_outcome_mismatch")
+        .expect("the mismatch rides the hop view it is diagnosed from");
+    // The same three marks a burning REFUSAL carries, so ONE filter and one renderer serve every
+    // hop that ended a session.
+    assert_eq!(mismatch.burned, Some(true));
+    assert_eq!(mismatch.reason.as_deref(), Some("outcome_mismatch"));
+    assert_eq!(mismatch.method.as_deref(), Some("POST"));
+    assert_eq!(mismatch.target.as_deref(), Some("/v13/deployments"));
+    assert_eq!(mismatch.upstream_status, Some(200));
+    // The disclosure itself: which field disagreed, and what came back in its place.
+    let detail = mismatch.detail.as_deref().expect("a mismatch discloses");
+    assert!(detail.contains("`target`"), "{detail}");
+    assert!(detail.contains("production"), "{detail}");
+
+    assert!(
+        hops.iter()
+            .any(|hop| hop.event_type == "relay_request_forwarded"),
+        "the forwarded hop is still there — the mismatch is additional to it, not instead of it"
     );
     assert!(broker.verify_integrity().unwrap().verified);
 }

@@ -744,6 +744,45 @@ pub struct RelayOutcomeMismatch {
     pub observed: Option<String>,
 }
 
+impl RelayOutcomeMismatch {
+    /// The single-line disclosure this detection carries into its audit row, and from there into
+    /// `cermet log --hops`.
+    ///
+    /// Unlike a refusal's, it is never sent to the native client: the hop was authorized, forwarded,
+    /// and answered `2xx`, so there is no error body to put it in. It exists for the OPERATOR, who
+    /// has a landed effect to go and deal with and needs to know which field disagreed and by what.
+    /// That the effect landed and nothing undoes it is the row's own `detection` line, so this says
+    /// only what disagreed.
+    ///
+    /// The quoted values go through the same [`capped`] choke point every other disclosure uses:
+    /// `observed` came off a provider response (T1) and the frozen side is whatever the request
+    /// chose where the standing rule pinned nothing.
+    pub(crate) fn detail(&self) -> String {
+        let observed = match &self.observed {
+            Some(value) => format!("`{}`", capped_value(value)),
+            None => "nothing".to_string(),
+        };
+        match &self.expected {
+            Some(expected) => format!(
+                "the approval froze `{}` as `{}`, so the effect's own response had to answer `{}` \
+                 with it; it answered {}",
+                self.field,
+                capped_value(expected),
+                self.key,
+                observed
+            ),
+            // The absence arm is not an edge case — it is how a real provider encodes the common
+            // case (Vercel has no `target: preview`, so an approved preview expects NO target key
+            // back), and "froze nothing" would be exactly the wrong thing to tell an operator.
+            None => format!(
+                "the approval froze `{}`, which this provider encodes as an ABSENT `{}` in the \
+                 effect's own response; it answered {}",
+                self.field, self.key, observed
+            ),
+        }
+    }
+}
+
 /// One live relay session: a single-use grant's effect, held open for its TTL.
 ///
 /// It is a FROZEN copy of what the grant authorized — the predicate the ratified template declared and

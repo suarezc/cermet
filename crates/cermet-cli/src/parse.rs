@@ -30,7 +30,7 @@ AGENT WORK — capability requests and their receipts:
                             [--ask-only] [--retry-effect <effect_id>]
                                                    (decide AND execute; --ask-only prints the decision as JSON)
     run --resume <request_id>                      (execute a decided request; its fields stay frozen)
-    log [--since <RFC3339>] [--provider <p>] [--denied] [--hops] [--all]
+    log [--since <RFC3339>] [--provider <p>] [--denied] [--burned] [--hops] [--all]
                                                    (the receipt log: newest 100 rows unless --all)
     log <request_id>                               (one request's record, as JSON)
     artifact <handle> [--range <unit>:<start>[-<end>] | --path '$.a.b']
@@ -76,14 +76,21 @@ run --resume <request_id>
     request was decided.";
 
 const LOG_USAGE: &str = "\
-log [--since <RFC3339>] [--provider <name>] [--denied] [--hops] [--all]
+log [--since <RFC3339>] [--provider <name>] [--denied] [--burned] [--hops] [--all]
     The receipt log, newest first. Each row names its request id and the justification the request
     carried; pass that id to `log <request_id>` for the whole record. Without --all it renders the
     100 most recent rows and says so on a final line — the filters narrow the log FIRST, then the
     window applies.
+    A row ENDS with what became of the effect its decision authorized, where the record determines
+    one: `→ok` (the effect landed), `→burned(<reason>)` (a refusal ended the relay session),
+    `→expired_unused` (the window ended having driven nothing), `→unresolved` (it ended after hops
+    with nothing saying the effect landed). No suffix means the record does not say — a window still
+    in flight, a request decided and not executed, or an effect whose failure the row already names.
       --since <RFC3339>   only rows at or after that instant, e.g. 2026-08-03T00:00:00Z
       --provider <name>   only that provider's rows
       --denied            only the refusals
+      --burned            only the rows whose relay grant BURNED — allowed, then ended by a
+                          refused hop (on --hops, the burning hops themselves)
       --hops              the relay hop view instead of the grant receipt
       --all               every row, unwindowed
 log <request_id>
@@ -462,6 +469,7 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
     let mut since = None;
     let mut provider = None;
     let mut denied_only = false;
+    let mut burned_only = false;
     let mut hops = false;
     let mut all = false;
     let mut positionals: Vec<String> = Vec::new();
@@ -477,6 +485,9 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
                 return Err(CliError::Usage("log accepts --provider only once".into()));
             }
             "--denied" => denied_only = true,
+            // The same question one layer down: --denied finds what authority refused, --burned
+            // finds what it allowed and the effect layer then ended.
+            "--burned" => burned_only = true,
             // the relay hop view. Same `--since` bound; `--denied` narrows it to the
             // refusals, which is the same question one flag deeper.
             "--hops" => hops = true,
@@ -494,13 +505,20 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
             since,
             provider,
             denied_only,
+            burned_only,
             hops,
             all,
         });
     }
     // The id form is a different question — one request's evidence — so the list-narrowing flags
     // have nothing to narrow, and a second id is two questions.
-    if positionals.len() > 1 || since.is_some() || provider.is_some() || denied_only || hops || all
+    if positionals.len() > 1
+        || since.is_some()
+        || provider.is_some()
+        || denied_only
+        || burned_only
+        || hops
+        || all
     {
         return Err(CliError::Usage(format!(
             "log <request_id> renders one request's record as JSON; the list flags \

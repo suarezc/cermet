@@ -153,6 +153,54 @@ pub(crate) struct RelayAuditEvent {
     pub data: Value,
 }
 
+/// One string field of an event's recorded data, by name. An event that never carried it simply has
+/// none — nothing here reconstructs a field.
+fn text(data: &Value, key: &str) -> Option<String> {
+    data.get(key)
+        .and_then(Value::as_str)
+        .map(std::string::ToString::to_string)
+}
+
+/// What one grant's effect layer RECORDED — the raw material [`crate::types::EffectState`] is
+/// derived from. Every member is an observation read off a row the broker already writes; none of it
+/// is a conclusion, and none of it is stored in this shape.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct EffectSignals {
+    /// Whether any relay event names this grant at all. It separates the two effect layers: a relay
+    /// verb's effect is a hop inside its window, a plain verb's effect is the daemon's own
+    /// credentialed call.
+    pub relay: bool,
+    /// The deadline the approval set on the window (epoch seconds), as the session's own rows
+    /// declare it.
+    pub expires_at: Option<i64>,
+    /// How many hops the window forwarded upstream.
+    pub hops: u64,
+    /// The stable reason word of the refusal that burned the session, when one did.
+    pub burned: Option<String>,
+    /// How the window ended, when a terminal record exists. `None` for a window still open — and
+    /// also for one whose daemon restarted before it could close, which is why the clock is
+    /// consulted too.
+    pub closed: Option<String>,
+    /// The last word an effect-bearing HOP recorded: `Some(true)` a 2xx, `Some(false)` a failure or
+    /// a landed effect the approval's own outcome assertion contradicted.
+    pub hop_landed: Option<bool>,
+    /// The last word the grant's TERMINAL execution event recorded. For a relay verb this is the
+    /// session being minted, never a deploy landing.
+    pub terminal_landed: Option<bool>,
+}
+
+impl EffectSignals {
+    /// The last word about the grant's own effect: the hop for a relay verb, the terminal execution
+    /// event for every other. `None` when nothing recorded one either way.
+    pub(crate) fn landed(&self) -> Option<bool> {
+        if self.relay {
+            self.hop_landed
+        } else {
+            self.terminal_landed
+        }
+    }
+}
+
 pub struct NewEvent<'a> {
     pub session_id: Option<&'a str>,
     pub event_type: &'a str,
@@ -826,6 +874,11 @@ impl AuditLog {
             "relay_request_forwarded",
             "relay_request_refused",
             "relay_request_failed",
+            // A hop the relay authorized, forwarded, and then found contradicted the approval. It
+            // ends the session exactly as a burning refusal does, and it is the burn whose whole
+            // value to an operator is the frozen-vs-observed pair on its own row — so the view a
+            // burn is diagnosed from is precisely where it has to appear.
+            "relay_outcome_mismatch",
             "relay_session_closed",
         ];
         let mut stmt = self.conn.prepare(
@@ -948,6 +1001,103 @@ impl AuditLog {
             .collect();
         classes.extend(terminal);
         Ok(classes)
+    }
+
+    /// The recorded SIGNALS each grant's effect layer left behind — ONE type-scoped read for a whole
+    /// receipt log, the [`Self::effect_failure_classes`] shape.
+    ///
+    /// This returns observations only. It concludes nothing: whether a window that forwarded no hops
+    /// and holds no terminal record is "in flight" or "expired unused" depends on a clock this read
+    /// does not hold, and the view join that owns the clock draws that line
+    /// ([`crate::types::EffectState`]). Nothing new is stored to make any of it answerable — every
+    /// field below is read out of rows the broker was already writing.
+    ///
+    /// Deliberately NOT a chain-verification pass, for the [`Self::effect_failure_classes`] reason:
+    /// this is a legibility projection, not a custody claim. Nothing here gates a retry, releases a
+    /// budget, or authorizes anything, and the receipt row it feeds is still rendered only when its
+    /// own grant HMAC authenticates. A row whose data will not parse contributes nothing rather than
+    /// failing the whole log.
+    pub(crate) fn effect_signals(
+        &self,
+    ) -> Result<std::collections::HashMap<String, EffectSignals>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT type, data_json FROM audit_events
+             WHERE type IN ('relay_session_opened', 'relay_request_forwarded',
+                            'relay_request_refused', 'relay_request_failed',
+                            'relay_session_closed', 'relay_outcome_mismatch',
+                            'provider_action_succeeded', 'provider_action_failed')
+             ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out: std::collections::HashMap<String, EffectSignals> =
+            std::collections::HashMap::new();
+        for row in rows {
+            let (event_type, data_json) = row?;
+            let Ok(data) = serde_json::from_str::<Value>(&data_json) else {
+                continue;
+            };
+            let Some(grant_id) = data.get("grant_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let signals = out.entry(grant_id.to_string()).or_default();
+            match event_type.as_str() {
+                // The window's own two rows: the one that declares its deadline, and the one that
+                // says it is over. Both carry `expires_at`, and it is the same number.
+                "relay_session_opened" => {
+                    signals.relay = true;
+                    signals.expires_at = data.get("expires_at").and_then(Value::as_i64);
+                }
+                "relay_session_closed" => {
+                    signals.relay = true;
+                    signals.closed = text(&data, "closed");
+                    if signals.expires_at.is_none() {
+                        signals.expires_at = data.get("expires_at").and_then(Value::as_i64);
+                    }
+                    // The terminal receipt carries the burning refusal's reason word too. Read as a
+                    // fallback for a session whose per-hop row this pass could not parse, never as
+                    // an override: a session burns once, and the FIRST record of it is the hop.
+                    if signals.burned.is_none() {
+                        signals.burned = text(&data, "burned");
+                    }
+                }
+                // Counted from the durable per-hop rows rather than from the closing receipt's own
+                // tally, so a window with no terminal record (its daemon restarted) still reports
+                // what it drove.
+                "relay_request_forwarded" => {
+                    signals.relay = true;
+                    signals.hops = signals.hops.saturating_add(1);
+                }
+                "relay_request_refused" => {
+                    signals.relay = true;
+                    if signals.burned.is_none()
+                        && data.get("burned").and_then(Value::as_bool) == Some(true)
+                    {
+                        signals.burned = text(&data, "reason");
+                    }
+                }
+                "relay_outcome_mismatch" => {
+                    signals.relay = true;
+                    if signals.burned.is_none() {
+                        signals.burned = Some("outcome_mismatch".to_string());
+                    }
+                }
+                "relay_request_failed" => signals.relay = true,
+                _ => {}
+            }
+            // The LAST word about the effect, rowid-ordered — the [`Self::effect_failure_classes`]
+            // rule, and it must agree with it. A relay grant's terminal
+            // `provider_action_succeeded` records the SESSION being minted, not a deploy landing, so
+            // it is never read as the effect's outcome; the effect of a relay verb is its
+            // effect-bearing hop and nothing else.
+            match (event_type.as_str(), effect_verdict(&event_type, &data)) {
+                ("provider_action_succeeded", _) => signals.terminal_landed = Some(true),
+                ("provider_action_failed", _) => signals.terminal_landed = Some(false),
+                (_, EffectVerdict::Landed) => signals.hop_landed = Some(true),
+                (_, EffectVerdict::Failed(_)) => signals.hop_landed = Some(false),
+                (_, EffectVerdict::Silent) => {}
+            }
+        }
+        Ok(out)
     }
 
     /// When each grant's effect REACHED ITS END, from the terminal execution event's own `ts` — one

@@ -20,7 +20,7 @@ pub use error::{Error, ExecuteRefusal, Result};
 pub use quiesce::{McpQuiesceStatus, McpRepointBegin, McpRepointStatusReport, QuiesceGrantNote};
 pub use types::{
     AuditEventView, CapabilityRequest, ConnectOutcome, Decision, DeniedRequestView,
-    EffectFailureClass, EffectOutcome, ExecOutcome, ExecutionEvidenceView, ExecutionResult,
-    FailureSignal, GrantStatus, GrantView, ReceiptEnvelope, RelayHopView, RequestEvidenceView,
-    RequestLogView, RequestOutcome, SafeCredential, WireStats,
+    EffectFailureClass, EffectOutcome, EffectState, ExecOutcome, ExecutionEvidenceView,
+    ExecutionResult, FailureSignal, GrantStatus, GrantView, ReceiptEnvelope, RelayHopView,
+    RequestEvidenceView, RequestLogView, RequestOutcome, SafeCredential, WireStats,
 };

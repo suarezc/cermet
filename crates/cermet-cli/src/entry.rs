@@ -293,6 +293,7 @@ fn run_cli(args: &[String]) -> u8 {
         since,
         provider,
         denied_only,
+        burned_only,
         hops,
         all,
     } = &cmd
@@ -306,6 +307,7 @@ fn run_cli(args: &[String]) -> u8 {
             since: since.as_deref(),
             provider: provider.as_deref(),
             denied_only: *denied_only,
+            burned_only: *burned_only,
             all: *all,
         };
         // `--hops` is the relay view of the same log — what the native client did with a

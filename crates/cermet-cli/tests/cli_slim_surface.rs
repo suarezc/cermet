@@ -333,12 +333,56 @@ fn log_declares_its_window_and_its_filters() {
         );
     }
     let log_help = cermet_cli::help_text(&argv(&["log", "--help"])).expect("log has help");
-    for declared in ["--since", "--provider", "--denied", "--hops", "--all"] {
+    for declared in [
+        "--since",
+        "--provider",
+        "--denied",
+        "--burned",
+        "--hops",
+        "--all",
+    ] {
         assert!(
             log_help.contains(declared),
             "`log --help` must declare {declared}:\n{log_help}"
         );
     }
+    // The row's effect-layer suffix is behavior, so it is DECLARED: every token it can carry is in
+    // the help text an operator or an agent reads before they read a log.
+    for token in ["→ok", "→burned(", "→expired_unused", "→unresolved"] {
+        assert!(
+            log_help.contains(token),
+            "`log --help` must declare the {token} suffix:\n{log_help}"
+        );
+    }
+}
+
+/// `--burned` parses like its sibling `--denied`: a bare list flag, composable with the others, and
+/// refused on the one-request form, which has no list to narrow.
+#[test]
+fn log_burned_is_a_list_filter_beside_denied() {
+    assert!(matches!(
+        parse(&argv(&["log", "--burned"])).unwrap(),
+        CliCommand::Log {
+            burned_only: true,
+            denied_only: false,
+            hops: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        parse(&argv(&["log", "--hops", "--burned"])).unwrap(),
+        CliCommand::Log {
+            hops: true,
+            burned_only: true,
+            ..
+        }
+    ));
+    let narrowed = parse(&argv(&["log", "--provider", "vercel", "--burned"])).unwrap();
+    assert!(
+        matches!(&narrowed, CliCommand::Log { provider: Some(p), burned_only: true, .. } if p == "vercel"),
+        "{narrowed:?}"
+    );
+    assert!(usage_of(&["log", "req_1", "--burned"]).contains("log <request_id>"));
 }
 
 #[test]
