@@ -1,3 +1,4 @@
+**This project is undergoing rapid development driven by the owner, if you're experiencing issues or regressions please raise an issue**
 # Cermet
 
 **Aggregate Credentials, Disaggregate Authority**
