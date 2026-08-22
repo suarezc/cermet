@@ -213,6 +213,12 @@ pub fn render_hop_log(rows: &[RelayHopView]) -> String {
             if row.effect == Some(true) {
                 line.push_str(" [the grant's single effect]");
             }
+            // Last, and after the burn/effect marks: the reason WORD stays where a reader's eye
+            // and a `grep` both already find it, and the detail — which is a sentence, not a
+            // token — follows the short columns rather than pushing them off the line.
+            if let Some(detail) = &row.detail {
+                line.push_str(&format!(" — {}", one_line(detail)));
+            }
             line
         })
         .collect::<Vec<_>>()
@@ -933,6 +939,7 @@ mod hop_tests {
             target: None,
             upstream_status: None,
             reason: None,
+            detail: None,
             effect: None,
             response_bytes: None,
             burned: None,
@@ -956,6 +963,11 @@ mod hop_tests {
         refused.target = Some("/v13/deployments".into());
         refused.reason = Some("bind_mismatch".into());
         refused.burned = Some(true);
+        refused.detail = Some(
+            "the approval froze `target`, so this hop's `target` body key must be absent; it \
+             carried `production`"
+                .into(),
+        );
         let mut closed = hop("relay_session_closed", "2026-08-01T10:00:03Z");
         closed.closed = Some("burned".into());
         closed.reason = None;
@@ -971,9 +983,13 @@ mod hop_tests {
             out.contains("HOP vercel.deploy GET /v13/deployments/dpl_1 — 200 (1234 bytes)"),
             "{out}"
         );
+        // The reason WORD keeps its column — it is the machine-readable code and what a reader
+        // greps — and the detail follows the short marks rather than pushing them off the line.
         assert!(
             out.contains(
-                "REFUSED vercel.deploy POST /v13/deployments — bind_mismatch (burned the session)"
+                "REFUSED vercel.deploy POST /v13/deployments — bind_mismatch (burned the session) \
+                 — the approval froze `target`, so this hop's `target` body key must be absent; it \
+                 carried `production`"
             ),
             "{out}"
         );

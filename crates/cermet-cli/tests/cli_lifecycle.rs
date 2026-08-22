@@ -360,9 +360,14 @@ fn hint_rule(outcome: &Value) -> String {
     let hint = outcome["hint"]
         .as_str()
         .expect("deny must carry widen hint");
-    let quoted = hint
-        .strip_prefix("to allow: cermet rules allow ")
-        .expect("hint must be an executable cermet rules allow command");
+    // The command is the TAIL of the hint, and everything after the marker is the command itself.
+    // A hint may carry a LEADING clause — a widening that keeps a pin the request omitted says so
+    // first — but nothing may follow the closing quote, or what an operator pastes is broken.
+    const MARKER: &str = "to allow: cermet rules allow ";
+    let at = hint
+        .find(MARKER)
+        .expect("hint must carry an executable cermet rules allow command");
+    let quoted = &hint[at + MARKER.len()..];
     assert!(quoted.starts_with('\'') && quoted.ends_with('\''), "{hint}");
     quoted[1..quoted.len() - 1].replace("'\"'\"'", "'")
 }
@@ -712,4 +717,77 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     drop(agent);
     daemon.stop();
     std::env::remove_var("CERMET_STRIPE_BASE_URL");
+}
+
+/// A widening suggestion that still carries a pin the request omitted must stay a RUNNABLE command.
+///
+/// The two consumers both read everything after `to allow: ` as the command — the MCP bridge labels
+/// it "Advisory widen command", and an operator pastes it — so a residual-pin sentence trailing the
+/// closing quote turns the one actionable line a deny carries into a broken shell invocation. This
+/// drives the real deny through the daemon, extracts the command with the same helper the rest of
+/// the lifecycle uses, and RUNS it.
+#[test]
+fn a_widening_that_keeps_an_omitted_pin_is_still_a_runnable_command() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    let presence = Arc::new(CountingPresence::default());
+    let daemon = start_daemon(&runtime, state.path(), 1);
+    let mut agent = AgentSession::connect(&daemon.agent_socket);
+
+    // `team` is OPTIONAL on this verb, so a request omitting it is legal — and this rule pins it.
+    let seed = "allow vercel.deploy where project = \"site\" and target = \"preview\" and team = \
+                \"team_ours\"";
+    let seeded = authority(
+        &daemon,
+        repo.path(),
+        presence.clone(),
+        &["rules", "allow", seed, "--yes"],
+    );
+    assert_eq!(seeded.exit_code, 0, "{}", seeded.text);
+
+    // A production deploy that names no scope: `target` is genuinely out of bounds (it widens), and
+    // `team` was simply never spoken to (it must survive). That is the MIXED hint.
+    let denied = agent.request(
+        "vercel",
+        "deploy",
+        json!({"project": "site", "target": "production"}),
+    );
+    assert_eq!(denied["decision"], "deny", "{denied}");
+    let hint = denied["hint"]
+        .as_str()
+        .expect("a deny carries its next move");
+    assert!(
+        hint.contains("`team`") && hint.contains("omitted"),
+        "the residual pin is named: {hint}"
+    );
+
+    // The helper asserts the quoted argument is well-formed and nothing trails it.
+    let rule = hint_rule(&denied);
+    assert!(
+        rule.contains("team = \"team_ours\""),
+        "the pin rides INSIDE the command, verbatim: {rule}"
+    );
+    assert!(
+        rule.contains("target in {\"preview\", \"production\"}"),
+        "and the real widening is what the command does: {rule}"
+    );
+
+    // ...and it runs.
+    let widened = authority(
+        &daemon,
+        repo.path(),
+        presence.clone(),
+        &["rules", "allow", &rule, "--yes"],
+    );
+    assert_eq!(widened.exit_code, 0, "{}", widened.text);
+    assert!(
+        widened.text.contains(&canonical_allow(&rule)),
+        "{}",
+        widened.text
+    );
 }

@@ -234,6 +234,7 @@ upstream answered.
 | `upstream_status` | What the upstream answered on a forwarded hop. |
 | `response_bytes` | How many bytes came back on a forwarded hop. |
 | `reason` | Why a hop was refused, or why a forwarded one failed — the broker's stable reason word (see §8 for the full set). |
+| `detail` | What that refusal knew beyond its reason word, in one line: the offending field or key, the frozen constraint *as it was enforced*, the value the hop offered, and — where one is computable — the remedy. Absent on the classes whose reason word is the whole fact. The reason word does not move: `detail` is additional to it, never a rewriting of it, so anything matching on `reason` keeps matching. See §8.6. |
 | `effect` | Whether this hop is the grant's single effect. A relay session authorizes exactly one effect-bearing shape; every other hop is read traffic. |
 | `burned` | Whether this refusal burned the session. A hop that misses the predicate or contradicts a frozen field is a session being probed, so the session is done: every later hop renders as an unknown handle. A lapsed TTL or an unknown handle burns nothing (there is nothing live to burn), and an oversized body is a transport limit rather than a probe. |
 | `closed` | On the `relay_session_closed` row only: how the session ended. `burned` (a refusal ended it), `ttl` (the declared lifetime lapsed), `authority_changed` (the sentence corpus the session was minted under is no longer live), `lockdown_engaged` (the owner's revocation root was pulled). |
@@ -241,7 +242,8 @@ upstream answered.
 In the `--hops` list rendering, `event_type` is printed as a word — `OPENED`, `HOP`, `REFUSED`,
 `FAILED`, `CLOSED` — and an event type the renderer does not know is printed verbatim rather than
 guessed at. `burned` renders as the suffix `(burned the session)`; `effect` renders as
-`[the grant's single effect]`.
+`[the grant's single effect]`. `detail` renders last, after those marks: the reason word keeps its
+short column where a reader and a `grep` both already find it, and the sentence follows.
 
 ### 1.8 The relay session receipt
 
@@ -257,6 +259,7 @@ plus how it ended.
 | `refusals` | How many hops it refused. |
 | `burned` | The reason word of the refusal that burned the session, or absent if nothing burned it. |
 | `burned_method`, `burned_target` | The method and target of the hop that burned it, bounded to a fixed character count. They are here so an agent can self-diagnose what it asked for without an operator reading the audit chain out of the daemon. |
+| `burned_detail` | *Why* it burned — the same one-line disclosure the hop view's `detail` carries, for the refusal that ended the session. Absent when nothing burned it, or when the burning class had nothing beyond its reason word. |
 | `deployment_id`, `deployment_url`, `state` | What the session's declared captures observed in the effect's own response. Capture is write-once per name: an effect's response can legitimately be observed more than once, and a re-pointable session would be a cross-hop hole with an extra step. |
 
 ### 1.9 Typed deny reasons
@@ -332,7 +335,7 @@ able to move the terminal's cursor or reorder what is displayed.
 One line per relay event, newest first, using the §1.7 vocabulary:
 
 ```
-<at>  <VERB> <provider>.<action> <method> <target> — <upstream_status> (<n> bytes) — <closed> — <reason> (burned the session) [the grant's single effect]
+<at>  <VERB> <provider>.<action> <method> <target> — <upstream_status> (<n> bytes) — <closed> — <reason> (burned the session) [the grant's single effect] — <detail>
 ```
 
 A hop line identifies itself by time, verb, and target. It never names a grant handle: `request_id`
@@ -1293,8 +1296,8 @@ denied — <provider>.<action>
 
 ### 8.3 The widening suggestion
 
-`hint` is the advisory command that would widen authority to admit this exact request. It is
-addressed to whoever holds authority, it grants nothing, and it is computed two different ways:
+`hint` is the advisory next move a deny carries. It is addressed to whoever holds authority, it
+grants nothing, and it is computed two different ways:
 
 - **When a rule matched and its bounds refused** (missing field, predicate mismatch), the suggestion
   widens an *existing* rule: the first rule in corpus order that covers this verb, names no
@@ -1306,7 +1309,39 @@ addressed to whoever holds authority, it grants nothing, and it is computed two 
   least-privilege *first* allow: every pinnable execution target of the contract pinned to exactly
   the value this request supplied. A contract with no pinnable target yields a bare allow.
 
-Both render as `to allow: cermet rules allow '<rule text>'`.
+Both END in `to allow: cermet rules allow '<rule text>'`, and **nothing ever follows the closing
+quote**: every consumer reads the whole remainder after `to allow: ` as the command itself — the MCP
+projection labels it *Advisory widen command*, and an operator pastes it — so a trailing word turns
+the one actionable line a deny carries into a broken invocation. A hint with something extra to say
+says it BEFORE that marker, as a leading clause, and the projection then renders the whole line as
+*Advisory widen hint* prose. There are three shapes in all:
+
+| shape | grammar |
+|---|---|
+| a plain widening | `to allow: cermet rules allow '<rule text>'` |
+| a widening that keeps a pin the request omitted | `<leading clause naming the omitted field> — to allow: cermet rules allow '<rule text>'` |
+| an omitted pin with nothing to widen | prose only; no command (below) |
+
+**A conjunct over a field the request OMITTED is carried into the suggestion verbatim, value and
+all.** It is not a conjunct that failed — it is one the request never spoke to — and dropping it is
+not a relaxation but the DELETION of a scope the operator wrote. Carrying it discloses nothing: the
+pinned value is rule text the operator authored. The leading clause says so in words, naming the
+field the request left out, because a rule that still pins something the request never named is not
+a rule that request would then pass:
+
+```
+this request also omitted `team`, which the rule pins and this suggestion keeps, so name it in the request too — to allow: cermet rules allow 'vercel.deploy where project = "site" and target in {"preview", "production"} and team = "team_ours"'
+```
+
+When the omitted pin is the ONLY thing between the request and the rule — every other conjunct
+matched — there is no widening to propose at all: the one rule text that would admit the request is
+this rule with the pin deleted, which a denial does not get to suggest on a requester's behalf. The
+hint then addresses the REQUEST and prints no `cermet rules allow` line, since a remedy must not
+point at a surface that lacks the answer:
+
+```
+the standing rule `allow vercel.deploy where project = "site" and team = "team_ours"` pins `team`, and this request named no such field; name it in the request — no rule change admits it while that pin stands
+```
 
 No hint is attached to an explicit deny (settled — an explicit deny is not a widening candidate), an
 unknown verb, an unsupported ruleset version, or a budget exhaustion. The budget case is deliberate:
@@ -1384,7 +1419,7 @@ the session.
 | `session_expired` | 410 | no | The session's declared TTL lapsed. |
 | `malformed_request` | 400 | yes | The request path is not something the relay will forward at all. |
 | `no_matching_shape` | 422 | yes | The request matched no enumerated predicate shape — its method, path, or a query key the rule does not declare. |
-| `bind_mismatch` | 422 | yes | The shape matched, and a bound frozen field disagreed with the request. |
+| `bind_mismatch` | 422 | yes | The shape matched, and a bound frozen field disagreed with the request — or the shape declares a closed body surface and the body is not a JSON object at all. |
 | `undeclared_body_key` | 422 | yes | The body carried a top-level key the rule does not declare. The refusal names the offending keys — names only, capped, never values — because a refusal that will not say which key it refused makes widening guesswork. |
 | `effect_already_used` | 409 | yes | The single effect this grant authorizes has already passed. |
 | `cap_exceeded_uses` | 422 | yes | The shape's declared per-session use budget has no room left. |
@@ -1400,11 +1435,57 @@ No relay refusal ever answers 401 or 403. Both are lies about what happened — 
 the capability is spent or the request is outside it — and native CLIs turn them into "log in again",
 which sends an agent re-authenticating forever.
 
-The message a native client sees names the cause in words and points at the hop log, for example:
+#### What a refusal discloses
+
+At the moment it refuses, the relay already holds the frozen field map, the offending key, and the
+shape inventory. Disclosure is saying what it already holds: no new authority, no new state. Every
+value a refusal names is one of four things:
+
+- **Descriptor text** — the ratified verb's own `method`/`path` patterns, read out of the template
+  document the installer publishes world-readable under the shared catalog directory
+  (`.../share/cermet/catalog/actions.d/<provider>.<action>.yaml`). Anyone who can reach the loopback
+  door can already read it. (`cermet catalog` is *not* that surface: it projects a verb's fields and
+  bounds, not its relay predicate.)
+- **A field *this* caller's own approval froze.**
+- **A value off the hop *this* caller just wrote.**
+- **A value *this* caller's own session already received** — a capture taken from the response to
+  its own approved effect.
+
+A credential structurally cannot reach here, because the deciding module holds none. Every detailed
+class is also reachable only by a caller already holding a live handle, so a peer uid guessing
+handles learns nothing (T3).
+
+Everything borrowed from a caller — offered values, key names, the attempted path, and the frozen
+side of a bind wherever the standing rule pinned nothing and the request chose the value — passes
+through one choke point that both **bounds** it (an audit row is durable and the length is the
+caller's to choose) and **neutralizes terminal-affecting characters** in it (control characters and
+the bidi/directional set become spaces). The detail reaches the operator's terminal twice over — the
+native client prints the error body verbatim, and `cermet log --hops` prints the same line off the
+audit row — so an escape sequence in a request field would otherwise replay live.
+
+It is UNIFORM by design. A layer that names its field while its neighbour stays silent teaches
+requesters that silence means "that part was fine", so every class either discloses what it knows or
+has nothing left to say. The reason word stays the machine-readable code; the disclosure is the
+separate `detail` field beside it, and is also folded into `message` because that is the only field
+a native CLI surfaces.
+
+| reason | `detail` carries |
+|---|---|
+| `bind_mismatch`, frozen field | The frozen FIELD, the wire position and key it is bound at (`teamId` query parameter, `target` body key), the constraint AS ENFORCED, and what the hop offered. The constraint is stated as enforced, never as the raw frozen value: an `omit:` transform binds a frozen value to the key's ABSENCE, so it reads "must be absent", not "must carry `preview`" — a refusal reporting the literal there would send the requester straight back into the same refusal. What arrived is stated as itself: absent, a value, a bare `?key` with no `=`, a key repeated (ambiguous upstream), or a non-string. The remedy names the re-request shape with the key set to the enforced value. |
+| `bind_mismatch`, captured bind | A path wildcard is bound to a `captured.<name>` — what *this session's own effect* returned — which is a different provenance and says so: a capture is the approved effect's consequence and is deliberately not something an approval can pin in advance, so the detail never claims the grant froze it. It carries no re-request remedy either: a fresh grant has captured nothing, so that hop lands on the nothing-captured arm below and refuses with the opposite message. What it says instead is to drive the native client at the deployment this session created. When nothing is captured yet, it says that the session's own effect has not landed and offers no remedy at all. |
+| `no_matching_shape` | The method and path attempted, the admitted shapes as `METHOD /path` patterns, and the next step: re-send an admitted shape, or ratify this one in the verb's predicate (shapes are enumerated by the ratified template, not by any sentence rule, so widening them is a template edit). When the method and path DID match a shape and only key closure refused, it names the offending query key(s) and that one shape instead — the inventory is noise once the shape is known — with both remedies, since either party may be the one to act. |
+| `undeclared_body_key` | The offending key names, and the same two remedies. Names only, capped, never values. |
+| `cap_exceeded_uses`, `cap_exceeded_bytes` | Which `caps:` dimension ran out, and that raising it is a template edit. |
+| everything else | Nothing. Their reason word IS the whole fact, and a detail there would be invented rather than disclosed. |
+
+The message a native client sees names the cause in words, carries the same detail, and points at
+the hop log. Its opening clause branches with the detail's provenance — a captured bind never claims
+an approval froze what the effect returned:
 
 ```
-cermet: this request contradicts a field the approval froze — see `cermet log --hops`
-cermet: the approved sentence does not authorize this request — see `cermet log --hops`, and widen the rule if it should
+cermet: this request contradicts a field the approval froze — the grant froze `team`, so this hop's `teamId` query parameter must carry `team_ours`; it carried `team_other`; grants are single-use, so request the capability again and drive the native client so `teamId` carries `team_ours` — see `cermet log --hops`
+cermet: this request reaches past the single effect this grant authorized — this session's own effect returned `dpl_ours` as `captured.deployment_id`, so this hop's `/v13/deployments/*` path must carry it; it carried `dpl_theirs`; a session reads only the effect it created, so drive the native client at that one — see `cermet log --hops`
+cermet: the approved sentence does not authorize this request — nothing the approved verb admits matches `GET /v9/projects/website/env`; it admits `POST /v13/deployments`, `GET /v2/user`, …; re-send one of those, or ratify this shape in the verb's predicate if it belongs to the verb — see `cermet log --hops`
 ```
 
 Three refusals fire before a session even opens: the relay is disabled in the daemon config, too many

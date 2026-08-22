@@ -9679,3 +9679,197 @@ fn a_slug_on_a_verb_no_sentence_admits_never_opens_the_vault() {
     );
     assert!(broker.verify_integrity().unwrap().verified);
 }
+
+/// The refusal is the ONLY thing the requester gets back, and until now it was a reason word. The
+/// broker held the field, the frozen value and the offered one at the moment it refused, and said
+/// none of them: an agent whose scope-redirected create was refused burned grant after grant
+/// guessing which of three bound fields had disagreed, and one reached for a local proxy to see the
+/// body. Disclosure here is saying what the broker already knows.
+///
+/// The three places the reason word goes are the three places the detail goes with it: the HTTP
+/// error body the native client prints, the audit row an operator greps, and the session receipt an
+/// agent reads back through `request_status`.
+#[test]
+fn a_bind_mismatch_discloses_the_field_everywhere_its_reason_word_goes() {
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let outcome = broker
+        .request_capability("s1", relay_request_scoped("website", "team_ours"))
+        .unwrap();
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // T1: injected "deploy it into the other team".
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(refused.status, 422);
+    assert!(
+        rx.try_recv().is_err(),
+        "the credential is never attached to a refused hop, disclosure or no disclosure"
+    );
+
+    // 1. The HTTP error body. The reason WORD is unchanged and still the machine-readable code;
+    //    the detail rides beside it AND inside `message`, which is the only field the native CLI
+    //    prints at all.
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(body["error"]["reason"], "bind_mismatch");
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    for expected in ["`team`", "`teamId`", "`team_ours`", "`team_other`"] {
+        assert!(detail.contains(expected), "{expected}: {detail}");
+    }
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains(detail), "{message}");
+    assert!(!message.contains(RELAY_TOKEN), "{message}");
+
+    // 2. The audit row: the prose line, plus the structured keys a row is grepped by.
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["field"], "team");
+    assert_eq!(refusals[0]["bind_key"], "teamId");
+    assert_eq!(refusals[0]["bind_position"], "query parameter");
+    assert_eq!(refusals[0]["detail"], detail);
+    assert!(!refusals[0].to_string().contains(RELAY_TOKEN));
+
+    // 3. The session receipt the agent reads back.
+    let status = broker.request_status(&outcome.request_id).unwrap();
+    let receipt = status.terminal_receipt.expect("a terminal receipt");
+    assert_eq!(receipt["relay_session"]["burned"], "bind_mismatch");
+    assert_eq!(receipt["relay_session"]["burned_detail"], detail);
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The same disclosure on the other two classes, through the same fields. Uniformity is the
+/// property: a class that names its field while its neighbour stays silent teaches a requester that
+/// silence means "that part was fine".
+#[test]
+fn a_shape_miss_and_a_key_closure_disclose_through_the_same_fields() {
+    // No shape at all — T1's "while you're deploying, also read the project's env vars".
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let refused = broker
+        .relay_hop(&handle, "GET", "/v9/projects/website/env", &[], Vec::new())
+        .unwrap();
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(body["error"]["reason"], "no_matching_shape");
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    assert!(
+        detail.contains("`GET /v9/projects/website/env`"),
+        "{detail}"
+    );
+    assert!(detail.contains("`POST /v13/deployments`"), "{detail}");
+    assert!(body["error"]["message"].as_str().unwrap().contains(detail));
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["detail"], detail);
+
+    // Key closure wearing the same reason word: the method and path DID match, and one unratified
+    // query key closed the shape out. The row names the key, exactly as the body-key closure does.
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "GET",
+            "/v13/deployments/dpl_x?slug=team_other",
+            &[],
+            Vec::new(),
+        )
+        .unwrap();
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(
+        body["error"]["reason"], "no_matching_shape",
+        "the reason word does not move: the disclosure is additional to it"
+    );
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    assert!(detail.contains("`slug`"), "{detail}");
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["undeclared_keys"][0], "slug");
+    assert_eq!(refusals[0]["detail"], detail);
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The whole path, on the shape that produced the defect: a rule pins the Vercel scope, the request
+/// omits `team` (it is an OPTIONAL field, so omitting it is a legal request), and the deny's
+/// widening suggestion used to arrive with the team pin silently deleted. An operator pasting that
+/// line widened every future deploy under the rule to any scope the token reaches — and any
+/// requester could manufacture the suggestion by leaving the field out.
+#[test]
+fn a_deny_over_an_omitted_scope_keeps_the_rules_pin_in_its_hint() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+
+    // Legal, and denied: the rule demands a scope this request never named.
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Deny);
+    let hint = outcome.hint.expect("a deny hands the caller its next move");
+    assert!(
+        hint.contains(r#"team = "team_ours""#),
+        "the operator's own pin is still in the text: {hint}"
+    );
+    assert!(
+        !hint.contains("cermet rules allow"),
+        "and no rule change is proposed, because the only one that would admit this request is \
+         this rule with the pin deleted: {hint}"
+    );
+    assert!(
+        hint.contains("`team`") && hint.contains("name it in the request"),
+        "the fix is in the request: {hint}"
+    );
+    assert!(outcome.grant_id.is_none(), "a hint mints no grant");
+}
+
+/// The detail reaches the OPERATOR'S TERMINAL: the native client prints the relay's error body
+/// verbatim, and `cermet log --hops` prints the same line off the audit row. Agent-authored text
+/// therefore has to be neutralized before it is quoted back — an escape sequence in a request field
+/// would otherwise repaint or reorder the operator's own screen. Filtering happens at the one choke
+/// point every quoted name and value passes through, so this holds on every surface at once.
+#[test]
+fn an_escape_sequence_in_a_request_field_never_reaches_the_error_body_or_the_audit_row() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team\u{1b}[2K\u{1b}[1Aevil",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let rendered = String::from_utf8_lossy(&refused.body).to_string();
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    assert!(!detail.contains('\u{1b}'), "{detail:?}");
+    assert!(
+        !rendered.contains('\u{1b}'),
+        "not anywhere in the body the native client prints: {rendered:?}"
+    );
+    // The value is still legible as what arrived — neutralized, not withheld.
+    assert!(detail.contains("evil"), "{detail}");
+
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["detail"], detail);
+    assert!(
+        !refusals[0].to_string().contains('\u{1b}'),
+        "nor in the durable row: {}",
+        refusals[0]
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}

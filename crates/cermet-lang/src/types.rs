@@ -801,6 +801,12 @@ pub struct RelayHopView {
     /// Why a hop was refused, or why a forwarded one failed — the broker's stable reason string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// What that refusal knew beyond its reason word, in one line: the offending field or key, the
+    /// frozen constraint as it was enforced, the value the hop offered, and — where one is
+    /// computable — the remedy. The reason word stays the machine-readable code; this is additional
+    /// to it, never a rewriting of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     /// Whether this hop is the grant's single effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<bool>,
