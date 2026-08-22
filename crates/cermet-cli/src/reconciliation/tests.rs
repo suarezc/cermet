@@ -272,6 +272,7 @@ fn absent() -> SentenceAuthorityStatus {
     SentenceAuthorityStatus {
         sentence: SentenceSnapshot::Absent,
         lockdown: LockdownSnapshot::Clear,
+        profile: None,
     }
 }
 
@@ -288,7 +289,22 @@ fn served(text: &str) -> SentenceAuthorityStatus {
             rule_count: rules.rules.len(),
         },
         lockdown: LockdownSnapshot::Clear,
+        profile: None,
     }
+}
+
+/// The same served corpus, with the daemon's read-time join naming the stored profile it is.
+fn served_as(profile: &str, text: &str) -> SentenceAuthorityStatus {
+    SentenceAuthorityStatus {
+        profile: Some(profile.into()),
+        ..served(text)
+    }
+}
+
+/// The leading hex the status lines print for a corpus body.
+fn short_of(text: &str) -> String {
+    let rules = parse_rules(text).unwrap();
+    authority_digest_for(rules.version, &canonical_rule_bytes(&rules))[..12].to_string()
 }
 
 fn unserved(text: &str) -> SentenceAuthorityStatus {
@@ -312,6 +328,7 @@ fn unserved(text: &str) -> SentenceAuthorityStatus {
             rule_count,
         },
         lockdown: LockdownSnapshot::Engaged,
+        profile: None,
     }
 }
 
@@ -322,6 +339,7 @@ fn corrupt() -> SentenceAuthorityStatus {
             reason: "content-free".into(),
         },
         lockdown: LockdownSnapshot::Engaged,
+        profile: None,
     }
 }
 
@@ -351,6 +369,10 @@ fn marker_for(body: &str) -> AuthorityMarker {
     AuthorityMarker::from_digest(analysis.digest)
 }
 
+/// Drive `doc status` over one document/live pair and pin the drift verdict.
+///
+/// The verdict is no longer a printed row — the EXIT CODE is what a caller branches on — so it is
+/// held against the classifier the same run uses, and the printed shape is checked separately.
 fn assert_composed_status(
     body: &str,
     marker: AuthorityMarker,
@@ -362,15 +384,338 @@ fn assert_composed_status(
     write_document(repo.path(), &marker, body.as_bytes(), "ordinary prose");
     let text = run_status(&FakeClient::new(vec![status.clone()]), repo.path(), false);
     assert_eq!(text.exit_code, exit, "{}", text.text);
-    assert!(
-        text.text.starts_with(&format!("state: {expected}\n")),
-        "{}",
-        text.text
-    );
-    let json = run_status(&FakeClient::new(vec![status]), repo.path(), true);
+    let json = run_status(&FakeClient::new(vec![status.clone()]), repo.path(), true);
     assert_eq!(json.exit_code, exit, "{}", json.text);
+
+    let document = observe_document(&FakeClient::new(vec![status.clone()]), repo.path());
+    let observed = compose_state(&document, status.as_ref().ok());
+    assert_eq!(drift_name(&observed.drift), expected);
+}
+
+/// The rendered lines of one `doc status`, keyed by their field.
+fn status_lines(status: Result<SentenceAuthorityStatus, String>, start: &Path) -> Vec<String> {
+    run_status(&FakeClient::new(vec![status]), start, false)
+        .text
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn value_of<'a>(lines: &'a [String], field: &str) -> &'a str {
+    lines
+        .iter()
+        .find_map(|line| line.strip_prefix(&format!("{field}: ")))
+        .unwrap_or_else(|| panic!("no `{field}` line in {lines:?}"))
+}
+
+/// The whole shape of the surface: the DAEMON's corpus, then THIS directory's file, and nothing
+/// else. The two subjects are independent — one is global to the box, one is where you stand — so
+/// they are reported as two lines rather than blended into one verdict.
+#[test]
+fn status_reports_the_live_corpus_and_this_directorys_file_as_two_lines() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("designer {}", short_of(body))
+    );
+    assert_eq!(
+        value_of(&lines, "directory_file"),
+        format!("CERMET.md {}", short_of(body))
+    );
+
+    // The two truncations are the same width on purpose: equal prefixes, by eye, mean this file is
+    // what is live.
+    let live = value_of(&lines, "active_profile")
+        .split_whitespace()
+        .last()
+        .unwrap();
+    let file = value_of(&lines, "directory_file")
+        .split_whitespace()
+        .last()
+        .unwrap();
+    assert_eq!(live, file);
+    assert_eq!(live.len(), 12);
+
+    // None of the retired internal parameters survive.
+    for retired in [
+        "state:",
+        "document:",
+        "candidate:",
+        "marker:",
+        "live:",
+        "live_state:",
+        "canonical:",
+    ] {
+        assert!(
+            !lines.join("\n").contains(retired),
+            "{retired} in {lines:?}"
+        );
+    }
+}
+
+/// A document that is not what is live gets a visibly different prefix — the whole point of
+/// printing both at one width.
+#[test]
+fn a_directory_file_that_differs_from_live_shows_a_different_prefix() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let live = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", live)), repo.path());
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("designer {}", short_of(live))
+    );
+    assert_eq!(
+        value_of(&lines, "directory_file"),
+        format!("CERMET.md {}", short_of(body))
+    );
+    assert_ne!(short_of(live), short_of(body));
+}
+
+/// The daemon's answer does not depend on where the caller stands: the same live corpus is named
+/// the same way from a repository, from an empty repository, and from no repository at all.
+#[test]
+fn the_active_profile_is_the_daemons_and_does_not_move_with_the_directory() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let expected = format!("designer {}", short_of(body));
+
+    let with_document = repository();
+    write_document(
+        with_document.path(),
+        &marker_for(body),
+        body.as_bytes(),
+        "prose",
+    );
+    let empty = repository();
+    let outside = tempfile::tempdir().unwrap();
+
+    for start in [with_document.path(), empty.path(), outside.path()] {
+        let lines = status_lines(Ok(served_as("designer", body)), start);
+        assert_eq!(value_of(&lines, "active_profile"), expected, "{start:?}");
+    }
+}
+
+/// A live corpus no stored profile holds is named plainly rather than left blank or given a
+/// borrowed name.
+#[test]
+fn a_live_corpus_no_profile_holds_is_marked_unnamed() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served(body)), repo.path());
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("(unnamed) {}", short_of(body))
+    );
+}
+
+/// No file here is an ABSENCE — a fact about the directory — and never a failure word. The words
+/// this test refuses are the ones that read as a broken daemon.
+#[test]
+fn a_directory_with_no_document_states_the_absence_in_plain_language() {
+    let empty = repository();
+    let outside = tempfile::tempdir().unwrap();
+
+    for start in [empty.path(), outside.path()] {
+        let lines = status_lines(Ok(absent()), start);
+        assert_eq!(
+            value_of(&lines, "directory_file"),
+            "none — no CERMET.md found from this directory",
+            "{start:?}"
+        );
+        let text = lines.join("\n");
+        for failure_word in ["invalid", "unknown", "repo_invalid", "error"] {
+            assert!(!text.contains(failure_word), "{failure_word} in {text}");
+        }
+    }
+}
+
+/// A file that exists and cannot be prepared says so plainly and names the command that explains
+/// it, rather than printing a classification only the source explains.
+#[test]
+fn a_document_that_does_not_parse_says_so_and_points_at_doc_check() {
+    let repo = repository();
+    std::fs::write(repo.path().join("CERMET.md"), b"not a managed document").unwrap();
+    let lines = status_lines(Ok(absent()), repo.path());
+    let value = value_of(&lines, "directory_file");
+    assert!(
+        value.starts_with("CERMET.md — it could not be read as a managed document"),
+        "{value}"
+    );
+    assert!(value.contains("cermet doc check"), "{value}");
+}
+
+/// An engaged latch means the corpus named above is authorizing nothing. Printing the two lines
+/// alone while that is true would describe a box the operator is not on.
+#[test]
+fn the_lockdown_line_appears_only_while_the_latch_is_engaged() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let clear = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(clear.len(), 2, "{clear:?}");
+    assert!(!clear.join("\n").contains("lockdown"), "{clear:?}");
+
+    let engaged = SentenceAuthorityStatus {
+        lockdown: LockdownSnapshot::Engaged,
+        ..served_as("designer", body)
+    };
+    let latched = status_lines(Ok(engaged), repo.path());
+    assert_eq!(latched.len(), 3, "{latched:?}");
+    assert!(
+        latched[2].starts_with("lockdown: engaged — "),
+        "{latched:?}"
+    );
+}
+
+/// A stale pin is the ONE nonzero state the two digest lines cannot show: the body is already
+/// live, so both prefixes agree and the surface would read as full agreement while exiting 1 (and
+/// `doc diff` would add `rules: unchanged`). The cue line is what closes that hole — and it appears
+/// in that state ONLY, so it never becomes noise the operator learns to skip.
+#[test]
+fn a_stale_pin_is_the_one_state_that_earns_a_third_line() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let other = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    // Body == live, pin names a different corpus.
+    write_document(repo.path(), &marker_for(other), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    // The two digests agree — which is exactly why the third line has to exist.
+    assert_eq!(
+        value_of(&lines, "active_profile")
+            .split_whitespace()
+            .next_back(),
+        value_of(&lines, "directory_file")
+            .split_whitespace()
+            .next_back()
+    );
+    let pin = value_of(&lines, "pin");
+    assert!(pin.starts_with("stale — "), "{pin}");
+    assert!(pin.contains("cermet doc apply"), "{pin}");
+    assert_eq!(
+        run_status(
+            &FakeClient::new(vec![Ok(served_as("designer", body))]),
+            repo.path(),
+            false
+        )
+        .exit_code,
+        1
+    );
+
+    // `doc diff` carries the same block, and it is the surface that would otherwise say only
+    // `rules: unchanged` about a document that needs an apply.
+    let diff = run_diff(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        repo.path(),
+    );
+    assert!(diff.text.contains("\npin: stale — "), "{}", diff.text);
+    assert!(diff.text.contains("rules: unchanged"), "{}", diff.text);
+
+    // Every other state leaves it off: aligned, an unapplied edit, an unexported live change, and
+    // a directory with no document at all.
+    let aligned = repository();
+    write_document(aligned.path(), &marker_for(body), body.as_bytes(), "prose");
+    let unapplied = repository();
+    write_document(
+        unapplied.path(),
+        &marker_for(body),
+        other.as_bytes(),
+        "prose",
+    );
+    let unexported = repository();
+    write_document(
+        unexported.path(),
+        &marker_for(body),
+        body.as_bytes(),
+        "prose",
+    );
+    let empty = repository();
+    for (start, status) in [
+        (aligned.path(), served_as("designer", body)),
+        (unapplied.path(), served_as("designer", body)),
+        (unexported.path(), served_as("designer", other)),
+        (empty.path(), served_as("designer", body)),
+    ] {
+        let text = status_lines(Ok(status), start).join("\n");
+        assert!(!text.contains("pin:"), "{start:?}: {text}");
+    }
+}
+
+/// The `--json` form answers the same two questions, so a scripted caller and a human read one
+/// vocabulary. An unreachable daemon says exactly that.
+#[test]
+fn the_json_form_carries_the_same_two_answers() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let json = run_status(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        repo.path(),
+        true,
+    );
     let value: serde_json::Value = serde_json::from_str(&json.text).unwrap();
-    assert_eq!(value["state"], expected, "{value}");
+    assert_eq!(
+        value["active_profile"],
+        format!("designer {}", short_of(body))
+    );
+    assert_eq!(
+        value["directory_file"],
+        format!("CERMET.md {}", short_of(body))
+    );
+    assert_eq!(value["lockdown"], "clear");
+
+    let unavailable = status_lines(Err("transport canary".into()), repo.path());
+    assert_eq!(
+        value_of(&unavailable, "active_profile"),
+        "none — the daemon could not be asked"
+    );
+
+    // The cue rides the JSON form too, and only in its own state.
+    assert!(value.get("pin").is_none(), "{value}");
+    let stale = repository();
+    write_document(
+        stale.path(),
+        &marker_for("allow stripe.refund where amount <= 200\n"),
+        body.as_bytes(),
+        "prose",
+    );
+    let stale_json = run_status(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        stale.path(),
+        true,
+    );
+    let stale_value: serde_json::Value = serde_json::from_str(&stale_json.text).unwrap();
+    assert!(
+        stale_value["pin"]
+            .as_str()
+            .expect("a stale pin is named")
+            .starts_with("stale — "),
+        "{stale_value}"
+    );
+
+    let failure = status_json_failure();
+    let value: serde_json::Value = serde_json::from_str(&failure.text).unwrap();
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(
+        value["directory_file"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(failure.exit_code, 2);
 }
 
 #[test]
@@ -395,19 +740,11 @@ fn status_composes_typed_candidate_marker_and_live_dimensions() {
     let missing = repository();
     let missing_output = run_status(&FakeClient::new(vec![Ok(absent())]), missing.path(), true);
     assert_eq!(missing_output.exit_code, 1);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&missing_output.text).unwrap()["state"],
-        "repo_missing"
-    );
 
     let invalid = repository();
     std::fs::write(invalid.path().join("CERMET.md"), b"not a managed document").unwrap();
     let invalid_output = run_status(&FakeClient::new(vec![Ok(absent())]), invalid.path(), true);
     assert_eq!(invalid_output.exit_code, 2);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&invalid_output.text).unwrap()["state"],
-        "repo_invalid"
-    );
 
     assert_composed_status(a, marker_for(a), Ok(unserved(a)), "dataplane_unserved", 2);
     assert_composed_status(a, marker_for(a), Ok(corrupt()), "dataplane_corrupt", 2);
@@ -417,6 +754,44 @@ fn status_composes_typed_candidate_marker_and_live_dimensions() {
         Err("transport canary".into()),
         "dataplane_unknown",
         2,
+    );
+}
+
+/// The interference witness is about the RECORD, not about the name a read-time join happened to
+/// put beside it. A profile name that appears (a parallel apply storing this same body under a key)
+/// or disappears (a profile read that failed this time) moves nothing the document is compared
+/// against, so the observation still answers instead of refusing.
+#[test]
+fn a_profile_name_that_moves_under_a_steady_corpus_is_not_interference() {
+    let live = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(live), live.as_bytes(), "prose");
+
+    // Baseline unnamed, observation named — and the reverse. Both are the same served corpus.
+    for (baseline, observed) in [
+        (served(live), served_as("designer", live)),
+        (served_as("designer", live), served(live)),
+    ] {
+        assert_eq!(
+            observe_mutation_document_sync(
+                &FakeClient::new(vec![Ok(observed)]),
+                repo.path(),
+                Some(&baseline),
+            ),
+            CorpusDocumentSync::State("aligned")
+        );
+    }
+
+    // A corpus that actually moved is still interference.
+    assert_eq!(
+        observe_mutation_document_sync(
+            &FakeClient::new(vec![Ok(served(
+                "allow stripe.refund where amount <= 100\n"
+            ))]),
+            repo.path(),
+            Some(&served(live)),
+        ),
+        CorpusDocumentSync::Required
     );
 }
 
@@ -473,7 +848,7 @@ fn mutation_document_sync_receipts_reuse_the_formal_repository_drift_model() {
             &tempfile::tempdir().unwrap().path().join("not-a-repository"),
             Some(&served(live)),
         ),
-        CorpusDocumentSync::Unavailable
+        CorpusDocumentSync::Unavailable("no CERMET.md found from this directory")
     );
     assert_eq!(
         observe_mutation_document_sync(&FakeClient::new(Vec::new()), stale.path(), None),
@@ -766,8 +1141,12 @@ fn init_existing_document_observes_live_after_document_preparation() {
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(output.text.contains("already exists"), "{}", output.text);
+    // The report names the corpus observed AFTER the document was prepared, not the one read
+    // before it.
     assert!(
-        output.text.contains("state: unexported_live"),
+        output
+            .text
+            .contains(&format!("active_profile: (unnamed) {}", short_of(second))),
         "{}",
         output.text
     );
@@ -970,7 +1349,9 @@ fn status_and_diff_recheck_the_file_after_their_last_daemon_call() {
 
         assert_eq!(output.exit_code, 2, "{}", output.text);
         assert!(
-            output.text.contains("state: repo_invalid"),
+            output
+                .text
+                .contains("CERMET.md — it could not be read as a managed document"),
             "{}",
             output.text
         );
@@ -1030,10 +1411,18 @@ fn comments_only_source_is_draft_not_aligned_no_authority() {
 
     let output = run_status(&client, repo.path(), true);
 
+    // A comments-only body is a DRAFT: it has a candidate digest of its own, and the daemon is
+    // serving nothing.
     assert_eq!(output.exit_code, 1, "{}", output.text);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "unapplied_document", "{value}");
-    assert_eq!(value["canonical"], false, "{value}");
+    assert_eq!(value["active_profile"], "none — no corpus has been applied");
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md "),
+        "{value}"
+    );
 }
 
 #[test]
@@ -1227,8 +1616,14 @@ fn status_json_remains_json_when_repository_discovery_fails() {
     );
     assert_eq!(output.exit_code, 2);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown");
-    assert_eq!(value["document"], "invalid");
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(
+        value["directory_file"],
+        "none — no CERMET.md found from this directory"
+    );
 }
 
 #[test]
@@ -1240,8 +1635,10 @@ fn status_unknown_is_stable_and_never_echoes_transport_or_prose() {
     let output = run_status(&client, repo.path(), true);
     assert_eq!(output.exit_code, 2);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown");
-    assert_eq!(value["document"], "valid");
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
     assert!(!output.text.contains(CANARY));
     assert!(!output.text.contains("SECRET_TRANSPORT_DETAIL"));
     assert_eq!(client.inputs(), vec![String::new()]);
@@ -1252,9 +1649,14 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
     let missing = repository();
     let output = run_status(&FakeClient::new(vec![Ok(corrupt())]), missing.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "missing", "{value}");
-    assert_eq!(value["live_state"], "corrupt", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let invalid = repository();
@@ -1267,8 +1669,17 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
         true,
     );
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unserved", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — a stored corpus is not being served",
+        "{value}"
+    );
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md — it could not be read"),
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let outside = tempfile::tempdir().unwrap();
@@ -1278,18 +1689,30 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
         true,
     );
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let diff = run_diff(&FakeClient::new(vec![Ok(corrupt())]), missing.path());
     assert_eq!(diff.exit_code, 2, "{}", diff.text);
     assert!(
-        diff.text.contains("state: dataplane_corrupt"),
+        diff.text
+            .contains("active_profile: none — the daemon's corpus record is unreadable"),
         "{}",
         diff.text
     );
-    assert!(diff.text.contains("document: missing"), "{}", diff.text);
+    assert!(
+        diff.text
+            .contains("directory_file: none — no CERMET.md found from this directory"),
+        "{}",
+        diff.text
+    );
     assert!(diff.text.contains("lockdown: engaged"), "{}", diff.text);
 }
 
@@ -1331,9 +1754,16 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     );
     let output = run_status(&unavailable, repo.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "unavailable", "{value}");
-    assert_eq!(value["live_state"], "served", "{value}");
+    assert_eq!(output.exit_code, 2, "{value}");
+    assert_eq!(
+        value["directory_file"], "CERMET.md — the daemon could not be asked to prepare it",
+        "{value}"
+    );
+    assert_eq!(
+        value["active_profile"],
+        format!("(unnamed) {}", short_of(body)),
+        "{value}"
+    );
 
     let semantic = FakeClient::with_prepare_failures(
         vec![Ok(served(body))],
@@ -1341,22 +1771,28 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     );
     let output = run_status(&semantic, repo.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "repo_invalid", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(output.exit_code, 2, "{value}");
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md — it could not be read"),
+        "{value}"
+    );
 
     let live_prepare_unavailable = FakeClient::with_prepare_failures(
         vec![Ok(served(body))],
         vec![None, Some(PreparationFailure::Unavailable)],
     );
     let output = run_diff(&live_prepare_unavailable, repo.path());
+    // A transport failure may not be dressed up as a durable claim about the record: the corpus
+    // the daemon reported is still what is named, and nothing says it stopped being served.
     assert_eq!(output.exit_code, 2, "{}", output.text);
+    assert!(!output.text.contains("not being served"), "{}", output.text);
     assert!(
-        output.text.contains("state: dataplane_unknown"),
-        "{}",
-        output.text
-    );
-    assert!(
-        !output.text.contains("state: dataplane_unserved"),
+        output
+            .text
+            .contains(&format!("active_profile: (unnamed) {}", short_of(body))),
         "{}",
         output.text
     );
@@ -1371,7 +1807,9 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     let output = run_diff(&live_prepare_invalid, repo.path());
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(
-        output.text.contains("state: dataplane_unserved"),
+        output
+            .text
+            .contains("active_profile: none — a stored corpus is not being served"),
         "{}",
         output.text
     );
@@ -1390,9 +1828,14 @@ fn known_daemon_corruption_dominates_prepare_transport_failure_without_masking_d
     let output = run_status(&client, repo.path(), true);
 
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "unavailable", "{value}");
-    assert_eq!(value["live_state"], "corrupt", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "CERMET.md — the daemon could not be asked to prepare it",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 }
 
@@ -1409,6 +1852,9 @@ struct ApplyClient {
     stage_hook: RefCell<Option<Box<dyn FnOnce()>>>,
     status_calls: Cell<usize>,
     status_hook: CallHook,
+    /// What the post-commit verification read reports. The default is "nothing stored", which no
+    /// pinned-document test observes — that flow commits no profile and never asks.
+    stored_presets: RefCell<Result<Vec<String>, String>>,
 }
 
 impl ApplyClient {
@@ -1427,7 +1873,14 @@ impl ApplyClient {
             stage_hook: RefCell::new(None),
             status_calls: Cell::new(0),
             status_hook: RefCell::new(None),
+            stored_presets: RefCell::new(Ok(Vec::new())),
         }
+    }
+
+    /// What the post-commit verification read will report.
+    fn with_stored_presets(self, stored: Result<Vec<String>, String>) -> Self {
+        *self.stored_presets.borrow_mut() = stored;
+        self
     }
 
     fn with_prepare_hook(self, call: usize, hook: impl FnOnce() + 'static) -> Self {
@@ -1502,6 +1955,10 @@ impl ReconciliationClient for ApplyClient {
 }
 
 impl ApplyTransactionClient for ApplyClient {
+    fn stored_preset_names(&self) -> Result<Vec<String>, String> {
+        self.stored_presets.borrow().clone()
+    }
+
     fn stage(
         &self,
         candidate_text: String,
@@ -1522,7 +1979,7 @@ impl ApplyTransactionClient for ApplyClient {
         })
     }
 
-    fn commit(&self, _staging_token: String) -> ApplyCommitAttempt {
+    fn commit(&self, _staging_token: String, _preset: Option<String>) -> ApplyCommitAttempt {
         self.commits.set(self.commits.get() + 1);
         self.commit_attempts
             .borrow_mut()
@@ -1650,6 +2107,10 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
     }
 
     impl ApplyTransactionClient for DisabledProviderClient {
+        fn stored_preset_names(&self) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
+
         fn stage(
             &self,
             _candidate_text: String,
@@ -1657,7 +2118,7 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
             panic!("a disabled provider document must never stage")
         }
 
-        fn commit(&self, _staging_token: String) -> ApplyCommitAttempt {
+        fn commit(&self, _staging_token: String, _preset: Option<String>) -> ApplyCommitAttempt {
             panic!("a disabled provider document must never commit")
         }
     }
@@ -1678,6 +2139,7 @@ fn apply_disabled_provider_document_preserves_stable_refusal() {
     let output = run_apply(
         &DisabledProviderClient,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -1702,7 +2164,15 @@ fn apply_refuses_noncanonical_source_before_stage_confirmation_or_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(output.text.contains("canonical"), "{}", output.text);
@@ -1724,7 +2194,15 @@ fn apply_refuses_an_invalid_source_before_presence_or_commit() {
     let client = ApplyClient::new(vec![Ok(absent())], ApplyCommitAttempt::Unknown);
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
-    let output = run_apply(&client, invalid.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        invalid.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
     assert!(presence.reasons.lock().unwrap().is_empty());
@@ -1748,7 +2226,15 @@ fn marker_only_apply_repair_needs_no_stage_confirmation_or_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     assert!(
@@ -1781,7 +2267,15 @@ fn apply_binds_exact_body_review_presence_commit_and_marker_receipt() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     for fact in [
@@ -1830,7 +2324,15 @@ fn apply_requires_loud_replace_and_recovery_acknowledgements() {
     let client = ApplyClient::new(vec![Ok(served(old))], ApplyCommitAttempt::Unknown);
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 1, "{}", output.text);
     assert!(output.text.contains("--replace-live"), "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
@@ -1844,7 +2346,15 @@ fn apply_requires_loud_replace_and_recovery_acknowledgements() {
         "prose",
     );
     let client = ApplyClient::new(vec![Ok(corrupt())], ApplyCommitAttempt::Unknown);
-    let output = run_apply(&client, recovery.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        recovery.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
     assert_eq!(output.exit_code, 1, "{}", output.text);
     assert!(output.text.contains("--recover"), "{}", output.text);
     assert!(client.staged_inputs.borrow().is_empty());
@@ -1871,6 +2381,7 @@ fn replace_and_recovery_flags_acknowledge_anomalies_but_still_require_presence()
     let output = run_apply(
         &replace_client,
         replace_repo.path(),
+        None,
         true,
         false,
         &terminal,
@@ -1896,6 +2407,7 @@ fn replace_and_recovery_flags_acknowledge_anomalies_but_still_require_presence()
     let output = run_apply(
         &recovery_client,
         recovery_repo.path(),
+        None,
         false,
         true,
         &terminal,
@@ -1929,7 +2441,15 @@ fn apply_decline_and_unavailable_presence_never_commit() {
             reasons: std::sync::Mutex::new(Vec::new()),
             hook: std::sync::Mutex::new(None),
         };
-        let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+        let output = run_apply(
+            &client,
+            repo.path(),
+            None,
+            false,
+            false,
+            &terminal,
+            &presence,
+        );
         assert_ne!(output.exit_code, 0, "{}", output.text);
         assert_eq!(client.commits.get(), 0, "{}", output.text);
         assert_eq!(
@@ -1955,7 +2475,15 @@ fn apply_rejects_live_change_after_stage_before_presence() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(
@@ -2001,7 +2529,15 @@ fn apply_lost_response_credits_only_exact_candidate_and_keeps_prior_or_third_unk
         let terminal = RecordingTerminal::new(true);
         let presence = RecordingPresence::confirmed();
 
-        let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+        let output = run_apply(
+            &client,
+            repo.path(),
+            None,
+            false,
+            false,
+            &terminal,
+            &presence,
+        );
 
         assert!(output.text.contains(expected_result), "{}", output.text);
         assert_eq!(
@@ -2033,7 +2569,15 @@ fn applying_empty_corpus_is_a_presence_accepted_authority_change() {
     let terminal = RecordingTerminal::new(true);
     let presence = RecordingPresence::confirmed();
 
-    let output = run_apply(&client, repo.path(), false, false, &terminal, &presence);
+    let output = run_apply(
+        &client,
+        repo.path(),
+        None,
+        false,
+        false,
+        &terminal,
+        &presence,
+    );
 
     assert_eq!(output.exit_code, 0, "{}", output.text);
     assert_eq!(presence.reasons.lock().unwrap().len(), 1);
@@ -2064,6 +2608,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2086,6 +2631,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &terminal,
@@ -2105,6 +2651,7 @@ fn apply_refuses_file_replacement_body_edit_and_marker_edit_at_precommit_boundar
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2141,6 +2688,7 @@ fn apply_refuses_a_physical_repository_root_change_before_commit() {
     let output = run_apply(
         &client,
         &root,
+        None,
         false,
         false,
         &terminal,
@@ -2172,6 +2720,7 @@ fn stale_stage_cas_preserves_the_concurrent_winner_and_never_advances_marker() {
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2214,6 +2763,7 @@ fn post_commit_marker_cas_and_final_file_races_report_committed_but_unreconciled
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2251,6 +2801,7 @@ fn post_commit_marker_cas_and_final_file_races_report_committed_but_unreconciled
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2286,6 +2837,7 @@ fn apply_keeps_an_unavailable_post_commit_read_unknown_until_candidate_is_observ
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2327,6 +2879,7 @@ fn apply_in_flight_handler_completes_after_early_baseline_using_only_staged_toke
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2360,6 +2913,7 @@ fn apply_mismatched_ack_after_success_reconciles_exact_occurrence() {
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2392,6 +2946,7 @@ fn apply_timeout_then_restart_or_expiry_preserves_unknown_token_and_occurrence()
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2424,6 +2979,7 @@ fn apply_exact_unserved_occurrence_proves_commit_but_never_claims_served_or_alig
     let output = run_apply(
         &client,
         repo.path(),
+        None,
         false,
         false,
         &RecordingTerminal::new(true),
@@ -2452,4 +3008,125 @@ fn apply_exact_unserved_occurrence_proves_commit_but_never_claims_served_or_alig
         1,
         "status proves the exact committed occurrence"
     );
+}
+
+/// The corpus body the profile tests install.
+const PROFILE_BODY: &str = "allow stripe.refund where amount <= 5000\n";
+
+/// A commit that carried a profile key is only DONE when the key is there.
+///
+/// The daemon writes the corpus and the profile as two steps. A fault in the second, a lost reply,
+/// or a daemon that dies between them all leave the same observable state: authority is live, and
+/// the profile is not stored. Reporting that as a success would tell an operator a profile exists
+/// that they could not then apply.
+#[test]
+fn a_commit_whose_profile_did_not_reach_the_store_is_not_reported_as_stored() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Ok(Vec::new()));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_ne!(output.exit_code, 0, "{}", output.text);
+    assert!(
+        output.text.contains("committed") && output.text.contains("live"),
+        "the report must say authority IS live: {}",
+        output.text
+    );
+    assert!(
+        output.text.contains("not stored") || output.text.contains("NOT stored"),
+        "the report must say the profile was not stored: {}",
+        output.text
+    );
+    assert!(
+        output.text.contains("designer"),
+        "the report names the key: {}",
+        output.text
+    );
+    assert!(
+        !output.text.contains("result: committed\n"),
+        "a not-stored profile must not read as a clean commit: {}",
+        output.text
+    );
+    // The message is prose, not a wrapped source literal with its indentation baked in.
+    assert!(
+        !output.text.contains("  "),
+        "the report carries a wrapped-literal space run: {:?}",
+        output.text
+    );
+}
+
+/// The same posture when the verification read itself cannot be made: unconfirmed is not confirmed.
+#[test]
+fn a_profile_that_cannot_be_confirmed_stored_is_not_reported_as_stored() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Err("ctl unreachable".into()));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_ne!(output.exit_code, 0, "{}", output.text);
+    assert!(output.text.contains("designer"), "{}", output.text);
+}
+
+/// The confirming case: the key IS there, so the ceremony reports a clean commit.
+#[test]
+fn a_commit_whose_profile_reached_the_store_reports_a_clean_commit() {
+    let client = ApplyClient::new(
+        vec![
+            Ok(absent()),
+            Ok(served(PROFILE_BODY)),
+            Ok(served(PROFILE_BODY)),
+        ],
+        acknowledged(PROFILE_BODY),
+    )
+    .with_stored_presets(Ok(vec!["designer".into()]));
+
+    let output = run_body_apply(
+        &client,
+        BodyApply {
+            body: PROFILE_BODY,
+            preset: "designer",
+            source: "stored profile",
+        },
+        false,
+        &RecordingTerminal::new(true),
+        &RecordingPresence::confirmed(),
+    );
+
+    assert_eq!(output.exit_code, 0, "{}", output.text);
+    assert!(output.text.contains("result: committed"), "{}", output.text);
+    assert!(output.text.contains("preset: designer"), "{}", output.text);
 }

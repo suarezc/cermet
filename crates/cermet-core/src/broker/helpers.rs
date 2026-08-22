@@ -185,6 +185,10 @@ pub(super) fn widening_shape(
             Some(v) => {
                 pinned.insert(t.to_string(), v.clone());
             }
+            // An OPTIONAL target this run omitted froze as absence. The schema pass below records
+            // that as an explicit `null` pin, so the shape key still distinguishes "omitted" from
+            // "named" — it is a different shape, not an unshapeable one.
+            None if !contract.field_decl(t).is_some_and(|decl| decl.required) => {}
             None => return Ok(None),
         }
     }

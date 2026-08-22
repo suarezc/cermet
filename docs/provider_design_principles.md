@@ -127,19 +127,29 @@ credential nor a reusable signing/execution oracle.
 > endpoint-first framing costs real fidelity: GitHub's file-addition primitive carries no mode
 > field, so a commit authored through it silently loses file modes that git itself preserves.
 
-### Admitting a key means classifying its value
+### A key that carries authority is bound, not blocked
 
-> A relay verb's allowlists (`query_keys`, `body_keys`) admit KEYS; authority lives in their
-> VALUES. Admitting a key is therefore only half a ratification: the same change must classify
-> what its value can do — either the value is **bound** to a frozen field (`bind: query.teamId:
-> "team|omit:personal"`), or it is declared **authority-free** in the ratified document's own
-> comment, with the reason. There is no third state, and "the key is in the allowlist" is not one.
+> A relay verb's declarations (`query_keys`, `body_keys`) are VOCABULARY: the keys a shape knows
+> about, and therefore the ones a sentence or a request may pin. They refuse nothing on their own.
+> Authority lives in a key's VALUE, and the only thing that constrains a value is a **bind** to a
+> frozen field (`bind: query.teamId: team`). So ratifying a shape means classifying every position
+> whose value could decide where an effect lands: either it is bound, or it is declared
+> **authority-free** in the ratified document's own comment, with the reason.
 > The defect this closes: `teamId` was widened onto every `vercel.deploy` shape (a team
 > account's CLI stamps it on every call), the matcher checked only key MEMBERSHIP, and the
 > executed request then carried an account scope the sentence never froze — with Vercel
 > auto-creating a project on an unknown name, the blast radius was mint-and-deploy in any team the
 > vaulted token reached (T1: injected `--scope` or an edited `.vercel/project.json`; T2: a stale
-> one). Widening from observed evidence stays the rule; this is the other half of it.
+> one). Key membership was never the answer to that; the bind is.
+>
+> The converse is the same principle: a key nobody declared is NOT refused. It is the native tool's
+> own payload — the project's configuration the CLI folds into a create body, a parameter the
+> provider added after the document was written — so it is forwarded and NAMED on the hop's record,
+> where an operator can see what rode along and decide whether it is worth pinning. Refusing on
+> membership made the broker a content firewall over payloads that decide nothing about which effect
+> happens, and forced workarounds worse than the risk: a deploy driven with the project's own
+> configuration held aside ships a differently-configured artifact. Widening from observed evidence
+> stays the rule — the hop record is now where that evidence arrives.
 
 ### A wildcard path segment is a value too
 

@@ -103,6 +103,26 @@ impl Broker {
         self.audit.verify()
     }
 
+    /// Store one canonical corpus body under an opaque key.
+    ///
+    /// Called from ONE place — the sentence commit, when the ceremony that installed this body
+    /// carried a preset name — so a stored profile is always a body that was staged, reviewed, and
+    /// attested. The rule count is derived from the committed text rather than taken on trust.
+    pub fn store_preset(
+        &self,
+        name: &str,
+        rules_text: &str,
+    ) -> Result<crate::presets::StoredPreset> {
+        let rules = crate::sentence::parse_rules(rules_text)
+            .map_err(|e| Error::Invalid(format!("a preset body must parse as a corpus: {e}")))?;
+        crate::presets::store(&self.state, name, rules_text, rules.rules.len())
+    }
+
+    /// Every stored profile. Read-only; the caller resolves a name against it.
+    pub fn list_presets(&self) -> Result<Vec<crate::presets::StoredPreset>> {
+        crate::presets::list(&self.state)
+    }
+
     /// The `catalog` verb: the per-verb schema of every action an agent can author against or request
     /// — this broker's LOADED templates (`requestable: true`) unioned with the vendored stdlib
     /// (`requestable: false` when not loaded here). Schema only: no HTTP step bodies, no values, and

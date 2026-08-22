@@ -52,10 +52,9 @@ fn relay_broker_ttl(dir: &Path, upstream: &str, listen: &str, ttl_secs: u64) -> 
             "name: vercel\negress:\n  - {upstream}\nauth: bearer\n"
         )])
         .collect();
-    let mut rules = cermet_core::sentence::parse_rules(
-        "allow vercel.deploy where project = \"website\" and team = \"personal\"",
-    )
-    .unwrap();
+    let mut rules =
+        cermet_core::sentence::parse_rules("allow vercel.deploy where project = \"website\"")
+            .unwrap();
     cermet_core::sentence::pin_set_references(&mut rules, &cermet_core::sets::VendoredSetResolver)
         .unwrap();
     spawn_full(
@@ -125,7 +124,7 @@ async fn open_relay(broker: &BrokerHandle) -> (String, Value) {
                 json!({
                     "provider": "vercel",
                     "action": "deploy",
-                    "resource": { "project": "website", "target": "preview", "team": "personal" }
+                    "resource": { "project": "website", "target": "preview" }
                 })
                 .to_string(),
                 None,

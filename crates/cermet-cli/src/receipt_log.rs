@@ -1,6 +1,6 @@
 //! The daemon-native "morning receipt" rendered from the ctl `History` RPC.
 
-use cermet_lang::{EffectOutcome, GrantView, RelayHopView};
+use cermet_lang::{EffectOutcome, EffectState, GrantView, RelayHopView};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -24,6 +24,10 @@ pub struct LogFilter<'a> {
     pub provider: Option<&'a str>,
     /// Only the refusals (or, on the hop view, the refused/failed hops).
     pub denied_only: bool,
+    /// Only the rows whose relay grant BURNED — the sibling of `denied_only` one layer down.
+    /// A denial is authority refusing; a burn is authority having said yes and the effect layer
+    /// ending the session anyway, which is the harder failure to find by eye.
+    pub burned_only: bool,
     /// Every row, unwindowed.
     pub all: bool,
 }
@@ -67,6 +71,30 @@ fn is_denied(row: &GrantView) -> bool {
     ) || row.status == "denied"
 }
 
+/// A row counts as "burned" for `--burned` iff the daemon's own derivation says so. The CLI does not
+/// re-derive it from anything: `effect_state` is the one answer, and the row's suffix and this
+/// filter read the same field so they can never disagree.
+fn is_burned(row: &GrantView) -> bool {
+    row.effect_state == Some(EffectState::Burned)
+}
+
+/// The effect-layer suffix a row carries after everything the decision layer had to say: what became
+/// of the effect that decision authorized.
+///
+/// `None` renders NOTHING, and that is the design. A window still in flight, a request decided and
+/// never executed, a refusal that ran nothing, and an effect whose failure the row already names
+/// with `— effect failed: <class>` all say nothing here. Silence means the record does not
+/// determine an outcome; it never means one was determined and withheld.
+fn effect_suffix(row: &GrantView) -> Option<String> {
+    let state = row.effect_state?;
+    Some(match (state, &row.burn_reason) {
+        // The class that ended it, in the reason word the hop log and the session receipt already
+        // spell it with — so one grep matches all three.
+        (EffectState::Burned, Some(reason)) => format!("→burned({})", one_line(reason)),
+        _ => format!("→{}", state.as_str()),
+    })
+}
+
 /// Render the daemon-native "morning receipt" from the ctl `History` rows (already newest-first):
 /// time, provider.action, outcome, authenticated authorization provenance, denial reason.
 /// No secret: the daemon redacts every secret-classed value before a row ever reaches this renderer.
@@ -77,6 +105,9 @@ pub fn run_log_history(history_json: &str, filter: &LogFilter<'_>) -> Result<Cli
     let mut filtered = Vec::new();
     for row in rows {
         if filter.denied_only && !is_denied(&row) {
+            continue;
+        }
+        if filter.burned_only && !is_burned(&row) {
             continue;
         }
         if filter.provider.is_some_and(|name| row.provider != name) {
@@ -134,6 +165,11 @@ pub fn run_log_hops(hops_json: &str, filter: &LogFilter<'_>) -> Result<CliOutput
         if filter.denied_only && !is_refusal(&row) {
             continue;
         }
+        // The same question one layer down: on the hop view a burn is a property of ONE hop — the
+        // one that ended the session — so this narrows to those rows rather than to their sessions.
+        if filter.burned_only && row.burned != Some(true) {
+            continue;
+        }
         if filter
             .provider
             .is_some_and(|name| row.provider.as_deref() != Some(name))
@@ -156,6 +192,11 @@ pub fn run_log_hops(hops_json: &str, filter: &LogFilter<'_>) -> Result<CliOutput
     })
 }
 
+/// `--denied` on the hop view: the hops that did not go through.
+///
+/// An outcome mismatch is deliberately NOT one of them — that hop was authorized, forwarded, and
+/// answered, and calling it a refusal would tell the reader the opposite of what happened. It is
+/// still a hop that ended a session, and `--burned` is the filter for those.
 fn is_refusal(row: &RelayHopView) -> bool {
     matches!(
         row.event_type.as_str(),
@@ -179,6 +220,10 @@ pub fn render_hop_log(rows: &[RelayHopView]) -> String {
                 "relay_request_forwarded" => "HOP",
                 "relay_request_refused" => "REFUSED",
                 "relay_request_failed" => "FAILED",
+                // Its own word, not REFUSED: this hop was authorized, forwarded, and ANSWERED —
+                // what ended the session is the answer, and an operator reading the line has a
+                // landed effect to deal with rather than a request that never left.
+                "relay_outcome_mismatch" => "MISMATCH",
                 "relay_session_closed" => "CLOSED",
                 // Never guess at an event type this renderer does not know: name it verbatim.
                 other => other,
@@ -212,6 +257,19 @@ pub fn render_hop_log(rows: &[RelayHopView]) -> String {
             }
             if row.effect == Some(true) {
                 line.push_str(" [the grant's single effect]");
+            }
+            // What a forwarded hop carried beyond its shape's declared vocabulary. It reads as the
+            // OBSERVATION it is — no refusal grammar — and the list is names only, already bounded
+            // by the broker that wrote it.
+            if let Some(keys) = row.undeclared_keys.as_ref().filter(|keys| !keys.is_empty()) {
+                let names: Vec<String> = keys.iter().map(|key| one_line(key)).collect();
+                line.push_str(&format!(" — also carried {}", names.join(", ")));
+            }
+            // Last, and after the burn/effect marks: the reason WORD stays where a reader's eye
+            // and a `grep` both already find it, and the detail — which is a sentence, not a
+            // token — follows the short columns rather than pushing them off the line.
+            if let Some(detail) = &row.detail {
+                line.push_str(&format!(" — {}", one_line(detail)));
             }
             line
         })
@@ -330,6 +388,14 @@ pub fn render_history_receipt(rows: &[GrantView]) -> String {
                 line.push_str(" — effect ");
                 line.push_str(outcome);
             }
+            // LAST, and it is the only part of the row that answers "and then what": the decision
+            // word at the head says what authority ruled, and everything between says how. A row
+            // whose relay grant burned, one whose window lapsed having driven nothing, and one whose
+            // deploy landed all read `ALLOW <verb>` up to here.
+            if let Some(suffix) = effect_suffix(row) {
+                line.push(' ');
+                line.push_str(&suffix);
+            }
             line
         })
         .collect::<Vec<_>>()
@@ -418,7 +484,7 @@ pub(crate) fn terminal_affecting(character: char) -> bool {
 #[cfg(test)]
 mod history_tests {
     use super::*;
-    use cermet_lang::EffectFailureClass;
+    use cermet_lang::{EffectFailureClass, EffectState};
 
     fn row(decision: &str, kind: Option<&str>, reason: Option<&str>, ts: &str) -> GrantView {
         GrantView {
@@ -436,6 +502,8 @@ mod history_tests {
             terminal_at: None,
             request_model: None,
             deny_reason: None,
+            effect_state: None,
+            burn_reason: None,
             environment: None,
             resource: serde_json::Value::Null,
             status: if decision == "deny" {
@@ -713,6 +781,129 @@ mod history_tests {
         assert!(!render_history_receipt(&[landed]).contains("effect failed"));
     }
 
+    /// A relay row with a derived effect state, as `history()` hands it over.
+    fn relay_row(state: EffectState, burn_reason: Option<&str>) -> GrantView {
+        let mut view = attributed_row("req_0011223344556677", None);
+        view.provider = "vercel".into();
+        view.action = "deploy".into();
+        view.matched_rule = Some("allow vercel.deploy".into());
+        view.effect_state = Some(state);
+        view.burn_reason = burn_reason.map(str::to_string);
+        view
+    }
+
+    /// THE disclosure: three requests that all read `ALLOW vercel.deploy` up to the suffix, and
+    /// three different fates. An agent that cannot tell them apart quotes the burned one as its
+    /// working example; an operator watching a window that already ended reads it as a hang.
+    #[test]
+    fn the_row_says_what_became_of_the_effect_its_decision_authorized() {
+        let out = render_history_receipt(&[
+            relay_row(EffectState::Ok, None),
+            relay_row(EffectState::Burned, Some("bind_mismatch")),
+            relay_row(EffectState::ExpiredUnused, None),
+            relay_row(EffectState::Unresolved, None),
+        ]);
+        let rows: Vec<&str> = out.lines().collect();
+        assert!(rows[0].ends_with("→ok"), "{out}");
+        assert!(rows[1].ends_with("→burned(bind_mismatch)"), "{out}");
+        assert!(rows[2].ends_with("→expired_unused"), "{out}");
+        assert!(rows[3].ends_with("→unresolved"), "{out}");
+        // The suffix is APPENDED: every column the row already had keeps its place, so what an
+        // operator or a script greps for today still matches.
+        for row in &rows {
+            assert!(
+                row.contains(
+                    "ALLOW vercel.deploy req_0011223344556677 — allowed by: allow vercel.deploy"
+                ),
+                "{row}"
+            );
+        }
+    }
+
+    /// The in-flight window is the case that must stay SILENT. Rendering anything here would be a
+    /// conclusion the record does not support, and the whole point of the suffix is that its
+    /// presence means something.
+    #[test]
+    fn a_row_the_record_does_not_resolve_carries_no_suffix() {
+        // A live relay window (no derived state), and a plain executed row from before any of this.
+        let out = render_history_receipt(&[
+            relay_row_in_flight(),
+            row("allow", Some("sentence"), None, "2026-08-11T10:00:00Z"),
+        ]);
+        assert!(!out.contains('→'), "{out}");
+    }
+
+    fn relay_row_in_flight() -> GrantView {
+        let mut view = relay_row(EffectState::Ok, None);
+        view.effect_state = None;
+        view
+    }
+
+    /// A row whose effect the record says FAILED already names the class; the suffix adds nothing
+    /// and stays away rather than repeating it.
+    #[test]
+    fn a_failed_effect_keeps_its_class_and_gains_no_suffix() {
+        let mut failed = relay_row_in_flight();
+        failed.failure_class = Some(EffectFailureClass::ProviderAuthRefused);
+        let out = render_history_receipt(&[failed]);
+        assert!(
+            out.contains("effect failed: provider_auth_refused"),
+            "{out}"
+        );
+        assert!(!out.contains('→'), "{out}");
+    }
+
+    /// The burn reason is a stable token the daemon wrote, but it renders through the same one-line
+    /// scrub every other stored string does — this surface has exactly one door for text.
+    #[test]
+    fn the_burn_reason_cannot_affect_the_terminal() {
+        let out = render_history_receipt(&[relay_row(
+            EffectState::Burned,
+            Some("bind\u{1b}[2Kmismatch\nsecond"),
+        )]);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(!out.contains('\u{1b}'), "{out}");
+    }
+
+    /// `--burned` is the sibling of `--denied` one layer down: `--denied` finds what authority
+    /// refused, `--burned` finds what it ALLOWED and the effect layer then ended. Without it, the
+    /// burns hide among every other allow in the log.
+    #[test]
+    fn burned_only_narrows_to_the_sessions_that_burned() {
+        let json = serde_json::to_string(&vec![
+            relay_row(EffectState::Burned, Some("bind_mismatch")),
+            relay_row(EffectState::Ok, None),
+            relay_row(EffectState::ExpiredUnused, None),
+            row("deny", None, Some("nope"), "2026-07-19T09:00:00Z"),
+        ])
+        .unwrap();
+        let out = run_log_history(
+            &json,
+            &LogFilter {
+                burned_only: true,
+                ..LogFilter::default()
+            },
+        )
+        .unwrap()
+        .text;
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.ends_with("→burned(bind_mismatch)"), "{out}");
+
+        // It composes with the other filters, and an empty narrowing is empty — never a fallback
+        // to everything.
+        let none = run_log_history(
+            &json,
+            &LogFilter {
+                burned_only: true,
+                provider: Some("stripe"),
+                ..LogFilter::default()
+            },
+        )
+        .unwrap()
+        .text;
+        assert_eq!(none, "No activity.");
+    }
+
     #[test]
     fn denied_only_filters_and_since_bounds() {
         let json = serde_json::to_string(&vec![
@@ -933,11 +1124,37 @@ mod hop_tests {
             target: None,
             upstream_status: None,
             reason: None,
+            detail: None,
             effect: None,
             response_bytes: None,
+            undeclared_keys: None,
             burned: None,
             closed: None,
         }
+    }
+
+    /// A forwarded hop that carried keys its shape does not enumerate says so on its own line, in
+    /// the register of an observation. It is not a refusal and must not read as one: the hop was
+    /// authorized, went upstream, and answered.
+    #[test]
+    fn a_forwarded_hop_names_what_it_carried_beyond_the_declared_vocabulary() {
+        let mut forwarded = hop("relay_request_forwarded", "2026-08-01T10:00:01Z");
+        forwarded.method = Some("POST".into());
+        forwarded.target = Some("/v13/deployments".into());
+        forwarded.upstream_status = Some(200);
+        forwarded.effect = Some(true);
+        forwarded.undeclared_keys = Some(vec!["redirects".into(), "+3 more".into()]);
+
+        let json = serde_json::to_string(&vec![forwarded]).unwrap();
+        let out = run_log_hops(&json, &LogFilter::default()).unwrap().text;
+        assert!(
+            out.contains("[the grant's single effect] — also carried redirects, +3 more"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("refused") && !out.contains("burned"),
+            "an observation must not read as a refusal: {out}"
+        );
     }
 
     /// Without this view the operator cannot see WHY a relay session burned without copying
@@ -956,6 +1173,11 @@ mod hop_tests {
         refused.target = Some("/v13/deployments".into());
         refused.reason = Some("bind_mismatch".into());
         refused.burned = Some(true);
+        refused.detail = Some(
+            "the approval froze `target`, so this hop's `target` body key must be absent; it \
+             carried `production`"
+                .into(),
+        );
         let mut closed = hop("relay_session_closed", "2026-08-01T10:00:03Z");
         closed.closed = Some("burned".into());
         closed.reason = None;
@@ -971,9 +1193,13 @@ mod hop_tests {
             out.contains("HOP vercel.deploy GET /v13/deployments/dpl_1 — 200 (1234 bytes)"),
             "{out}"
         );
+        // The reason WORD keeps its column — it is the machine-readable code and what a reader
+        // greps — and the detail follows the short marks rather than pushing them off the line.
         assert!(
             out.contains(
-                "REFUSED vercel.deploy POST /v13/deployments — bind_mismatch (burned the session)"
+                "REFUSED vercel.deploy POST /v13/deployments — bind_mismatch (burned the session) \
+                 — the approval froze `target`, so this hop's `target` body key must be absent; it \
+                 carried `production`"
             ),
             "{out}"
         );
@@ -983,6 +1209,53 @@ mod hop_tests {
             out.find("CLOSED").unwrap() < out.find("OPENED").unwrap(),
             "{out}"
         );
+    }
+
+    /// `--hops --burned` is the drill-down the receipt row's `→burned(<reason>)` sends a reader to,
+    /// and an outcome mismatch is the burn whose whole value is on its own line. It gets its OWN
+    /// word — the hop was authorized, forwarded, and answered; what ended the session is the answer
+    /// — and it rides the same `--burned` filter every other session-ending hop does.
+    #[test]
+    fn an_outcome_mismatch_renders_and_survives_the_burned_filter() {
+        let mut forwarded = hop("relay_request_forwarded", "2026-08-01T10:00:01Z");
+        forwarded.method = Some("POST".into());
+        forwarded.target = Some("/v13/deployments".into());
+        forwarded.upstream_status = Some(200);
+        forwarded.effect = Some(true);
+        let mut mismatch = hop("relay_outcome_mismatch", "2026-08-01T10:00:02Z");
+        mismatch.method = Some("POST".into());
+        mismatch.target = Some("/v13/deployments".into());
+        mismatch.upstream_status = Some(200);
+        mismatch.reason = Some("outcome_mismatch".into());
+        mismatch.burned = Some(true);
+        mismatch.detail = Some(
+            "the approval froze `target`, which this provider encodes as an ABSENT `target` in the \
+             effect's own response; it answered `production`"
+                .into(),
+        );
+        let json = serde_json::to_string(&vec![mismatch, forwarded]).unwrap();
+
+        let out = run_log_hops(&json, &LogFilter::default()).unwrap().text;
+        assert!(
+            out.contains(
+                "MISMATCH vercel.deploy POST /v13/deployments — 200 — outcome_mismatch (burned the \
+                 session) — the approval froze `target`, which this provider encodes as an ABSENT \
+                 `target` in the effect's own response; it answered `production`"
+            ),
+            "{out}"
+        );
+
+        let burned = run_log_hops(
+            &json,
+            &LogFilter {
+                burned_only: true,
+                ..LogFilter::default()
+            },
+        )
+        .unwrap()
+        .text;
+        assert_eq!(burned.lines().count(), 1, "{burned}");
+        assert!(burned.contains("MISMATCH"), "{burned}");
     }
 
     #[test]

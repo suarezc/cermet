@@ -258,6 +258,7 @@ async fn ctl_commit_frame_on_agent_socket_is_rejected_without_a_response() {
     write_frame(
         &mut client,
         &cermet_ipc::ctl::CtlRequest::CommitSentences {
+            preset: None,
             staging_token: "ab".repeat(32),
         },
     )

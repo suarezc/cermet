@@ -999,10 +999,16 @@ impl Broker {
         else {
             return Ok(Ok(resource));
         };
+        // An OMITTED optional field has no spelling to rewrite: it froze as ABSENCE, and absence
+        // reads the same in every dialect. Nothing is resolved, no credential is opened, and the
+        // request stays the request it was.
+        if resource.scalar(profile.field).is_none() {
+            return Ok(Ok(resource));
+        }
         let supplied = match resource.req_str(profile.field) {
             Ok(supplied) => supplied.to_string(),
-            // The field is required by the template that carries the profile, so canonicalization
-            // ran on a resource the contract says cannot exist. Refuse rather than skip.
+            // The field is PRESENT but not a string, so canonicalization ran on a resource the
+            // contract says cannot exist. Refuse rather than skip.
             Err(error) => {
                 return Ok(Err(self.deny(
                     session,
@@ -2451,7 +2457,7 @@ impl Broker {
                                 &req.action,
                                 &resource,
                             )
-                            .map(|hint| hint.command),
+                            .map(|hint| hint.text),
                         CapabilityDecisionSource::SentenceRefusal { .. } => None,
                     }
                 };

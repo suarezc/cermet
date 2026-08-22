@@ -89,8 +89,8 @@ name:
   the sentence corpus, executes the credential-bearing hop, writes the receipts.
   Three sockets, three audiences: operator ctl, agent bridge, git plane.
 - **`cermet`** — the operator CLI (`check`, `connect`, `rules`, `doc`, `run`,
-  `catalog`, `log`, `audit-verify`) and the MCP stdio server (`cermet mcp`), which
-  exposes every verb a standing sentence admits as a typed tool.
+  `catalog`, `log`, `audit-verify`, `journal`) and the MCP stdio server (`cermet mcp`),
+  which exposes every verb a standing sentence admits as a typed tool.
 - **`git-remote-cermet`** — git's own transport helper: wire a remote as
   `cermet::github/<owner>/<repo>` and plain `git push` routes its one credentialed
   hop through the broker while git keeps doing everything else.

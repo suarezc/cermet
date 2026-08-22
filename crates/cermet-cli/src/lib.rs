@@ -25,9 +25,13 @@ pub mod endpoint;
 /// explicit argument slice.
 pub mod entry;
 pub mod git_remote;
+/// The CLI's own output journal: one JSON line per invocation, recording what it printed.
+pub mod journal;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod owner;
+/// `preset` — a stored authority profile, applied by name through the unchanged corpus ceremony.
+pub mod preset;
 pub mod receipt_log;
 pub mod reconciliation;
 pub mod rule_cli;
@@ -122,8 +126,19 @@ pub enum CliCommand {
     Status { as_json: bool },
     /// Project served authority into the document without staging or presence.
     Export { replace_draft: bool },
-    /// Presence-accept the exact canonical repository body as one whole-corpus transaction.
-    Apply { replace_live: bool, recover: bool },
+    /// Presence-accept the exact canonical body as one whole-corpus transaction.
+    ///
+    /// `file` is the document to apply; `None` is discovery from the working directory, unchanged.
+    /// A `CERMET_<name>.md` file is an authority PROFILE: the same ceremony, and on commit the
+    /// daemon stores the committed body under `<name>`.
+    Apply {
+        file: Option<String>,
+        replace_live: bool,
+        recover: bool,
+    },
+    /// The `preset` noun: the stored authority profiles — list them, install one (the SAME
+    /// whole-corpus ceremony [`CliCommand::Apply`] runs), or write one back out as a document.
+    Preset(preset::PresetCommand),
     /// Connect a provider — reuse/discover a token, vault it unused. Driven by the binary front-end
     /// (needs the terminal + token-source seams), NOT the ctl `dispatch`.
     Connect(connect::ConnectArgs),
@@ -150,11 +165,19 @@ pub enum CliCommand {
         /// Narrow to one provider's rows.
         provider: Option<String>,
         denied_only: bool,
+        /// Narrow to the rows whose relay grant burned — what authority allowed and the effect
+        /// layer then ended.
+        burned_only: bool,
         /// Render the relay hop log instead of the grant receipt.
         hops: bool,
         /// The full dump — every row, unwindowed.
         all: bool,
     },
+    /// `cermet journal [on|off]` — the CLI's own output journal. Bare: what it is doing, where the
+    /// file is, and the bounds it enforces. `on`/`off`: the persisted switch, in the operator's own
+    /// settings file. Reading the journal is NOT a command — it is a plain JSONL file, and the
+    /// status form prints its path for exactly that reason.
+    Journal { enabled: Option<bool> },
     /// Register the `cermet mcp` stdio server (a client of cermetd) with the agent client.
     /// Driven by the binary front-end.
     McpInstall(mcp::McpInstallArgs),

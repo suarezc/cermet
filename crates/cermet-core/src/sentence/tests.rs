@@ -715,7 +715,7 @@ fn v2_m5_shared_core_owns_subset_projection_and_widen_eligibility() {
         }
     );
     assert_eq!(
-        outcome.widen_hint.map(|hint| hint.command),
+        outcome.widen_hint.map(|hint| hint.text),
         Some("to allow: cermet rules allow 'stripe.refund where amount <= 75'".into())
     );
 }
@@ -2210,20 +2210,23 @@ fn a_quoted_pin_still_widens_and_still_implies() {
     let widened = widen_rule_for_request(rule, &uint_resource("4"), &UINT_PIN_CONTRACT)
         .expect("a quoted pin must be widenable");
     assert!(
-        conjuncts_match_resource(&widened.conjuncts, &uint_resource("4"), &UINT_PIN_CONTRACT)
-            && conjuncts_match_resource(
-                &widened.conjuncts,
-                &uint_resource("3"),
-                &UINT_PIN_CONTRACT
-            ),
+        conjuncts_match_resource(
+            &widened.rule.conjuncts,
+            &uint_resource("4"),
+            &UINT_PIN_CONTRACT
+        ) && conjuncts_match_resource(
+            &widened.rule.conjuncts,
+            &uint_resource("3"),
+            &UINT_PIN_CONTRACT
+        ),
         "the widened rule must admit the old and the new value: {widened:?}"
     );
     assert!(
-        implies(rule, &widened, &UINT_PIN_CONTRACT),
+        implies(rule, &widened.rule, &UINT_PIN_CONTRACT),
         "widening must never narrow"
     );
     assert_eq!(
-        print_rule(&widened),
+        print_rule(&widened.rule),
         r#"allow github.comment_thread where number in {"3", "4"}"#
     );
 }
@@ -2397,7 +2400,7 @@ fn an_unruled_account_scoped_verb_teaches_the_bare_allow() {
         "the grammar knows this verb; no rule mentions it"
     );
     assert_eq!(
-        outcome.widen_hint.map(|hint| hint.command),
+        outcome.widen_hint.map(|hint| hint.text),
         Some("to allow: cermet rules allow 'stripe.refund'".into())
     );
 }
@@ -2422,12 +2425,139 @@ fn an_unruled_pinnable_verb_teaches_the_pinned_allow() {
         }
     );
     assert_eq!(
-        outcome.widen_hint.map(|hint| hint.command),
+        outcome.widen_hint.map(|hint| hint.text),
         Some(
             "to allow: cermet rules allow 'stripe.test_money_action where account = \"acct_1\" and \
              mode = \"live\" and currency = \"usd\"'"
                 .into()
         ),
         "least privilege: every execution target is pinned to what was actually asked for"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A widening suggestion never deletes a pin.
+//
+// The suggestion is computed by relaxing each conjunct until the rule admits the request. A
+// conjunct over a field the request OMITTED is not one that failed — it is one the request never
+// spoke to — and dropping it is not a relaxation but the DELETION of a scope the operator wrote.
+// The dropped form was a scope escape with a paste in the middle: the denial handed the operator a
+// rule with the pin gone, and any requester could produce that text by leaving the field out.
+// ---------------------------------------------------------------------------------------------
+
+fn bounded_hint(rule_text: &str, resource_json: &str) -> Option<String> {
+    let rules = parse_rules(rule_text).unwrap();
+    let resource = CanonicalResource::from_stored(resource_json, &BOUNDED_CONTRACT).unwrap();
+    SentenceEvaluator::new(
+        &crate::sets::EmptySetResolver,
+        &FixedContractResolver(&BOUNDED_CONTRACT),
+    )
+    .widen_hint_for_request(&rules, "stripe", "refund", &resource)
+    .map(|hint| hint.text)
+}
+
+/// A real bound is relaxed and the untouched pin RIDES ALONG, value and all. The pinned value is
+/// rule text the operator already wrote, so carrying it discloses nothing — while deleting it
+/// silently widened the scope of every future request under that rule.
+#[test]
+fn a_pin_over_a_field_the_request_omitted_survives_the_widening() {
+    let hint = bounded_hint(
+        r#"allow stripe.refund where amount <= 50 and customer = "safe""#,
+        r#"{"amount":75}"#,
+    )
+    .expect("an out-of-bounds request still earns a widening");
+    assert!(
+        hint.contains(r#"amount <= 75 and customer = "safe""#),
+        "the bound relaxes and the pin stands: {hint}"
+    );
+    assert!(
+        hint.contains("`customer`") && hint.contains("omitted"),
+        "and the prose says the request never named it: {hint}"
+    );
+    // ...and that prose leads. Everything after `to allow: ` is read as the command itself — the
+    // MCP bridge labels it a command, an operator pastes it — so a residual-pin sentence trailing
+    // the closing quote turns the one actionable line a deny carries into a broken invocation.
+    assert!(
+        hint.ends_with('\''),
+        "nothing may follow the quoted command: {hint}"
+    );
+    let command = hint
+        .split_once("to allow: cermet rules allow ")
+        .expect("the command is still there")
+        .1;
+    assert!(
+        !command.contains("omitted"),
+        "the prose leads, it does not ride inside the command: {command}"
+    );
+}
+
+/// The shape of the carried conjunct is not equality-specific: an in-set and a comparison over an
+/// omitted field are pins in exactly the same sense, and the old code dropped all three alike.
+#[test]
+fn every_conjunct_shape_over_an_omitted_field_is_carried_not_dropped() {
+    let in_set = bounded_hint(
+        r#"allow stripe.refund where customer in {"a", "b"} and amount <= 50"#,
+        r#"{"amount":75}"#,
+    )
+    .expect("a widening");
+    assert!(
+        in_set.contains(r#"customer in {"a", "b"}"#),
+        "the membership set stands: {in_set}"
+    );
+
+    // The mirror case: the omitted field is the COMPARISON, and the pin that survives is a bound.
+    let comparison = bounded_hint(
+        r#"allow stripe.refund where amount <= 50 and customer = "safe""#,
+        r#"{"customer":"other"}"#,
+    )
+    .expect("a widening");
+    assert!(
+        comparison.contains("amount <= 50"),
+        "the bound over the omitted field stands: {comparison}"
+    );
+    assert!(
+        comparison.contains(r#"customer in {"safe", "other"}"#),
+        "while the field the request DID name widens normally: {comparison}"
+    );
+    assert!(comparison.contains("`amount`"), "{comparison}");
+}
+
+/// When the pin is the ONLY thing between the request and the rule, there is no widening to
+/// propose: the only rule text that admits the request is this one with the pin deleted, and a
+/// denial does not get to suggest that on a requester's behalf. So the hint addresses the REQUEST,
+/// and prints no `cermet rules allow` line at all — a remedy must not point at a surface that
+/// lacks the answer.
+#[test]
+fn an_omitted_pin_alone_yields_a_request_side_hint_and_no_rule_command() {
+    let hint = bounded_hint(
+        r#"allow stripe.refund where amount <= 50 and customer = "safe""#,
+        r#"{"amount":30}"#,
+    )
+    .expect("the denial still says what to do");
+    assert!(
+        !hint.contains("cermet rules allow"),
+        "no rule change admits this while the pin stands: {hint}"
+    );
+    assert!(hint.contains("`customer`"), "{hint}");
+    assert!(
+        hint.contains(r#"customer = "safe""#),
+        "the standing rule is quoted whole, pin included: {hint}"
+    );
+    assert!(
+        hint.contains("name it in the request"),
+        "the fix is in the request: {hint}"
+    );
+    assert!(!hint.contains('\n') && !hint.contains("  "), "{hint:?}");
+}
+
+/// The other direction, unchanged: a field the rule genuinely bounds and the request genuinely
+/// exceeded still widens mechanically, with no omission prose attached.
+#[test]
+fn a_genuinely_out_of_bounds_field_still_widens_the_ordinary_way() {
+    let hint = bounded_hint("allow stripe.refund where amount <= 50", r#"{"amount":75}"#)
+        .expect("a widening");
+    assert_eq!(
+        hint,
+        "to allow: cermet rules allow 'stripe.refund where amount <= 75'"
     );
 }

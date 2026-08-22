@@ -34,8 +34,8 @@ fn parse_mcp_install_client_selector() {
     ));
 }
 
-/// `cermet update` — the thirteenth command. Two forms: the operator's, and the privileged half it
-/// re-execs itself as through sudo.
+/// `cermet update` — two forms: the operator's, and the privileged half it re-execs itself as
+/// through sudo.
 #[test]
 fn parse_update_has_two_forms_and_they_do_not_mix() {
     const DIGEST: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";

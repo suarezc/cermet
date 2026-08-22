@@ -96,7 +96,8 @@ deny-all: nothing is authorized until a human writes a sentence.
 
 ```
 [cermet-setup] fixed service: cermetd bootstrapped and running
-[cermet-setup] complete: cermetd is running — `cermet check` proves the plumbing.
+[cermet-setup] ✓ broker running (cermetd, starts at boot)
+[cermet-setup] ✓ credential vault ready (custody: systemd-host)
 ```
 
 If the human isn't yet in `cermet-approvers` (presence ceremonies require it), the closing
@@ -174,8 +175,10 @@ is `✗`, so it scripts. Real output from a working box:
 plumbing
   ✓ cermetd            serving on ctl.sock — 3 provider(s) connected
   ✓ build              cermet and cermetd are 0.1.0+<commit>
+  ✓ custody            systemd-host — persistent Cermet files do not contain the plaintext key
   ✓ git-remote-cermet  /opt/cermet/bin/git-remote-cermet
   ✓ git plane          git.sock at /var/cermetd-agents/git.sock; uid 501 (you): admitted (approver_uid)
+  · update check       running 0.1.0, nothing newer — last checked <timestamp>
   ✓ agent bridge       /var/cermetd-agents/agent.sock
 
 stale engines
@@ -308,15 +311,18 @@ Two prerequisites nobody tells you: you must be in the `cermet-approvers` group 
 echo confirm needs a **TTY**. `--yes` skips only that CLI-side echo — never the presence gate.
 
 **The durable way — CERMET.md in your repo.** The document flow needs a **git repository**. Run it
-anywhere else and it exits `2`, saying so on two lines:
+anywhere else and it exits `2`, saying so:
 
 ```
 init: repository unavailable
-state: repo_invalid
+active_profile: (unnamed) 4b8004bd4e13
+directory_file: none — no CERMET.md found from this directory
 ```
 
-(`state` is the field to branch on — there is no field literally named `repository`.) It also needs
-the file to exist first:
+The corpus the `rules allow` above made live is still being served, and says so from any directory
+on the box — `(unnamed)` because no stored profile holds that body. What is missing is a document
+HERE. (The EXIT CODE is what to branch on: `0` aligned, `1` drift, `2` unusable.) It also needs the
+file to exist first:
 
 ```bash
 cermet doc check --init   # seeds CERMET.md from the LIVE corpus, with its pin
@@ -325,10 +331,18 @@ cermet doc diff           # what your document says vs what is served (exits 1 w
 cermet doc apply          # presence-gated; makes it live and re-pins the hash
 ```
 
-`doc check --init` prints `state: aligned`. After an edit, `doc diff` and `doc status` both
-report `state: unapplied_document` with the candidate / marker / live digests, and `doc diff`
-then shows the change itself — a minimal unified diff in the direction apply moves, so adding
-one sentence is one `+` line:
+`doc check --init` prints `state: aligned`. `doc status` afterwards answers two questions — what
+the daemon is serving, and what is in this directory — and both digests are truncated to the same
+width, so equal prefixes mean the file IS what is live:
+
+```
+active_profile: (unnamed) 4b8004bd4e13
+directory_file: CERMET.md 4b8004bd4e13
+```
+
+After an edit the prefixes differ and both `doc status` and `doc diff` exit `1`; `doc diff` then
+shows the change itself — a minimal unified diff in the direction apply moves, so adding one
+sentence is one `+` line:
 
 ```
 --- live
@@ -339,6 +353,48 @@ one sentence is one `+` line:
 ```
 
 Only the managed block is authority input. Prose in CERMET.md is guidance, never policy.
+
+**Named authority profiles — `cermet preset`.** One corpus is live at a time, and the set of rules
+an agent needs depends on what it is doing: a design session needs to read, a build session needs to
+push. A **preset** is a stored corpus body under a name, so switching between those sets is one
+command instead of an editing session.
+
+The name is just a key. It refers to no repository, no directory, and no file on this box —
+`designer`, `builder` and `q3r982` are equally good names, and a name may hold letters, digits, `_`
+and `-`.
+
+Write one by applying a document named `CERMET_<name>.md`:
+
+```bash
+cermet doc apply CERMET_designer.md   # the full ceremony; stores what it commits under `designer`
+```
+
+A profile is written only by a ceremony like that one — either this ingest, or a later
+`cermet preset <name>` that re-applies the stored body and re-stores it under the same key (which
+moves its `UPDATED` time and nothing else). It is the same ceremony as any other apply — the
+review, the terminal confirmation, the presence gate, the staged commit — and the body is stored as
+part of the commit that made it live. There is no write path that skips it, so every stored profile
+is a body a human read and attested, exactly like the live corpus.
+
+Then switch between them by name:
+
+```bash
+cermet preset list                    # every stored profile; the served one is marked ● live
+cermet preset designer                # install that profile
+cermet preset export designer         # write it back out as CERMET_designer.md
+```
+
+**Applying a preset REPLACES the live corpus.** A profile is a whole corpus, not an addition to one:
+accepting `cermet preset designer` installs exactly the rules `designer` holds, and every rule the
+previous generation carried and this one does not is gone. The review shows that before you accept
+it — removals as `-` lines, additions as `+` lines, against what is live right now.
+
+`preset <name>` runs the ceremony `doc apply` runs, so there is no `--yes` on it either. What it
+does not have is a pin marker: a profile is not derived from the generation it replaces, so there
+is nothing for a marker to name, and `--replace-live` has no meaning here. `--recover` still does,
+and is required to replace an unserved or corrupt daemon record.
+
+Applying the CERMET.md of the repository you are standing in stays `cermet doc apply`.
 
 ## 6. Put the agent on the clock
 
@@ -352,7 +408,7 @@ Or drive one verb directly. The verb is **dotted**, spelled exactly as the corpu
 
 ```bash
 cermet run stripe.get_charge --resource '{"charge":"ch_..."}'
-cermet run vercel.deploy --resource '{"project":"your-site","target":"preview","team":"personal"}'
+cermet run vercel.deploy --resource '{"project":"your-site","target":"preview"}'
 ```
 
 A successful run prints one JSON receipt on stdout and exits `0`. Same envelope for every verb —
@@ -391,7 +447,7 @@ carries its signature and the sentence that admits it:
 ```
 allowed now (22 verbs) — a standing sentence admits each of these; request it directly.
   stripe.get_charge(charge:str) [http_api_call] — allowed by: allow stripe.get_charge
-  vercel.deploy(project:str, target:str, team:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" and team = "personal" | ...
+  vercel.deploy(project:str, target:str, team?:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" | ...
 ```
 
 `?` marks an optional field; provider-resolved fields are omitted because the broker fills them.
@@ -399,13 +455,17 @@ allowed now (22 verbs) — a standing sentence admits each of these; request it 
 
 Two prerequisites worth knowing up front:
 
-- **`vercel.deploy` names a Vercel scope.** `team` is a required REQUEST field: use `personal` for
-  a personal account, or the team id (`team_…`) the deploy must land in. Whatever the request names
-  is frozen for the whole session and pins the `?teamId=` the CLI stamps on every scoped call, so
-  the deploy cannot wander into another scope mid-session. **Pinning WHICH scope is the sentence's
-  job, exactly like `target`**: a rule that spells `and team = personal` admits only that scope,
-  while a rule that does not mention `team` leaves the choice to the requester — any scope the
-  connected token can reach. Unmentioned means unconstrained, uniformly, for every field.
+- **`vercel.deploy` can name a Vercel scope, and usually does not need to.** `team` is an
+  OPTIONAL request field. Omit it and the deploy simply lands wherever your Vercel CLI is already
+  configured to deploy — nothing about the scope is pinned, and the scope each hop actually used is
+  recorded on the relay hops (`cermet log --hops`). Name it — by team id (`team_…`) or by the team
+  slug your Vercel dashboard shows — and that scope is frozen for the whole session and pins the
+  `?teamId=` the CLI stamps on every scoped call, so the deploy cannot wander into another scope
+  mid-session. A slug is resolved to its id once, inside the daemon, before the sentence judges the
+  request; a name your connection does not reach denies. **Pinning WHICH scope is the sentence's
+  job, exactly like `target`**: a rule that spells `and team = "team_…"` admits only that scope and
+  refuses a request that named none, while a rule that does not mention `team` leaves the choice to
+  the requester. Unmentioned means unconstrained, uniformly, for every field.
 - **`vercel.deploy` is a relay verb** — it prints the exact `vercel deploy` invocation to run, so
   the **Vercel CLI must be on PATH**. `cermet check` flags this: *"'vercel' not found on PATH — a
   relay invocation will fail as written."*
@@ -439,7 +499,7 @@ widen it — for **you** to apply, never the agent. Approvals are human-only; no
 ever exposed on the agent surface.
 
 ```bash
-cermet run vercel.deploy --resource '{"project":"not-my-site","target":"preview","team":"personal"}' --ask-only
+cermet run vercel.deploy --resource '{"project":"not-my-site","target":"preview"}' --ask-only
 ```
 
 ```json
@@ -515,12 +575,22 @@ cermet audit-verify       # the hash-chain, checked from genesis
 ```
 
 `cermet log` renders the 100 most recent rows unless you pass `--all`, and the filters
-(`--since`, `--provider`, `--denied`, `--hops`) narrow the log *first*, then the window applies:
+(`--since`, `--provider`, `--denied`, `--burned`, `--hops`) narrow the log *first*, then the window
+applies:
 
 ```
 2026-08-14T10:12:03.481202Z  DENIED vercel.deploy: vercel.deploy denied by sentence authority: rule 2 predicate 1 did not match (field `project`) — project=not-my-site target=preview
-2026-08-14T09:47:55.062114Z  ALLOW github.fetch — allowed by: allow github.fetch where owner = "acme" and name = "api" (corpus 1f2e3d4c)
+2026-08-14T09:51:18.204551Z  ALLOW vercel.deploy — allowed by: allow vercel.deploy where project = "site" (corpus 1f2e3d4c) →burned(bind_mismatch)
+2026-08-14T09:47:55.062114Z  ALLOW github.fetch — allowed by: allow github.fetch where owner = "acme" and name = "api" (corpus 1f2e3d4c) →ok
 ```
+
+A row ends with what became of the effect its decision authorized, where the record determines one:
+`→ok` (it landed), `→burned(<reason>)` (a refused hop ended the relay session — authority said yes
+and nothing deployed), `→expired_unused` (the window ended having driven nothing), `→unresolved`
+(it ended after hops with nothing saying the effect landed). No suffix means the record does not
+say, most often a window still in flight. `cermet log --burned` is the same question `--denied` asks,
+one layer down: `--denied` finds what authority refused, `--burned` finds what it allowed and the
+effect layer then ended.
 
 `cermet log <request_id>` returns the row as JSON — decision, reason, resource, principal,
 session, and the `authority_fingerprint` of the corpus that ruled on it. `cermet audit-verify`
@@ -530,6 +600,43 @@ the chain does not verify.
 Every decision — allow and deny alike — is a typed row in a hash-chained log written by the
 enforcement point itself. When you want to know what your agent did while you were out, the
 answer is one command, and it is not a claim; it is a receipt.
+
+### What the CLI itself printed
+
+The receipts above are the *broker's* record of what was decided. They are not a record of what
+your terminal was told — and some of what it was told exists nowhere else: the review text of a
+ceremony, the reason a command refused, a confirmation somebody declined (nothing was decided, so
+nothing was receipted). For that, the CLI keeps its own journal:
+
+```bash
+cermet journal            # on or off, where the file is, how big it is, what bounds it
+tail -n1 ~/.local/state/cermet/journal.jsonl | jq .
+cermet journal off        # stop it; `cermet journal on` resumes
+```
+
+Every `cermet` command appends **one JSON line** to
+`$XDG_STATE_HOME/cermet/journal.jsonl` (by default `~/.local/state/cermet/journal.jsonl`, mode
+`0600`): when it ran, its arguments, the directory it ran in, its exit code, how long it took, and
+the first **4096 bytes** of what it printed. Longer output is counted in a `truncated` field rather
+than stored — a long `log` or `catalog` render re-reads a store that already exists durably, while
+the output that exists nowhere else is short. The file rotates whole at **32 MiB**, keeping one
+previous generation as `journal.jsonl.1`.
+
+Nothing you *type* is recorded: the capture is of output only, so the no-echo token prompt in
+`cermet connect` cannot appear in it. It stays on this machine and is sent nowhere (see §10). It is
+a convenience for reading back what a command said, not an audit surface — for that, use
+`cermet log` and `cermet audit-verify` above. Reading it is not a `cermet` command: it is a plain
+JSONL file, which is why `cermet journal` prints its path.
+
+The case it is built for is the one where you run a command and don't recognize what came back.
+Instead of re-running it and pasting the output, point your agent at the journal: `cermet journal`
+gives it the path, the last line gives it exactly what your terminal was shown — the same bytes, in
+the same order, with the exit code beside them — and `docs/FIELDS.md` gives it the meaning of each
+field in that output. The agent can then tell you what you are looking at without you reproducing
+anything, and without either of you guessing at output that has already scrolled away.
+
+The `cermet mcp` stdio server does not journal — its stdout is the agent protocol channel, and its
+traffic already has receipts.
 
 ## 10. What Cermet sends us
 
@@ -578,6 +685,13 @@ Both platforms leave the daemon's own state behind on purpose. Remove it only wh
 sudo rm -rf /var/lib/cermetd          # WARNING: this destroys the vault — every stored credential
 sudo rm -rf /etc/cermetd              # config, including custody_profile
 sudo rm -f /etc/sudoers.d/cermet-agent
+```
+
+Your own per-operator files are separate from all of that, unprivileged, and left alone:
+
+```bash
+rm -f ~/.config/cermet/config.toml              # the update-check and journal switches
+rm -f ~/.local/state/cermet/journal.jsonl*      # the CLI's output journal (§9)
 ```
 
 Also drop the MCP registration from your agent client (`claude mcp remove cermet`) and repoint any

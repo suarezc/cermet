@@ -261,33 +261,60 @@ the frozen values of every bound field, checks the request against the admitted 
 each bound location against the value the approval froze. Only a passing hop is credentialed, on the
 outbound side, and the session tracks the one shape that is the effect so it can pass only once.
 
-A hop that matches no admitted shape, carries an undeclared query or body key, or contradicts a bound
-frozen value is refused **without the credential being attached**, audited, and the session is BURNED:
+A hop whose method and path match no admitted shape, or that contradicts a bound frozen value, is
+refused **without the credential being attached**, audited, and the session is BURNED:
 every later hop on that handle is refused. The session also closes on TTL, on owner lockdown, and on a
 sentence-authority change — the revocation root and the live authority both outrank a session already
 opened. It closes with a receipt DERIVED from the responses the relay itself forwarded — never from
 anything the agent claimed.
 
-**The two dimensions of a closed wire position.** An allowlist admits KEYS; authority
-lives in their VALUES, so both are enforced and neither substitutes for the other. Key closure
-refuses a parameter nobody ratified (`no_matching_shape`); a value bind pins an admitted key that
-carries authority to a frozen field (`bind_mismatch`). `vercel.deploy` needs both: `slug` is a second
-way to name a Vercel scope and dies at closure, while `teamId` IS admitted — a team account's CLI
-stamps it on every scoped call — so its value is bound to the frozen `team` on every shape where it
-decides where the deploy lands (`omit:personal`: a personal-scope token sends no `teamId`, so at that
-frozen value the key must be ABSENT). Admitting a key to a relay allowlist therefore requires
-classifying the authority of its VALUE: bound, or declared authority-free in the ratified document,
-with the reason. There is no third state (`docs/provider_design_principles.md`). `vercel.deploy`
-ratifies exactly one position authority-free: the read-only team-context call, which names its team
-in the PATH and, as observed, sends no query at all, disclosing no more than the bindless team LIST
-beside it — a bind there refused the CLI's own third call and burned the grant before any deploy was
-attempted.
+**A refusal says what it refused.** At the moment it refuses, the relay already holds the frozen
+field map, the offending bind and the shape inventory, so the refusal carries them: the field, the
+constraint *as enforced* (an `omit:` transform reads as "must be absent", not as the frozen
+literal), the value the hop offered, and a remedy where one is computable. Nothing it names is new:
+every value is descriptor text from the template document the installer publishes world-readable in
+the shared catalog directory, a field this caller's own approval froze, a value off the hop this
+caller just wrote, or a value this caller's own session already received as a capture off its own
+effect's response — and a captured bind says so rather than claiming an approval froze it, because a
+capture is the effect's consequence and no sentence can pin it in advance. Borrowed text is bounded
+and stripped of terminal-affecting characters at one choke point, since the detail reaches the
+operator's terminal through the native client's own error printing. The stable reason word is
+unchanged — it is the machine-readable code, and the disclosure is a separate field beside it. It is
+uniform across every class that knows something, because a layer that stays silent while its
+neighbour names its field teaches requesters that silence means "that part was fine". The grammar
+and the per-class contents are `docs/FIELDS.md` §8.6.
+
+**Descriptors bind; they do not block.** A shape's declared `query_keys`/`body_keys` are the
+VOCABULARY a sentence or a request may pin, and BINDING is the whole enforcement: where a key is
+pinned, the relay checks it on every hop that carries it (`bind_mismatch`). A key the descriptor
+never enumerated is the native tool's own business, so it is forwarded and NAMED on the hop's record
+(`undeclared_keys`, `docs/FIELDS.md` §1.7) — surfaced, never refused. Refusing on key membership
+made the broker a content firewall over payloads that decide nothing about which effect happens, and
+it forced worse workarounds than the risk it removed: a deploy driven with the project's own
+`vercel.json` configuration held aside ships a differently-configured artifact. So the ratification
+obligation is now about BINDING, not admission: a key whose VALUE carries authority over where an
+effect lands must be bound to a frozen field, or declared authority-free in the ratified document
+with the reason (`docs/provider_design_principles.md`). `vercel.deploy` binds `teamId` — a team
+account's CLI stamps it on every scoped call — to the frozen `team` on every shape where it decides
+where the deploy lands, and ratifies the read-only team-context call authority-free: it names its
+team in the PATH and, as observed, sends no query at all, disclosing no more than the bindless team
+LIST beside it — a bind there refused the CLI's own third call and burned the grant before any
+deploy was attempted.
 
 What a bind pins is the value the APPROVAL froze; WHICH value that is remains the sentence's
-business. A rule that spells `and team = personal` admits only that scope; a rule that does not
+business. A rule that spells `and team = "team_…"` admits only that scope; a rule that does not
 mention `team` admits whatever the request names, exactly as an unmentioned `target` does. Unmentioned
 is unconstrained, uniformly — the relay's job is that the executed session cannot contradict what was
 approved, not that the approval was narrow.
+
+`team` is also OPTIONAL, which gives a bind a third state. A request that named no scope freezes the
+field as ABSENCE, and a bind reading an absent field constrains nothing — the key may carry any
+value, or none, and the hop record's own target is then the whole account of that position. A rule
+PINNING an optional field still
+refuses the omitting request (`missing_required_field`, naming the field): absence is not a value, so
+optionality never satisfies a pin. The cost is stated where it is paid — an unpinned deploy's scope
+follows the native CLI's own workspace configuration, and the hop records are then the only account
+of the scope it used.
 
 **The session's own dataflow.** A relay session's read shapes carry a wildcard — the
 deployment id in `/v13/deployments/*` and in the two events paths — and matching "some segment is
@@ -328,12 +355,28 @@ dimensions: reading a 4xx body, a nested response path, an array-valued capture,
 request HEADER, and set membership. The reasoning and what reopens it live in the ratified
 `vercel.deploy` document beside the shape.
 
-**Why the body key set is closed.** Checking only the keys a rule binds is not a closed
-surface. Vercel's create-deployment body documents `project` ("when defined, this parameter overrides
-name"), `customEnvironmentSlugOrId` (overrides the target environment), and `deploymentId` (redeploy an
-arbitrary existing deployment) — each one overrides a field the sentence pinned, while the bound
-`body.name` still matches. The allowlist also makes a parameter the provider adds LATER fail closed,
-which is the same posture as CLI drift: it breaks the deploy, it never widens the grant.
+**What the body key set is for.** `body_keys` is the VOCABULARY a shape declares it knows about:
+the top-level keys a sentence or a request may pin, and the baseline against which a hop's record
+reports what else it carried. It constrains nothing by itself. The enforcement is the BIND — `bind:
+body.name: project` is checked on every hop that carries the key, whatever else the body holds
+beside it.
+
+A top-level key outside the declaration is forwarded and NAMED on the forwarded hop's record
+(`undeclared_keys`, `docs/FIELDS.md` §1.7): an observation, not a verdict. That is the whole answer
+to a body key nobody enumerated — including the ones Vercel documents as steering a create.
+`project` ("when defined, this parameter overrides name"), `customEnvironmentSlugOrId` (moves the
+deploy to another environment), `deploymentId` (redeploy an existing deployment) and `alias` (assign
+a domain) all ride through, and what stands against them is what the approval froze: the binds on
+every hop, and the outcome assertion on the create's own response, which is DETECTION — the
+deployment exists by the time the response is read. The `vercel.deploy` document names each of those
+positions, its exposure, and what would reopen it, at the shape's own stanza.
+
+The reason the broker does not refuse them is that a create body is the native tool's payload.
+Refusing on key membership made the broker a content firewall over data that decides nothing about
+which effect happens, and the workaround it forced — driving a deploy with the project's own
+`vercel.json` configuration held aside — ships a differently-configured artifact. A parameter the
+provider adds LATER is the same story: it forwards, and it shows up by name on the record, which is
+where the evidence to widen a declaration (or to add a bind) arrives.
 
 The predicate grammar this mode enforces — admitted shapes, `bind`, `body_keys`, `capture`, `assert`,
 `caps`, `consumes` — is `docs/LANGUAGE.md` §15b.

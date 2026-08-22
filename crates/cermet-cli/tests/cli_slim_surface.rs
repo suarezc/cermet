@@ -61,15 +61,21 @@ fn the_help_is_short_and_names_every_live_command() {
         "artifact",
         "audit-verify",
         "check",
-        // The twelfth command — the CLI's capability-discovery surface.
+        // The CLI's own output journal: what this binary printed, per run. Its switch is on the
+        // banner because a default-on behavior nobody can find the switch for is exactly what the
+        // declaration rule exists to prevent.
+        "journal [on|off]",
+        // The CLI's capability-discovery surface.
         "catalog",
         "rules",
         "doc",
+        // The `doc apply` ceremony reached by a stored profile's name instead of a document.
+        "preset list",
         "connect",
         "owner",
         "setup",
-        // The thirteenth: the noun that contacts cermet.dev — when typed, and on the daily check,
-        // which leaves a local notice and installs nothing.
+        // The one noun that contacts GitHub — when typed, and on the daily check, which leaves a
+        // local notice and installs nothing.
         "update",
         // Its off switch is on the banner because a default-on behavior nobody can find the
         // switch for is the thing that line exists to prevent.
@@ -327,12 +333,56 @@ fn log_declares_its_window_and_its_filters() {
         );
     }
     let log_help = cermet_cli::help_text(&argv(&["log", "--help"])).expect("log has help");
-    for declared in ["--since", "--provider", "--denied", "--hops", "--all"] {
+    for declared in [
+        "--since",
+        "--provider",
+        "--denied",
+        "--burned",
+        "--hops",
+        "--all",
+    ] {
         assert!(
             log_help.contains(declared),
             "`log --help` must declare {declared}:\n{log_help}"
         );
     }
+    // The row's effect-layer suffix is behavior, so it is DECLARED: every token it can carry is in
+    // the help text an operator or an agent reads before they read a log.
+    for token in ["→ok", "→burned(", "→expired_unused", "→unresolved"] {
+        assert!(
+            log_help.contains(token),
+            "`log --help` must declare the {token} suffix:\n{log_help}"
+        );
+    }
+}
+
+/// `--burned` parses like its sibling `--denied`: a bare list flag, composable with the others, and
+/// refused on the one-request form, which has no list to narrow.
+#[test]
+fn log_burned_is_a_list_filter_beside_denied() {
+    assert!(matches!(
+        parse(&argv(&["log", "--burned"])).unwrap(),
+        CliCommand::Log {
+            burned_only: true,
+            denied_only: false,
+            hops: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        parse(&argv(&["log", "--hops", "--burned"])).unwrap(),
+        CliCommand::Log {
+            hops: true,
+            burned_only: true,
+            ..
+        }
+    ));
+    let narrowed = parse(&argv(&["log", "--provider", "vercel", "--burned"])).unwrap();
+    assert!(
+        matches!(&narrowed, CliCommand::Log { provider: Some(p), burned_only: true, .. } if p == "vercel"),
+        "{narrowed:?}"
+    );
+    assert!(usage_of(&["log", "req_1", "--burned"]).contains("log <request_id>"));
 }
 
 #[test]
@@ -397,6 +447,7 @@ fn doc_is_a_noun_and_init_folds_into_check() {
     assert_eq!(
         parse(&argv(&["doc", "apply", "--replace-live", "--recover"])).unwrap(),
         CliCommand::Apply {
+            file: None,
             replace_live: true,
             recover: true,
         }
@@ -410,6 +461,53 @@ fn doc_is_a_noun_and_init_folds_into_check() {
         assert!(
             matches!(parse(&argv(&invalid)), Err(CliError::Usage(_))),
             "{invalid:?} must be a usage error"
+        );
+    }
+}
+
+/// `journal` is a status and a switch, and nothing else — reading the journal is not a command,
+/// because the journal is a plain JSONL file.
+#[test]
+fn journal_is_a_status_and_a_switch() {
+    assert_eq!(
+        parse(&argv(&["journal"])).unwrap(),
+        CliCommand::Journal { enabled: None }
+    );
+    assert_eq!(
+        parse(&argv(&["journal", "on"])).unwrap(),
+        CliCommand::Journal {
+            enabled: Some(true)
+        }
+    );
+    assert_eq!(
+        parse(&argv(&["journal", "off"])).unwrap(),
+        CliCommand::Journal {
+            enabled: Some(false)
+        }
+    );
+    for invalid in [
+        vec!["journal", "maybe"],
+        vec!["journal", "on", "off"],
+        vec!["journal", "show"],
+        vec!["journal", "--all"],
+    ] {
+        assert!(
+            matches!(parse(&argv(&invalid)), Err(CliError::Usage(_))),
+            "{invalid:?} must be a usage error"
+        );
+    }
+    // Its own help declares every bound it enforces, so no behavior path goes undeclared.
+    let help = cermet_cli::help_text(&argv(&["journal", "--help"])).expect("journal has help");
+    for declared in [
+        "4096",
+        "32 MiB",
+        "journal.jsonl.1",
+        "journal on|off",
+        "cermet log",
+    ] {
+        assert!(
+            help.contains(declared),
+            "`journal --help` must declare {declared}:\n{help}"
         );
     }
 }

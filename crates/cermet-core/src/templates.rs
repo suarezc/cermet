@@ -8,7 +8,9 @@
 //!   `Authorization: Bearer <token>`); a template must never be able to steer where the token goes.
 //! - No `origin`/host field. A template carries URL *paths* only; the origin comes from the
 //!   provider's compiled-in, egress-pinned host.
-//! - No `requires_anchored_allow`. That is a provider-level property (`contract::requires_anchored_allow`).
+//! - No key declaring that allows over this provider must be scope-anchored. Whether a provider is
+//!   ratified at all is a property of the broker's own descriptor set, never of a document that
+//!   wants to extend it.
 //!
 //! `#[serde(deny_unknown_fields)]` on every struct makes all three refusals automatic at parse time.
 
@@ -38,10 +40,10 @@ const MAX_STRING_CHARS: usize = 256 * 1024;
 // ---- Relay-predicate caps (a predicate is human-reviewed; keep it small) ----
 /// Sized to admit the unlinked CLI's `GET /v1/teams` opening hop. This is a
 /// keep-it-readable bound on a HUMAN-reviewed document, not a trust boundary — every rule it admits
-/// is still a closed method+path+query+body allowlist.
+/// still matches on method+path and enforces every bind it declares.
 const MAX_PREDICATE_RULES: usize = 9;
 const MAX_PREDICATE_QUERY_KEYS: usize = 16;
-/// Cap on one rule's `body_keys` allowlist. Wider than the query cap because a real create
+/// Cap on one rule's declared `body_keys`. Wider than the query cap because a real create
 /// payload is wide (Vercel's create-deployment body has ~15 legitimate top-level fields), and still a
 /// list a human reads in one screen.
 const MAX_PREDICATE_BODY_KEYS: usize = 32;
@@ -300,16 +302,15 @@ pub struct TemplateField {
 /// enforceable surface of a relay grant — a hop matching no rule is refused and burns the grant.
 ///
 /// `path` is a `/`-rooted literal path in which a `*` segment matches exactly one path segment
-/// (`/v13/deployments/*`, `/v2/deployments/*/events`). `query_keys` is the closed allowlist of query
-/// parameter names the hop may carry — absent means NO query string is admitted, so a scope-redirecting
-/// parameter (Vercel's `teamId`/`slug`) can never ride along unless a human ratified it here (an
-/// injected "deploy to the other team" is refused the same as a legitimate one). `body_keys` is the
-/// same closed allowlist for TOP-LEVEL body keys, and it is REQUIRED on any rule that binds: checking
-/// two keys while waving the rest of the body through is how
-/// `project`/`deploymentId`/`customEnvironmentSlugOrId` would each have overridden a frozen field.
-/// `bind` maps a request location to a FROZEN field name: the relay reads that location out of the
-/// hop and refuses unless it equals the approved value — whether the mismatch came from an injected
-/// `target: production` or a fat-fingered `--prod`. `once` marks THE single effect —
+/// (`/v13/deployments/*`, `/v2/deployments/*/events`); method and path together are the whole shape
+/// match. `query_keys` and `body_keys` are the shape's declared VOCABULARY — the parameter names and
+/// TOP-LEVEL body keys it knows about, and therefore the ones a sentence may pin. They gate nothing
+/// on their own: a key outside them is forwarded and NAMED on the hop's own record.
+/// `bind` is the enforcement. It maps a request location to a FROZEN field name: the relay reads
+/// that location out of the hop and refuses unless it equals the approved value — whether the
+/// mismatch came from an injected `target: production` or a fat-fingered `--prod`. So a value that
+/// carries authority (Vercel's `teamId` names the account scope a deploy lands in) is BOUND, which
+/// is what a hop is judged on. `once` marks THE single effect —
 /// exactly one rule per relay verb carries it, and it may pass at most once per grant.
 ///
 /// A bind value is `<field>` or `<field>|omit:<literal>` — the SAME `omit:` spelling the constructed
@@ -330,10 +331,11 @@ pub struct PredicateRule {
     pub(crate) path: String,
     #[serde(default)]
     pub(crate) query_keys: Vec<String>,
-    /// The closed allowlist of TOP-LEVEL body keys this shape admits, beyond the ones it
-    /// binds (a bound key is admitted implicitly). REQUIRED on any rule that binds — otherwise the
-    /// rule would check two keys and wave the rest of the body through. Absent means no body check at
-    /// all, which is only legal for a rule with no binds (an opaque upload).
+    /// The TOP-LEVEL body keys this shape declares it knows about, beyond the ones it binds (a
+    /// bound key is implicit). REQUIRED on any rule that binds a body key — the declaration is what
+    /// makes the record able to say which keys a hop carried BEYOND the shape's own vocabulary.
+    /// Absent means the body is never parsed at all, which is only legal for a rule with no body
+    /// binds (an opaque upload).
     #[serde(default)]
     pub(crate) body_keys: Option<Vec<String>>,
     #[serde(default)]
@@ -374,8 +376,8 @@ pub struct RelayCaps {
 }
 
 /// The request position a bind reads. Both carry authority: a body key names WHAT is deployed, a
-/// query key names WHERE it lands (Vercel's `teamId` is the account scope, and the
-/// matcher used to check only that the key was in the allowlist).
+/// query key names WHERE it lands (Vercel's `teamId` is the account scope, and the matcher used to
+/// check only that the key was declared — membership was never an answer to a wrong value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindLocation {
     /// A top-level JSON body key.
@@ -444,6 +446,16 @@ pub struct RelayAssertion {
     pub absent_when: Option<String>,
 }
 
+/// Whether a relay comparison may name an OPTIONAL field. A `bind` may — an omitting request
+/// freezes the field as absence and the bind then constrains nothing, which is a coherent per-hop
+/// answer. An `assert` may not: it detects a landed outcome contradicting the approval, and there is
+/// nothing to contradict when nothing was frozen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayFieldPresence {
+    MayBeOptional,
+    MustBeRequired,
+}
+
 /// Parse a bind LOCATION: `body.<key>` (a top-level JSON body key), `query.<key>` (a query
 /// parameter's value), or `path.*` (every wildcard segment of the shape's own path). Nothing else is
 /// a supported request position.
@@ -481,8 +493,8 @@ fn parse_bind_value(value: &str) -> Result<(String, Option<String>), String> {
 }
 
 impl PredicateRule {
-    /// The closed top-level body-key allowlist, or `None` for a rule that declares no body
-    /// check at all (legal only with no binds — an opaque upload body).
+    /// The declared top-level body vocabulary, or `None` for a rule that declares none at all
+    /// (legal only with no body binds — an opaque upload body).
     pub fn body_keys(&self) -> Option<&[String]> {
         self.body_keys.as_deref()
     }
@@ -1921,9 +1933,12 @@ impl ActionTemplate {
                     profile.field
                 )
             })?;
-            if field.ty != TemplateType::Str || !field.required {
+            // A string, because the resolvers rewrite one spelling into another. Optionality is
+            // fine: an omitted field has no spelling to rewrite, so the daemon simply resolves
+            // nothing and the request passes through untouched.
+            if field.ty != TemplateType::Str {
                 return Err(format!(
-                    "{ctx}: canonicalized field `{}` must be a required string",
+                    "{ctx}: canonicalized field `{}` must be a string",
                     profile.field
                 ));
             }
@@ -2458,8 +2473,9 @@ impl ActionTemplate {
                     rule.method, rule.path
                 ));
             }
-            // A rule that inspects the body must close it. Two ratified keys plus an open
-            // remainder is not a closed surface — Vercel's `project` alone voids the identity pin.
+            // A rule that PINS a body key must declare the vocabulary it is pinning within:
+            // without it, the record has no baseline for saying which keys a hop carried beyond
+            // what the shape knows about.
             match &rule.body_keys {
                 Some(_) if matches!(rule.method.as_str(), "GET" | "DELETE") => {
                     return Err(format!(
@@ -2470,8 +2486,8 @@ impl ActionTemplate {
                 None if binds_a_body_key => {
                     return Err(format!(
                         "{ctx}: predicate rule `{} {}` binds a body key but declares no `body_keys` \
-                         allowlist; a rule that inspects the body must close it (declare \
-                         `body_keys: []` to admit only the bound keys)",
+                         vocabulary; a rule that pins a body key must declare what the shape knows \
+                         about (`body_keys: []` for a shape whose vocabulary is only what it binds)",
                         rule.method, rule.path
                     ));
                 }
@@ -2586,8 +2602,12 @@ impl ActionTemplate {
                 }
                 let (field_name, _) = parse_bind_value(assert_value)
                     .map_err(|why| format!("{ctx}: predicate assert `{key}` {why}"))?;
-                let field =
-                    self.relay_comparable_field(ctx, &format!("assert `{key}`"), &field_name)?;
+                let field = self.relay_comparable_field(
+                    ctx,
+                    &format!("assert `{key}`"),
+                    &field_name,
+                    RelayFieldPresence::MustBeRequired,
+                )?;
                 bound_fields.insert(field);
             }
             if rule.bind.len() > MAX_PREDICATE_BINDS {
@@ -2613,9 +2633,9 @@ impl ActionTemplate {
                             ));
                         }
                     }
-                    // The two query dimensions must agree. A value bind on a key the
-                    // shape's own allowlist never admits is dead enforcement — the hop already
-                    // refuses at key closure — and it reads as protection that is not there.
+                    // A shape's declared vocabulary must contain everything it pins. Otherwise the
+                    // shape claims not to know about a key it enforces, and the hop record would
+                    // report that PINNED key as one the shape does not enumerate.
                     BindLocation::Query(key) => {
                         if !is_response_key(key) {
                             return Err(format!(
@@ -2626,8 +2646,8 @@ impl ActionTemplate {
                         if !rule.query_keys.iter().any(|allowed| allowed == key) {
                             return Err(format!(
                                 "{ctx}: predicate rule `{} {}` binds query key `{key}`, which its \
-                                 `query_keys` allowlist does not admit — a value bind on a key that \
-                                 can never arrive enforces nothing",
+                                 `query_keys` vocabulary does not declare — a shape must know about \
+                                 every key it pins",
                                 rule.method, rule.path
                             ));
                         }
@@ -2681,8 +2701,25 @@ impl ActionTemplate {
                          is compared against what the APPROVAL froze"
                     ));
                 }
-                let field =
-                    self.relay_comparable_field(ctx, &format!("bind `{location}`"), &field_name)?;
+                // An `omit:` literal encodes "at THIS frozen value the key must be absent" — it
+                // exists for a required field one of whose legal values the provider expresses by
+                // sending no key. On an OPTIONAL field, absence is already the unconstrained case,
+                // so the literal would be a second and contradictory spelling of the same state.
+                if absent_when.is_some()
+                    && self.field(&field_name).is_some_and(|field| !field.required)
+                {
+                    return Err(format!(
+                        "{ctx}: predicate bind `{location}` carries an `omit:` transform on the \
+                         optional field `{field_name}`; an optional field already encodes absence \
+                         by being absent, and a bind reading it then constrains nothing"
+                    ));
+                }
+                let field = self.relay_comparable_field(
+                    ctx,
+                    &format!("bind `{location}`"),
+                    &field_name,
+                    RelayFieldPresence::MayBeOptional,
+                )?;
                 bound_fields.insert(field);
             }
         }
@@ -2703,23 +2740,36 @@ impl ActionTemplate {
     }
 
     /// The field checks every relay comparison shares — a request `bind` and an outcome `assert`
-    /// alike. The frozen value must be COMPARABLE (a required `str`; an absent or non-string value is
-    /// not), it must be authority-relevant (`identity`/`side_effect`), and it must be a value SOMEBODY
-    /// pinned: an execution target the sentence pins, or `fixed` in the template. Returns the field's
-    /// own name, which is what `consumes` must account for.
+    /// alike. The frozen value must be a `str` (nothing else is comparable against a wire value), it
+    /// must be authority-relevant (`identity`/`side_effect`), and it must be a value SOMEBODY pinned:
+    /// an execution target the sentence pins, or `fixed` in the template. Returns the field's own
+    /// name, which is what `consumes` must account for.
+    ///
+    /// `presence` is where the two comparisons part. A BIND may name an OPTIONAL field: an omitting
+    /// request freezes it as absence and the bind then constrains nothing, which is a coherent
+    /// per-hop answer ("this position was never pinned"). An ASSERT has no such answer — it exists to
+    /// DETECT a landed outcome contradicting the approval, and an assertion against a value that was
+    /// never frozen detects nothing at all, so it stays required.
     fn relay_comparable_field(
         &self,
         ctx: &str,
         what: &str,
         field_name: &str,
+        presence: RelayFieldPresence,
     ) -> Result<&str, String> {
         let field = self.field(field_name).ok_or_else(|| {
             format!("{ctx}: predicate {what} names undeclared field `{field_name}`")
         })?;
-        if field.ty != TemplateType::Str || !field.required {
+        if field.ty != TemplateType::Str {
             return Err(format!(
-                "{ctx}: predicate {what} names field `{field_name}`, which is not a required str \
-                 field (an absent or non-string frozen value is not comparable)"
+                "{ctx}: predicate {what} names field `{field_name}`, which is not a str field (a \
+                 non-string frozen value is not comparable against a wire value)"
+            ));
+        }
+        if presence == RelayFieldPresence::MustBeRequired && !field.required {
+            return Err(format!(
+                "{ctx}: predicate {what} names field `{field_name}`, which is optional; an \
+                 assertion against a value that may never have been frozen detects nothing"
             ));
         }
         if !matches!(
@@ -4011,7 +4061,7 @@ pub struct LoadedTemplate {
 }
 
 /// The ceiling a ratified provider descriptor sets on the templates that may extend it. Membership
-/// makes the provider template-extensible (rule 1) AND `requires_anchored_allow`.
+/// is what makes the provider template-extensible (rule 1).
 #[derive(Debug, Clone)]
 pub enum ProviderCeiling {
     /// An egress-pinned HTTP provider — its origin pin lives in the broker's provider map, so here we
@@ -4110,8 +4160,8 @@ impl TemplateRegistry {
         }
     }
 
-    /// Whether `p` has a ratified descriptor known to this registry (rule 1 + the view gate's
-    /// "could a template ever have existed for this provider" + `requires_anchored_allow`).
+    /// Whether `p` has a ratified descriptor known to this registry (rule 1, and the view gate's
+    /// "could a template ever have existed for this provider").
     pub fn provider_extensible(&self, p: &str) -> bool {
         self.providers
             .read()

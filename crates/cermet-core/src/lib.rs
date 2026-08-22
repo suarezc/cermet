@@ -14,6 +14,8 @@ mod mutation_success;
 pub mod ontology;
 pub mod policy;
 pub mod preconditions;
+/// Stored authority profiles, keyed by an opaque name. Written only through the sentence ceremony.
+pub mod presets;
 pub mod provider;
 mod provider_json;
 pub mod redaction;

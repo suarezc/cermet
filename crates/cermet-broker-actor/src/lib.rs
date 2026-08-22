@@ -36,6 +36,14 @@ enum Cmd {
     ListCredentials(oneshot::Sender<Reply>),
     /// The agent-facing projection — product-enabled providers only.
     ListCredentialsForAgent(oneshot::Sender<Reply>),
+    /// Store one canonical corpus body under an opaque key. Reached only from the sentence
+    /// commit, so a stored profile is always one that was staged, reviewed, and attested.
+    StorePreset {
+        name: String,
+        rules_text: String,
+        reply: oneshot::Sender<Reply>,
+    },
+    ListPresets(oneshot::Sender<Reply>),
     Connect {
         provider: String,
         token: SecretString,
@@ -442,6 +450,16 @@ fn spawn_inner(
                     Cmd::ListCredentialsForAgent(reply) => {
                         let _ = reply.send(ser(broker.list_credentials_for_agent()));
                     }
+                    Cmd::StorePreset {
+                        name,
+                        rules_text,
+                        reply,
+                    } => {
+                        let _ = reply.send(ser(broker.store_preset(&name, &rules_text)));
+                    }
+                    Cmd::ListPresets(reply) => {
+                        let _ = reply.send(ser(broker.list_presets()));
+                    }
                     Cmd::Connect {
                         provider,
                         token,
@@ -780,6 +798,22 @@ impl BrokerHandle {
     /// shelved provider is connected when every verb it owns fails closed.
     pub async fn list_credentials_for_agent(&self) -> Reply {
         self.dispatch(Cmd::ListCredentialsForAgent).await
+    }
+
+    /// Store one canonical corpus body under an opaque key. The daemon calls this from the
+    /// sentence commit and nowhere else.
+    pub async fn store_preset(&self, name: String, rules_text: String) -> Reply {
+        self.dispatch(|reply| Cmd::StorePreset {
+            name,
+            rules_text,
+            reply,
+        })
+        .await
+    }
+
+    /// Every stored profile, for the caller that resolves a name against it.
+    pub async fn list_presets(&self) -> Reply {
+        self.dispatch(Cmd::ListPresets).await
     }
 
     pub async fn connect(

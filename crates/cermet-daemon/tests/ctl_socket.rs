@@ -274,6 +274,7 @@ async fn sentence_stage_commit_is_live_for_the_approver_and_denied_to_a_non_appr
     write_frame(
         &mut client,
         &CtlRequest::CommitSentences {
+            preset: None,
             staging_token: token.clone(),
         },
     )
@@ -302,6 +303,7 @@ async fn sentence_stage_commit_is_live_for_the_approver_and_denied_to_a_non_appr
     write_frame(
         &mut client,
         &CtlRequest::CommitSentences {
+            preset: None,
             staging_token: "deadbeef".repeat(8),
         },
     )

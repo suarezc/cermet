@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -288,7 +288,7 @@ fn start_daemon(runtime: &tokio::runtime::Runtime, state: &Path, boot: usize) ->
 }
 
 fn connect_stripe(daemon: &RunningDaemon, repo: &Path) {
-    let mut child = Command::new(common::cermet_binary())
+    let mut child = common::cermet_command()
         .args(["connect", "stripe", "hermetic"])
         .current_dir(repo)
         .env("CERMET_CTL_SOCK", &daemon.socket)
@@ -356,13 +356,47 @@ fn authority(
     .expect("authority command")
 }
 
+/// The truncated digest one `doc` report prints for the DAEMON's live corpus, and the one it
+/// prints for this directory's file. Both lines truncate to the same width, so comparing them is
+/// how the surface says "the file is / is not what is live".
+fn line_value<'a>(text: &'a str, field: &str) -> &'a str {
+    text.lines()
+        .find_map(|line| line.strip_prefix(&format!("{field}: ")))
+        .unwrap_or_else(|| panic!("no `{field}` line in:\n{text}"))
+}
+
+/// The digest a status line ends with. A line reporting an absence carries no digest and is a test
+/// failure here — these callers are comparing two present corpora.
+fn digest_of(text: &str, field: &str) -> String {
+    let value = line_value(text, field);
+    assert!(!value.contains('—'), "no digest on `{field}`: {value}");
+    value
+        .split_whitespace()
+        .next_back()
+        .expect("a digest")
+        .to_string()
+}
+
+fn live_prefix(text: &str) -> String {
+    digest_of(text, "active_profile")
+}
+
+fn file_prefix(text: &str) -> String {
+    digest_of(text, "directory_file")
+}
+
 fn hint_rule(outcome: &Value) -> String {
     let hint = outcome["hint"]
         .as_str()
         .expect("deny must carry widen hint");
-    let quoted = hint
-        .strip_prefix("to allow: cermet rules allow ")
-        .expect("hint must be an executable cermet rules allow command");
+    // The command is the TAIL of the hint, and everything after the marker is the command itself.
+    // A hint may carry a LEADING clause — a widening that keeps a pin the request omitted says so
+    // first — but nothing may follow the closing quote, or what an operator pastes is broken.
+    const MARKER: &str = "to allow: cermet rules allow ";
+    let at = hint
+        .find(MARKER)
+        .expect("hint must carry an executable cermet rules allow command");
+    let quoted = &hint[at + MARKER.len()..];
     assert!(quoted.starts_with('\'') && quoted.ends_with('\''), "{hint}");
     quoted[1..quoted.len() - 1].replace("'\"'\"'", "'")
 }
@@ -428,11 +462,15 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     connect_stripe(&daemon, repo.path());
     let mut agent = AgentSession::connect(&daemon.agent_socket);
 
-    let help = Command::new(common::cermet_binary()).output().unwrap();
+    let help = common::cermet_command().output().unwrap();
     let help = String::from_utf8(help.stderr).unwrap();
     // The corpus flow is carried by the `doc` noun itself, not by a legend under it.
     assert!(help.contains("doc check [--fix|--init]"), "{help}");
-    assert!(help.contains("doc apply [--replace-live]"), "{help}");
+    // `doc apply` takes an optional document; with none it discovers this repository's CERMET.md.
+    assert!(
+        help.contains("doc apply [<file>] [--replace-live]"),
+        "{help}"
+    );
 
     // 1. No record and no file is deny-all.
     let denied = agent.request(
@@ -494,7 +532,13 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     // 4. Incremental authority is unexported and init's bytes are untouched.
     let unexported = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(unexported.exit_code, 1, "{}", unexported.text);
-    assert!(unexported.text.contains("state: unexported_live"));
+    // The two lines disagree: the daemon moved ahead of the file it was seeded from.
+    assert_ne!(
+        live_prefix(&unexported.text),
+        file_prefix(&unexported.text),
+        "{}",
+        unexported.text
+    );
     assert_eq!(std::fs::read(&document_path).unwrap(), initialized_bytes);
 
     // 5. Export is non-authorizing and emits one complete canonical document.
@@ -520,7 +564,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     let mut agent = AgentSession::connect(&daemon.agent_socket);
     let restarted = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(restarted.exit_code, 0, "{}", restarted.text);
-    assert!(restarted.text.contains("state: aligned"));
+    assert_eq!(
+        live_prefix(&restarted.text),
+        file_prefix(&restarted.text),
+        "{}",
+        restarted.text
+    );
 
     // 7. The credentialed vendored execution succeeds; the disabled local request is a definite
     // persisted denial and cannot produce an executable handle.
@@ -602,7 +651,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     rewrite_body(&document_path, &draft);
     let unapplied = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(unapplied.exit_code, 1, "{}", unapplied.text);
-    assert!(unapplied.text.contains("state: unapplied_document"));
+    assert_ne!(
+        live_prefix(&unapplied.text),
+        file_prefix(&unapplied.text),
+        "{}",
+        unapplied.text
+    );
     assert_eq!(
         agent.request(
             "stripe",
@@ -627,7 +681,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     assert_eq!(fixed.exit_code, 0, "{}", fixed.text);
     let diffed = authority(&daemon, repo.path(), presence.clone(), &["doc", "diff"]);
     assert_eq!(diffed.exit_code, 1, "{}", diffed.text);
-    assert!(diffed.text.contains("state: unapplied_document"));
+    assert_ne!(
+        live_prefix(&diffed.text),
+        file_prefix(&diffed.text),
+        "{}",
+        diffed.text
+    );
     assert_eq!(presence.count(), before_apply_presence);
     let applied = authority(&daemon, repo.path(), presence.clone(), &["doc", "apply"]);
     assert_eq!(applied.exit_code, 0, "{}", applied.text);
@@ -664,14 +723,24 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     std::fs::write(stale.path().join("CERMET.md"), pre_revoke_document).unwrap();
     let stale_status = authority(&daemon, stale.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(stale_status.exit_code, 1, "{}", stale_status.text);
-    assert!(stale_status.text.contains("state: unexported_live"));
+    assert_ne!(
+        live_prefix(&stale_status.text),
+        file_prefix(&stale_status.text),
+        "{}",
+        stale_status.text
+    );
     let divergent = format!(
         "allow stripe.refund where charge = \"ch_gamma\" and amount <= 5000\n{stripe_beta}\n"
     );
     rewrite_body(&stale.path().join("CERMET.md"), &divergent);
     let diverged = authority(&daemon, stale.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(diverged.exit_code, 1, "{}", diverged.text);
-    assert!(diverged.text.contains("state: diverged"));
+    assert_ne!(
+        live_prefix(&diverged.text),
+        file_prefix(&diverged.text),
+        "{}",
+        diverged.text
+    );
     let refused = authority(&daemon, stale.path(), presence.clone(), &["doc", "apply"]);
     assert_eq!(refused.exit_code, 1, "{}", refused.text);
     assert!(refused.text.contains("rerun with --replace-live"));
@@ -708,4 +777,77 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     drop(agent);
     daemon.stop();
     std::env::remove_var("CERMET_STRIPE_BASE_URL");
+}
+
+/// A widening suggestion that still carries a pin the request omitted must stay a RUNNABLE command.
+///
+/// The two consumers both read everything after `to allow: ` as the command — the MCP bridge labels
+/// it "Advisory widen command", and an operator pastes it — so a residual-pin sentence trailing the
+/// closing quote turns the one actionable line a deny carries into a broken shell invocation. This
+/// drives the real deny through the daemon, extracts the command with the same helper the rest of
+/// the lifecycle uses, and RUNS it.
+#[test]
+fn a_widening_that_keeps_an_omitted_pin_is_still_a_runnable_command() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    let presence = Arc::new(CountingPresence::default());
+    let daemon = start_daemon(&runtime, state.path(), 1);
+    let mut agent = AgentSession::connect(&daemon.agent_socket);
+
+    // `team` is OPTIONAL on this verb, so a request omitting it is legal — and this rule pins it.
+    let seed = "allow vercel.deploy where project = \"site\" and target = \"preview\" and team = \
+                \"team_ours\"";
+    let seeded = authority(
+        &daemon,
+        repo.path(),
+        presence.clone(),
+        &["rules", "allow", seed, "--yes"],
+    );
+    assert_eq!(seeded.exit_code, 0, "{}", seeded.text);
+
+    // A production deploy that names no scope: `target` is genuinely out of bounds (it widens), and
+    // `team` was simply never spoken to (it must survive). That is the MIXED hint.
+    let denied = agent.request(
+        "vercel",
+        "deploy",
+        json!({"project": "site", "target": "production"}),
+    );
+    assert_eq!(denied["decision"], "deny", "{denied}");
+    let hint = denied["hint"]
+        .as_str()
+        .expect("a deny carries its next move");
+    assert!(
+        hint.contains("`team`") && hint.contains("omitted"),
+        "the residual pin is named: {hint}"
+    );
+
+    // The helper asserts the quoted argument is well-formed and nothing trails it.
+    let rule = hint_rule(&denied);
+    assert!(
+        rule.contains("team = \"team_ours\""),
+        "the pin rides INSIDE the command, verbatim: {rule}"
+    );
+    assert!(
+        rule.contains("target in {\"preview\", \"production\"}"),
+        "and the real widening is what the command does: {rule}"
+    );
+
+    // ...and it runs.
+    let widened = authority(
+        &daemon,
+        repo.path(),
+        presence.clone(),
+        &["rules", "allow", &rule, "--yes"],
+    );
+    assert_eq!(widened.exit_code, 0, "{}", widened.text);
+    assert!(
+        widened.text.contains(&canonical_allow(&rule)),
+        "{}",
+        widened.text
+    );
 }

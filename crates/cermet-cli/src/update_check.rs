@@ -914,7 +914,10 @@ mod tests {
         );
 
         let surfaces: [(&str, String); 4] = [
-            ("the settings file", crate::settings::settings_file(true)),
+            (
+                "the settings file",
+                crate::settings::settings_file(true, true),
+            ),
             (
                 "cermet update --help",
                 crate::help_text(&["update".to_string(), "--help".to_string()])

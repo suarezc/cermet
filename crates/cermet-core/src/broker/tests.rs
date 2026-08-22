@@ -6592,8 +6592,10 @@ fn gitnative_an_ordinary_http_verb_is_still_requestable() {
 // (adversaries T1/T2 on the predicate, T3 on the handle)
 // ---------------------------------------------------------------------------
 
+/// The default relay fixture is the UNSCOPED deploy: `team` is optional, this request names no
+/// Vercel scope, and the rule does not demand one. The scoped shape has its own fixtures below.
 const RELAY_ALLOW: &str =
-    "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"personal\"";
+    "allow vercel.deploy where project = \"website\" and target = \"preview\"";
 /// The vaulted credential in these tests. Every assertion that it never reaches a client-facing
 /// surface keys on this exact string.
 const RELAY_TOKEN: &str = "vercel_tok_NEVER_IN_A_CLIENT_RESPONSE";
@@ -6705,7 +6707,24 @@ fn relay_request(project: &str) -> CapabilityRequest {
     CapabilityRequest {
         provider: "vercel".into(),
         action: "deploy".into(),
-        resource: json!({ "project": project, "target": "preview", "team": "personal" }),
+        resource: json!({ "project": project, "target": "preview" }),
+        environment: None,
+        justification: None,
+        model: None,
+    }
+}
+
+/// The SCOPED shape of the same fixture: the request names a Vercel scope by its canonical
+/// `team_…` id (so nothing is resolved), and the rule pins that scope. This is what makes the
+/// per-hop `query.teamId` bind live.
+const RELAY_ALLOW_SCOPED: &str =
+    "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"";
+
+fn relay_request_scoped(project: &str, team: &str) -> CapabilityRequest {
+    CapabilityRequest {
+        provider: "vercel".into(),
+        action: "deploy".into(),
+        resource: json!({ "project": project, "target": "preview", "team": team }),
         environment: None,
         justification: None,
         model: None,
@@ -6714,8 +6733,12 @@ fn relay_request(project: &str) -> CapabilityRequest {
 
 /// Request -> allow -> execute, returning the minted relay handle and the execute receipt.
 fn open_relay(broker: &Broker, project: &str) -> (String, ExecutionResult) {
+    open_relay_for(broker, relay_request(project))
+}
+
+fn open_relay_for(broker: &Broker, request: CapabilityRequest) -> (String, ExecutionResult) {
     let outcome = broker
-        .request_capability("s1", relay_request(project))
+        .request_capability("s1", request)
         .expect("the allow admits the request");
     let result = broker
         .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
@@ -6776,7 +6799,7 @@ fn the_invocation_names_the_frozen_project_so_the_cli_never_guesses() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"cermet-site\" and target = \"preview\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"cermet-site\" and target = \"preview\"",
     );
     let (handle, result) = open_relay(&broker, "cermet-site");
 
@@ -6798,7 +6821,7 @@ fn a_production_target_renders_prod_in_the_invocation() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"cermet-site\" and target = \"production\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"cermet-site\" and target = \"production\"",
     );
     let outcome = broker
         .request_capability(
@@ -6806,7 +6829,7 @@ fn a_production_target_renders_prod_in_the_invocation() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "cermet-site", "target": "production", "team": "personal" }),
+                resource: json!({ "project": "cermet-site", "target": "production" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -6863,7 +6886,7 @@ fn a_shell_meaningful_project_is_quoted_in_the_invocation() {
     let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker_with_allow(
         &base,
-        "allow vercel.deploy where project = \"site; touch /tmp/pwned\" and target = \"preview\" and team = \"personal\"",
+        "allow vercel.deploy where project = \"site; touch /tmp/pwned\" and target = \"preview\"",
     );
     let (_, result) = open_relay(&broker, "site; touch /tmp/pwned");
 
@@ -7250,12 +7273,12 @@ fn a_production_target_is_refused_without_the_credential_and_burns_the_grant() {
 #[test]
 fn a_teamid_outside_the_frozen_scope_never_reaches_the_credentialed_hop() {
     let (base, rx, _server) = relay_upstream(vec![]);
-    let broker = relay_broker(&base);
-    let (handle, _) = open_relay(&broker, "website");
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
 
-    // The approval froze `team = personal`, whose bind means "no teamId at all". T1: injected
-    // "deploy it into the other team" — and Vercel auto-creates a project on an unknown name, so
-    // this is mint-and-deploy anywhere the vaulted token reaches.
+    // The approval froze `team = team_ours`. T1: injected "deploy it into the other team" — and
+    // Vercel auto-creates a project on an unknown name, so this is mint-and-deploy anywhere the
+    // vaulted token reaches.
     let refused = broker
         .relay_hop(
             &handle,
@@ -7299,7 +7322,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "preview" }),
+                resource: json!({ "project": "website" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -7313,12 +7336,16 @@ fn a_request_missing_a_required_field_is_told_which_one() {
         .as_deref()
         .expect("an invalid-request deny names the caller's next move");
     assert!(
-        hint.contains("team"),
+        hint.contains("target"),
         "the hint must name the missing field: {hint}"
     );
     assert!(
-        !hint.contains("project") && !hint.contains("target"),
+        !hint.contains("project"),
         "only the MISSING fields are named — the supplied ones were fine: {hint}"
+    );
+    assert!(
+        !hint.contains("team"),
+        "an OPTIONAL field is not missing when it is omitted, so it is never named here: {hint}"
     );
 
     // Two missing fields are both named, and a request that is invalid for some OTHER reason keeps
@@ -7329,7 +7356,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website" }),
+                resource: json!({}),
                 environment: None,
                 justification: None,
                 model: None,
@@ -7338,7 +7365,7 @@ fn a_request_missing_a_required_field_is_told_which_one() {
         .expect("a decision");
     let hint = outcome.hint.as_deref().unwrap_or_default();
     assert!(
-        hint.contains("target") && hint.contains("team"),
+        hint.contains("target") && hint.contains("project"),
         "both missing fields are named: {hint}"
     );
     let outcome = broker
@@ -7362,65 +7389,97 @@ fn a_request_missing_a_required_field_is_told_which_one() {
     );
 }
 
-/// The request layer's half of the same invariant: `team` is a REQUIRED identity field, so a request
-/// that names no scope has no frozen value to enforce against and never becomes a grant — fail
-/// closed by construction. Named, it FREEZES onto the session and only the in-scope hop forwards.
+/// The request layer's half of the scope story, both directions.
+///
+/// `team` is OPTIONAL. A request that names no scope is admitted by a rule that does not demand one,
+/// its `teamId` binds enforce nothing, and the hop record's own target is the only account of the
+/// scope the native CLI actually used. A request that DOES name a scope freezes it, and only the
+/// in-scope hop forwards.
 #[test]
-fn a_relay_request_that_names_no_team_never_becomes_a_grant() {
-    let (base, _rx, _server) = relay_upstream(vec![]);
-    let broker = relay_broker(&base);
-    let outcome = broker.request_capability(
-        "s1",
-        CapabilityRequest {
-            provider: "vercel".into(),
-            action: "deploy".into(),
-            resource: json!({ "project": "website", "target": "preview" }),
-            environment: None,
-            justification: None,
-            model: None,
-        },
-    );
-    match outcome {
-        Err(_) => {}
-        Ok(outcome) => {
-            assert_ne!(
-                outcome.decision,
-                Decision::Allow,
-                "a request naming no scope must not be allowed"
-            );
-            assert!(outcome.grant_id.is_none());
-        }
-    }
-    assert_eq!(broker.live_relay_sessions(), 0);
-
+fn an_unnamed_scope_deploys_under_a_rule_that_demands_none() {
     let (base, rx, _server) = relay_upstream(vec![(
         200,
         r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
     )]);
-    let broker = relay_broker_with_allow(
-        &base,
-        "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
-    );
-    let outcome = broker
-        .request_capability(
-            "s1",
-            CapabilityRequest {
-                provider: "vercel".into(),
-                action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "preview", "team": "team_ours" }),
-                environment: None,
-                justification: None,
-                model: None,
-            },
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+
+    // The CLI's own workspace configuration selected this scope; nothing was approved about it, so
+    // nothing is enforced about it.
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_whatever",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
         )
-        .expect("the allow admits the scoped request");
-    let result = broker
-        .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
-        .expect("executing a relay verb opens its session");
-    let handle = result.result["relay"]["handle"]
-        .as_str()
-        .expect("the receipt names the handle")
-        .to_string();
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(
+        rx.try_recv().is_ok(),
+        "an unpinned scope is forwarded, credentialed, like any other admitted hop"
+    );
+    assert!(
+        audit_events_of_type(&broker, "relay_request_refused").is_empty(),
+        "nothing was refused"
+    );
+
+    // ...and the hop RECORD carries the full target, query string included — the only record of
+    // which scope the deploy actually landed in.
+    let hops = audit_events_of_type(&broker, "relay_request_forwarded");
+    assert!(
+        hops.iter().any(|hop| hop["target"]
+            .as_str()
+            .is_some_and(|t| t.contains("teamId=team_whatever"))),
+        "the observed scope lives in the hop record: {hops:?}"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The sentence keeps its grip on scope: a rule that PINS `team` refuses a request that named none.
+/// Absent is not a value, so the pin is not silently satisfied — the deny is typed and names the
+/// field the failing rule constrained.
+#[test]
+fn a_rule_that_pins_the_scope_refuses_a_request_that_named_none() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .expect("the request is decided");
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(outcome.grant_id.is_none());
+    assert_eq!(broker.live_relay_sessions(), 0);
+
+    let row = broker
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.request_id.as_deref() == Some(outcome.request_id.as_str()))
+        .expect("the deny is in history");
+    // The typed reason is `missing_required_field`, naming `team`: a conjunct pinning a field the
+    // request left ABSENT refuses on the absence, before any value comparison happens.
+    let deny = row.deny_reason.expect("a typed deny reason");
+    assert!(
+        matches!(&deny, crate::sentence::DenyReason::MissingField { field, .. } if field == "team"),
+        "the deny names the field the rule pinned and the request left absent: {deny:?}"
+    );
+    assert!(
+        outcome.reason.contains("team"),
+        "and the prose says so too: {}",
+        outcome.reason
+    );
+}
+
+/// A NAMED scope still freezes onto the session, and only the in-scope hop forwards.
+#[test]
+fn a_named_scope_freezes_and_only_the_in_scope_hop_forwards() {
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
     let forwarded = broker
         .relay_hop(
             &handle,
@@ -7622,7 +7681,7 @@ fn a_production_target_is_adjudicated_by_the_sentence_not_the_template() {
             CapabilityRequest {
                 provider: "vercel".into(),
                 action: "deploy".into(),
-                resource: json!({ "project": "website", "target": "production", "team": "personal" }),
+                resource: json!({ "project": "website", "target": "production" }),
                 environment: None,
                 justification: None,
                 model: None,
@@ -7641,140 +7700,50 @@ fn a_production_target_is_adjudicated_by_the_sentence_not_the_template() {
 }
 
 #[test]
-fn an_undeclared_create_body_key_never_reaches_the_credentialed_hop() {
-    // The upstream serves nothing: if any of these bodies were ever forwarded the assertion below
-    // would see the request, and the vault would have been opened to attach the credential.
-    let (base, rx, _server) = relay_upstream(vec![]);
-    for body in [
-        // Vercel's documented overrides of the fields the sentence pinned.
-        r#"{"name":"website","project":"prj_someone_else"}"#,
-        r#"{"name":"website","deploymentId":"dpl_not_ours"}"#,
-        r#"{"name":"website","customEnvironmentSlugOrId":"prod-clone"}"#,
-        // ...and a parameter Vercel might add after this predicate was ratified.
-        r#"{"name":"website","someFutureParameter":true}"#,
-    ] {
-        let broker = relay_broker(&base);
-        let (handle, _) = open_relay(&broker, "website");
-        let refused = broker
-            .relay_hop(
-                &handle,
-                "POST",
-                "/v13/deployments",
-                &[("content-type".into(), "application/json".into())],
-                body.as_bytes().to_vec(),
-            )
-            .unwrap();
-        assert_eq!(refused.status, 422, "{body}");
-        assert!(!String::from_utf8_lossy(&refused.body).contains(RELAY_TOKEN));
-        assert_eq!(
-            broker.live_relay_sessions(),
-            0,
-            "{body}: an undeclared body key burns the session"
-        );
-        let refusals = audit_events_of_type(&broker, "relay_request_refused");
-        assert_eq!(refusals[0]["reason"], "undeclared_body_key", "{body}");
-        assert_eq!(refusals[0]["burned"], true);
-        assert!(broker.verify_integrity().unwrap().verified);
-    }
-    assert!(
-        rx.try_recv().is_err(),
-        "no undeclared-key body was ever credentialed and forwarded"
-    );
-}
-
-/// A refusal that will not say WHICH key it refused makes flight-widening guesswork — the
-/// descriptor's own comment promises "one audited undeclared_body_key line naming it" and the
-/// behavior must deliver it. Names only, never values:
-/// the key name is the thing an operator needs to decide whether to ratify it; the value is the
-/// agent's payload and stays out of the log.
-#[test]
-fn undeclared_body_key_refusal_names_the_keys_in_message_and_audit() {
-    for (body, expected) in [
-        (
-            r#"{"name":"website","deploymentId":"dpl_evil"}"#,
-            vec!["deploymentId"],
-        ),
-        (
-            r#"{"name":"website","deploymentId":"dpl_evil","project":"other","redirects":[]}"#,
-            vec!["deploymentId", "project", "redirects"],
-        ),
-    ] {
-        let (base, _rx, _server) = relay_upstream(vec![]);
-        let broker = relay_broker(&base);
-        let (handle, _) = open_relay(&broker, "website");
-        let refused = broker
-            .relay_hop(
-                &handle,
-                "POST",
-                "/v13/deployments",
-                &[("content-type".into(), "application/json".into())],
-                body.as_bytes().to_vec(),
-            )
-            .unwrap();
-        assert_eq!(refused.status, 422, "{body}");
-        let rendered = String::from_utf8_lossy(&refused.body).to_string();
-        let refusals = audit_events_of_type(&broker, "relay_request_refused");
-        assert_eq!(refusals[0]["reason"], "undeclared_body_key", "{body}");
-        for key in &expected {
-            assert!(
-                rendered.contains(key),
-                "the CLI-visible refusal must name {key}: {rendered}"
-            );
-            assert!(
-                refusals[0]["undeclared_keys"]
-                    .as_array()
-                    .expect("the audit row carries the named keys")
-                    .iter()
-                    .any(|k| k.as_str() == Some(key)),
-                "the audit row must name {key}: {}",
-                refusals[0]
-            );
-        }
-        // Names only: no VALUE from the refused body may appear anywhere.
-        for value in ["dpl_evil", "other"] {
-            assert!(
-                !rendered.contains(value),
-                "value leaked to the client: {rendered}"
-            );
-            assert!(
-                !refusals[0].to_string().contains(value),
-                "value leaked to the audit row: {}",
-                refusals[0]
-            );
-        }
-        assert!(broker.verify_integrity().unwrap().verified);
-    }
-}
-
-/// `headers` joins the create-body allowlist: response-header config shapes how the
-/// DEPLOYED SITE answers, never which project/target deploys. The rest of the vercel.json family is
-/// unevidenced and still refuses — and refuses BY NAME.
-#[test]
-fn headers_is_admitted_and_the_unevidenced_family_still_refuses_by_name() {
-    let (base, rx, server) = relay_upstream(vec![(
+fn an_undeclared_create_body_key_is_forwarded_with_its_binds_still_enforced() {
+    // Two create bodies over the same shape. The first carries keys the descriptor never
+    // enumerated and correct bound values — it deploys, and the row names what rode along. The
+    // second carries the same undeclared key AND a wrong bound value — the bind refuses it, and the
+    // undeclared key neither masks that nor becomes the refusal's story.
+    let (base, rx, _server) = relay_upstream(vec![(
         200,
-        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#,
+        r#"{"id":"dpl_cfg","url":"cfg.vercel.app","name":"website","readyState":"QUEUED"}"#,
     )]);
     let broker = relay_broker(&base);
     let (handle, _) = open_relay(&broker, "website");
-    let admitted = broker
+    let body = br#"{"name":"website","files":[],"project":"prj_someone_else","redirects":[]}"#;
+    let forwarded = broker
         .relay_hop(
             &handle,
             "POST",
             "/v13/deployments",
             &[("content-type".into(), "application/json".into())],
-            br#"{"name":"website","files":[],"headers":[{"source":"/(.*)","headers":[]}]}"#
-                .to_vec(),
+            body.to_vec(),
         )
         .unwrap();
-    assert_eq!(
-        admitted.status, 200,
-        "a create body carrying `headers` deploys"
+    assert_eq!(forwarded.status, 200);
+    let hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(
+        hop.contains("prj_someone_else"),
+        "the body reaches the provider verbatim: {hop}"
     );
-    assert!(rx.try_recv().is_ok(), "the hop reached upstream");
-    drop(server);
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    let named: Vec<&str> = rows[0]["undeclared_keys"]
+        .as_array()
+        .expect("the forwarded row names what rode along")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(named, vec!["project", "redirects"]);
+    // NAMES ONLY: a body VALUE is the agent's payload and stays out of the durable row.
+    assert!(
+        !rows[0].to_string().contains("prj_someone_else"),
+        "value leaked to the audit row: {}",
+        rows[0]
+    );
 
-    let (base, rx, _server) = relay_upstream(vec![]);
+    // The bind is untouched by any of it.
+    let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker(&base);
     let (handle, _) = open_relay(&broker, "website");
     let refused = broker
@@ -7783,20 +7752,58 @@ fn headers_is_admitted_and_the_unevidenced_family_still_refuses_by_name() {
             "POST",
             "/v13/deployments",
             &[("content-type".into(), "application/json".into())],
-            br#"{"name":"website","redirects":[{"source":"/a","destination":"/b"}]}"#.to_vec(),
+            br#"{"name":"someone-elses-site","files":[],"redirects":[]}"#.to_vec(),
         )
         .unwrap();
+    assert_eq!(refused.status, 422);
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+    assert!(
+        !refusals[0].to_string().contains("redirects"),
+        "the bind is what refused; the undeclared key is not the story: {}",
+        refusals[0]
+    );
+    assert_eq!(broker.live_relay_sessions(), 0);
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The whole `vercel.json` family deploys. `headers` is enumerated by the descriptor, so it is part
+/// of the shape's declared vocabulary and rides silently; the rest is not enumerated, so it rides
+/// and is NAMED on the hop record. Neither is refused: holding a project's own configuration aside
+/// to get past the broker ships a differently-configured artifact, which is worse than anything the
+/// refusal bought.
+#[test]
+fn the_whole_vercel_json_family_deploys_and_only_the_unenumerated_half_is_named() {
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let deployed = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[],"headers":[],"redirects":[],"cleanUrls":true}"#
+                .to_vec(),
+        )
+        .unwrap();
+    assert_eq!(deployed.status, 200);
+    assert!(rx.try_recv().is_ok(), "the hop reached upstream");
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    let named: Vec<&str> = rows[0]["undeclared_keys"]
+        .as_array()
+        .expect("the unenumerated half is named")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert_eq!(
-        refused.status, 422,
-        "an unevidenced family member still refuses"
-    );
-    assert!(
-        String::from_utf8_lossy(&refused.body).contains("redirects"),
-        "and it refuses BY NAME"
-    );
-    assert!(
-        rx.try_recv().is_err(),
-        "nothing was credentialed and forwarded"
+        named,
+        vec!["cleanUrls", "redirects"],
+        "`headers` is declared, so it is not an observation"
     );
 }
 
@@ -8453,6 +8460,278 @@ fn request_status_carries_the_burned_relay_sessions_receipt() {
     assert_eq!(session["burned_target"], "/v13/deployments");
 }
 
+/// The receipt row's own `effect_state`, on the request whose window BURNED.
+///
+/// The decision word says `allow` for a window that deployed and for one whose grant a refused
+/// effect hop burned, and those are not the same event. An agent that reads the burned one as a
+/// working example copies fields that were never accepted.
+#[test]
+fn a_burned_window_says_so_on_the_row_that_says_it_was_allowed() {
+    let (base, _server) = relay_chunked_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"other-site","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let row = one_relay_row(&broker);
+    assert_eq!(row.decision, "allow", "authority still said yes");
+    assert_eq!(row.effect_state, Some(crate::types::EffectState::Burned));
+    assert_eq!(
+        row.burn_reason.as_deref(),
+        Some("bind_mismatch"),
+        "the row names the class that ended it, not just that something did"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The window that drove NOTHING. It is spent authority with no effect anywhere, and before this it
+/// was indistinguishable from a window mid-flight.
+#[test]
+fn a_window_that_lapsed_having_driven_nothing_reads_expired_unused() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, result) = open_relay(&broker, "website");
+    let expires_at = result.result["relay"]["expires_at"].as_i64().unwrap();
+
+    // Live, and nothing has happened: the record does not say how this ends, so it says nothing.
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        None,
+        "a live window with no hops is in flight, not expired"
+    );
+
+    broker.set_now(expires_at + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::ExpiredUnused)
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The observation is an observation. `effect_state` is DERIVED from the effect flag, the upstream
+/// status, and the refusal/burn signals — and a hop carrying keys the shape does not enumerate must
+/// move none of that. Same flow, same window, same word, whether or not anything rode along.
+#[test]
+fn keys_a_hop_carried_undeclared_do_not_move_the_effect_state() {
+    let state_after = |body: &'static [u8]| {
+        let (base, server) = relay_chunked_upstream(vec![(
+            200,
+            r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#
+                .to_string(),
+        )]);
+        let broker = relay_broker(&base);
+        let (handle, _) = open_relay(&broker, "website");
+        let created = broker
+            .relay_hop(&handle, "POST", "/v13/deployments", &[], body.to_vec())
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(created.status, 200);
+        one_relay_row(&broker).effect_state
+    };
+    let plain = state_after(br#"{"name":"website"}"#);
+    assert_eq!(plain, Some(crate::types::EffectState::Ok));
+    assert_eq!(
+        state_after(br#"{"name":"website","redirects":[],"cleanUrls":true}"#),
+        plain,
+        "an observation on the hop record is not a signal the derivation reads"
+    );
+}
+
+/// Derived from the CLOCK, not only from the close record: a daemon that restarts drops its live
+/// sessions from memory without closing them, and a window with no terminal record would otherwise
+/// read as in-flight forever.
+#[test]
+fn a_window_past_its_deadline_reads_expired_even_with_no_close_record() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, result) = open_relay(&broker, "website");
+    let expires_at = result.result["relay"]["expires_at"].as_i64().unwrap();
+
+    broker.set_now(expires_at + 1);
+    assert!(
+        audit_events_of_type(&broker, "relay_session_closed").is_empty(),
+        "no sweep has run, so there is no terminal record to read"
+    );
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::ExpiredUnused)
+    );
+}
+
+/// The deploy that LANDED. `ok` is the word that was missing: nothing on the row said an effect had
+/// actually happened.
+#[test]
+fn a_landed_deploy_reads_ok() {
+    let (base, server) = relay_chunked_upstream(vec![(
+        200,
+        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#
+            .to_string(),
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, result) = open_relay(&broker, "website");
+    let created = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(created.status, 200);
+
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Ok),
+        "the effect landed, and the row says so while the window is still open"
+    );
+
+    // And the window then lapsing does not un-land it: the effect is the last word about the
+    // effect, never how the window happened to end.
+    broker.set_now(result.result["relay"]["expires_at"].as_i64().unwrap() + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Ok)
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The window that ended UNRESOLVED: it forwarded read traffic, its effect-bearing hop never ran,
+/// and the deadline passed. The operator who read this as "cermet hanged" had nothing anywhere
+/// recording that the window was over.
+#[test]
+fn a_window_that_ended_after_reads_with_no_effect_reads_unresolved() {
+    let (base, server) = relay_chunked_upstream(vec![(
+        200,
+        r#"{"id":"prj_website","name":"website"}"#.to_string(),
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, result) = open_relay(&broker, "website");
+    let read = broker
+        .relay_hop(&handle, "GET", "/v9/projects/website", &[], Vec::new())
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(read.status, 200);
+
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        None,
+        "a live window that has only read is still in flight"
+    );
+
+    broker.set_now(result.result["relay"]["expires_at"].as_i64().unwrap() + 1);
+    assert_eq!(broker.sweep_relay_sessions(), 1);
+    assert_eq!(
+        one_relay_row(&broker).effect_state,
+        Some(crate::types::EffectState::Unresolved),
+        "hops happened, the window is over, and nothing says the effect landed"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// A relay grant's terminal `provider_action_succeeded` records the SESSION being minted — handing
+/// out live relay authority is the invocation boundary — and reading it as the effect's outcome
+/// would report every freshly opened window as a landed deploy.
+#[test]
+fn minting_a_window_is_not_a_landed_effect() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (_handle, _) = open_relay(&broker, "website");
+    assert!(
+        !audit_events_of_type(&broker, "provider_action_succeeded").is_empty(),
+        "the mint IS a successful execution — that is exactly the row this must not misread"
+    );
+    assert_eq!(one_relay_row(&broker).effect_state, None);
+}
+
+/// The plain (non-relay) half: a verb the daemon runs itself already records its own terminal
+/// event, so its row carries `ok` from what is stored, with nothing added to store it.
+#[test]
+fn a_verb_the_daemon_ran_itself_reads_ok_from_its_terminal_event() {
+    let b = audit_fake_github_broker();
+    let outcome = b
+        .request_capability("s1", audit_fake_github_request())
+        .unwrap();
+    b.execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let row = b
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.provider == "github")
+        .expect("the executed verb has a receipt row");
+    assert_eq!(row.effect_state, Some(crate::types::EffectState::Ok));
+    assert_eq!(row.burn_reason, None);
+}
+
+/// `cermet log <request_id>` answers with the SAME derivation the list row's suffix carries, from
+/// the same read — the per-id zoom can never disagree with the list about how a request ended.
+///
+/// It earns its place in the JSON because the alternative is arithmetic: `closed: "ttl"` with
+/// `hops: 0` and `closed: "ttl"` after four hops are different fates, and a window whose daemon
+/// restarted has no `relay_session` at all.
+#[test]
+fn one_requests_evidence_carries_the_same_derived_state_as_its_row() {
+    let (base, _server) = relay_chunked_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .unwrap();
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[],
+            br#"{"name":"other-site","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let evidence = broker.evidence(&outcome.request_id).unwrap();
+    assert_eq!(
+        evidence.effect_state,
+        Some(crate::types::EffectState::Burned)
+    );
+    assert_eq!(
+        evidence.effect_state,
+        one_relay_row(&broker).effect_state,
+        "the two zoom levels read one derivation"
+    );
+    // Derived, never stored: the session's own terminal record carries the raw observations it was
+    // computed from and no state word of its own.
+    let session = evidence.relay_session.as_ref().expect("a closed session");
+    assert!(session.get("effect_state").is_none(), "{session}");
+    assert_eq!(session["closed"], "burned");
+}
+
+/// The one relay receipt row in the log. Every relay test above drives one request, so naming it
+/// this way keeps the assertions about the STATE rather than about list plumbing.
+fn one_relay_row(broker: &Broker) -> GrantView {
+    broker
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.provider == "vercel")
+        .expect("the relay request has a receipt row")
+}
+
 /// The operator's cross-session view: `cermet log --hops` reads this projection, newest
 /// first, so a burn is diagnosable without sudo and sqlite.
 #[test]
@@ -8543,6 +8822,54 @@ fn the_create_response_confines_the_sessions_polls_to_its_own_deployment() {
     assert!(
         broker.relay_session_snapshot(&handle).is_none(),
         "a session probed for a deployment it never created is done"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The drill-down half of the detection: the receipt row advertises `→burned(outcome_mismatch)`,
+/// and `cermet log --hops --burned` is where an operator goes to see WHAT disagreed. The mismatch
+/// row was absent from that view entirely, so the one burn reason whose whole value is
+/// frozen-vs-observed was the one the drill-down could not answer.
+#[test]
+fn an_outcome_mismatch_is_a_burning_hop_in_the_hop_view() {
+    let (base, _rx, server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_prod","url":"u","name":"website","target":"production"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+    server.join().unwrap();
+
+    let hops = broker.relay_hops().unwrap();
+    let mismatch = hops
+        .iter()
+        .find(|hop| hop.event_type == "relay_outcome_mismatch")
+        .expect("the mismatch rides the hop view it is diagnosed from");
+    // The same three marks a burning REFUSAL carries, so ONE filter and one renderer serve every
+    // hop that ended a session.
+    assert_eq!(mismatch.burned, Some(true));
+    assert_eq!(mismatch.reason.as_deref(), Some("outcome_mismatch"));
+    assert_eq!(mismatch.method.as_deref(), Some("POST"));
+    assert_eq!(mismatch.target.as_deref(), Some("/v13/deployments"));
+    assert_eq!(mismatch.upstream_status, Some(200));
+    // The disclosure itself: which field disagreed, and what came back in its place.
+    let detail = mismatch.detail.as_deref().expect("a mismatch discloses");
+    assert!(detail.contains("`target`"), "{detail}");
+    assert!(detail.contains("production"), "{detail}");
+
+    assert!(
+        hops.iter()
+            .any(|hop| hop.event_type == "relay_request_forwarded"),
+        "the forwarded hop is still there — the mismatch is additional to it, not instead of it"
     );
     assert!(broker.verify_integrity().unwrap().verified);
 }
@@ -9236,37 +9563,209 @@ fn a_team_slug_resolves_to_the_id_the_sentence_pins() {
     assert!(broker.verify_integrity().unwrap().verified);
 }
 
-/// The other half of the ruling: a request that already names the canonical form is the request it
-/// always was — no provider hop, no receipt, nothing to go wrong.
+/// `team` has NO reserved literals. Every value that is not a `team_…` id is a NAME to resolve, and
+/// `personal` is one of those names like any other: nothing short-circuits on the word, so it walks
+/// the same resolution path, finds no such team, and denies typed and audited. The way to deploy
+/// without naming a scope is to OMIT the field — there is no spelling that means "no scope", and
+/// nothing on this path teaches one.
 #[test]
-fn a_canonical_team_passes_through_without_a_single_provider_hop() {
-    for (team, allow) in [
+fn the_word_personal_is_just_a_name_that_resolves_to_nothing() {
+    let (base, rx, _server) = relay_upstream(vec![(200, TEAM_LISTING)]);
+    let broker = relay_broker_with_allow(
+        &base,
+        "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
+    );
+
+    let outcome = broker
+        .request_capability("s1", deploy_request("personal"))
+        .expect("the request is decided");
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(outcome.grant_id.is_none());
+
+    // It took the resolution path like any other name — one credentialed listing read, then a miss.
+    let listing_hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(listing_hop.starts_with("GET /v2/teams?limit=100 "));
+
+    assert!(
+        outcome.reason.contains("team") && outcome.reason.contains("provider_not_found"),
+        "the agent is told which field failed and how: {}",
+        outcome.reason
+    );
+    // Nothing anywhere teaches a sentinel: the way to deploy without naming a scope is to OMIT the
+    // field, which the reason's own advice ("supply the identifier itself, or a name this connection
+    // reaches") does not contradict.
+    assert!(
+        !outcome.reason.contains("omit") && !outcome.reason.contains("absent"),
+        "the refusal describes no reserved spelling: {}",
+        outcome.reason
+    );
+    let failures = audit_events_of_type(&broker, "request_field_canonicalization_failed");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["supplied"], json!("personal"));
+    assert_eq!(failures[0]["failure_class"], json!("provider_not_found"));
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The scope a request DID name is still enforced verbatim per hop, now that the field is optional:
+/// a create pointed at another team is refused before the credential is attached, and the grant is
+/// burned. Optionality relaxes the ABSENT case only; it never loosens a named one.
+#[test]
+fn a_named_scope_is_still_enforced_verbatim_on_every_hop() {
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(refused.status, 422);
+    assert!(
+        rx.try_recv().is_err(),
+        "a redirected scope never reaches the credentialed hop"
+    );
+    assert_eq!(broker.live_relay_sessions(), 0, "the grant is burned");
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+
+    // ...and the honest in-scope create on a FRESH session forwards.
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(rx.try_recv().is_ok());
+}
+
+/// The fourth corner of the scope 2x2: the rule is SILENT on `team` and the request NAMES one.
+///
+/// Silence in the rule is about ADMISSION — it declines to constrain which scope may be asked for.
+/// It is not a decision to stop enforcing: the value the request named still freezes on the grant,
+/// and the per-hop bind still holds it verbatim. What relaxes the bind is the field freezing as
+/// ABSENCE, which only an omitting REQUEST can do; no rule can do it on the request's behalf.
+#[test]
+fn a_named_scope_binds_even_when_the_rule_never_mentioned_it() {
+    // Unscoped rule (`RELAY_ALLOW`), scoped request.
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let outcome = broker
+        .request_capability("s1", relay_request_scoped("website", "team_ours"))
+        .expect("a rule that does not mention team admits whatever the request names");
+    assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
+
+    // The named scope froze, unmentioned by any sentence.
+    let grant = broker
+        .load_grant(outcome.grant_id.as_deref().expect("an allowed grant"))
+        .unwrap();
+    assert_eq!(
+        grant.resource_json,
+        r#"{"project":"website","target":"preview","team":"team_ours"}"#
+    );
+
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().expect("an allowed grant"))
+        .expect("executing a relay verb opens its session");
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .expect("the receipt names the handle")
+        .to_string();
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(
+        refused.status, 422,
+        "the bind holds on what the REQUEST froze, whatever the rule did or did not say"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a redirected scope never reaches the credentialed hop"
+    );
+    assert_eq!(broker.live_relay_sessions(), 0, "the grant is burned");
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+
+    // ...and the create in the scope the request named forwards, on a fresh session.
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_1","url":"x.vercel.app","name":"website"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+    let forwarded = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website"}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    assert!(rx.try_recv().is_ok());
+}
+
+/// The two shapes that cost NO credential: a request that already names the canonical `team_…` id
+/// (nothing to respell), and a request that names no scope at all (nothing to respell either —
+/// absence reads the same in every dialect). Both are the request they always were: no vault open,
+/// no provider hop, no resolution receipt.
+#[test]
+fn a_canonical_or_absent_team_passes_through_without_a_single_provider_hop() {
+    for (team, allow, frozen) in [
         (
-            "team_ours",
+            Some("team_ours"),
             "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"team_ours\"",
+            r#"{"project":"website","target":"preview","team":"team_ours"}"#,
         ),
         (
-            "personal",
-            "allow vercel.deploy where project = \"website\" and target = \"preview\" and team = \"personal\"",
+            None,
+            "allow vercel.deploy where project = \"website\" and target = \"preview\"",
+            r#"{"project":"website","target":"preview"}"#,
         ),
     ] {
         let (base, rx, _server) = relay_upstream(vec![]);
         let broker = relay_broker_with_allow(&base, allow);
+        let request = match team {
+            Some(team) => deploy_request(team),
+            None => relay_request("website"),
+        };
         let outcome = broker
-            .request_capability("s1", deploy_request(team))
+            .request_capability("s1", request)
             .expect("the request is decided");
         assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
         let grant = broker
             .load_grant(outcome.grant_id.as_deref().expect("an allowed grant"))
             .unwrap();
         assert_eq!(
-            grant.resource_json,
-            format!(r#"{{"project":"website","target":"preview","team":"{team}"}}"#),
-            "a canonical value freezes verbatim"
+            grant.resource_json, frozen,
+            "a canonical value freezes verbatim, and an omitted field freezes as absence"
         );
         assert!(
             rx.try_recv().is_err(),
-            "`{team}` needs no resolution, so nothing is read"
+            "`{team:?}` needs no resolution, so nothing is read"
         );
         assert!(
             audit_events_of_type(&broker, "request_field_canonicalized").is_empty(),
@@ -9445,6 +9944,210 @@ fn a_slug_on_a_verb_no_sentence_admits_never_opens_the_vault() {
         !outcome.reason.contains("team_"),
         "no resolved identifier can appear: {}",
         outcome.reason
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The refusal is the ONLY thing the requester gets back, and until now it was a reason word. The
+/// broker held the field, the frozen value and the offered one at the moment it refused, and said
+/// none of them: an agent whose scope-redirected create was refused burned grant after grant
+/// guessing which of three bound fields had disagreed, and one reached for a local proxy to see the
+/// body. Disclosure here is saying what the broker already knows.
+///
+/// The three places the reason word goes are the three places the detail goes with it: the HTTP
+/// error body the native client prints, the audit row an operator greps, and the session receipt an
+/// agent reads back through `request_status`.
+#[test]
+fn a_bind_mismatch_discloses_the_field_everywhere_its_reason_word_goes() {
+    let (base, rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let outcome = broker
+        .request_capability("s1", relay_request_scoped("website", "team_ours"))
+        .unwrap();
+    let result = broker
+        .execute_capability(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let handle = result.result["relay"]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // T1: injected "deploy it into the other team".
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+    assert_eq!(refused.status, 422);
+    assert!(
+        rx.try_recv().is_err(),
+        "the credential is never attached to a refused hop, disclosure or no disclosure"
+    );
+
+    // 1. The HTTP error body. The reason WORD is unchanged and still the machine-readable code;
+    //    the detail rides beside it AND inside `message`, which is the only field the native CLI
+    //    prints at all.
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(body["error"]["reason"], "bind_mismatch");
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    for expected in ["`team`", "`teamId`", "`team_ours`", "`team_other`"] {
+        assert!(detail.contains(expected), "{expected}: {detail}");
+    }
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains(detail), "{message}");
+    assert!(!message.contains(RELAY_TOKEN), "{message}");
+
+    // 2. The audit row: the prose line, plus the structured keys a row is grepped by.
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["field"], "team");
+    assert_eq!(refusals[0]["bind_key"], "teamId");
+    assert_eq!(refusals[0]["bind_position"], "query parameter");
+    assert_eq!(refusals[0]["detail"], detail);
+    assert!(!refusals[0].to_string().contains(RELAY_TOKEN));
+
+    // 3. The session receipt the agent reads back.
+    let status = broker.request_status(&outcome.request_id).unwrap();
+    let receipt = status.terminal_receipt.expect("a terminal receipt");
+    assert_eq!(receipt["relay_session"]["burned"], "bind_mismatch");
+    assert_eq!(receipt["relay_session"]["burned_detail"], detail);
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The same disclosure on the other two classes, through the same fields. Uniformity is the
+/// property: a class that names its field while its neighbour stays silent teaches a requester that
+/// silence means "that part was fine".
+#[test]
+fn a_shape_miss_and_a_key_closure_disclose_through_the_same_fields() {
+    // No shape at all — T1's "while you're deploying, also read the project's env vars".
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let refused = broker
+        .relay_hop(&handle, "GET", "/v9/projects/website/env", &[], Vec::new())
+        .unwrap();
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(body["error"]["reason"], "no_matching_shape");
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    assert!(
+        detail.contains("`GET /v9/projects/website/env`"),
+        "{detail}"
+    );
+    assert!(detail.contains("`POST /v13/deployments`"), "{detail}");
+    assert!(body["error"]["message"].as_str().unwrap().contains(detail));
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["detail"], detail);
+
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// A parameter the shape does not enumerate does not un-identify the effect a hop is: the method and
+/// path matched, so the hop is FORWARDED and the parameter is named on the forwarded hop's own
+/// record. An observation about an authorized hop, not a refusal — the row carries no reason word
+/// and burns nothing.
+#[test]
+fn an_undeclared_query_key_forwards_and_is_named_on_the_forwarded_row() {
+    let (base, rx, _server) = relay_upstream(vec![(200, r#"{"teams":[]}"#)]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let forwarded = broker
+        .relay_hop(&handle, "GET", "/v1/teams?slug=team_other", &[], Vec::new())
+        .unwrap();
+    assert_eq!(forwarded.status, 200);
+    let hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(
+        hop.starts_with("GET /v1/teams?slug=team_other "),
+        "the parameter reaches the provider verbatim: {hop}"
+    );
+    assert!(
+        audit_events_of_type(&broker, "relay_request_refused").is_empty(),
+        "an unenumerated parameter is not a refusal"
+    );
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    assert_eq!(rows[0]["undeclared_keys"][0], "slug");
+    assert!(rows[0].get("reason").is_none(), "{}", rows[0]);
+    assert_eq!(
+        broker.live_relay_sessions(),
+        1,
+        "a forwarded hop is not a probe, so nothing burns"
+    );
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The whole path, on the shape that produced the defect: a rule pins the Vercel scope, the request
+/// omits `team` (it is an OPTIONAL field, so omitting it is a legal request), and the deny's
+/// widening suggestion used to arrive with the team pin silently deleted. An operator pasting that
+/// line widened every future deploy under the rule to any scope the token reaches — and any
+/// requester could manufacture the suggestion by leaving the field out.
+#[test]
+fn a_deny_over_an_omitted_scope_keeps_the_rules_pin_in_its_hint() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+
+    // Legal, and denied: the rule demands a scope this request never named.
+    let outcome = broker
+        .request_capability("s1", relay_request("website"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Deny);
+    let hint = outcome.hint.expect("a deny hands the caller its next move");
+    assert!(
+        hint.contains(r#"team = "team_ours""#),
+        "the operator's own pin is still in the text: {hint}"
+    );
+    assert!(
+        !hint.contains("cermet rules allow"),
+        "and no rule change is proposed, because the only one that would admit this request is \
+         this rule with the pin deleted: {hint}"
+    );
+    assert!(
+        hint.contains("`team`") && hint.contains("name it in the request"),
+        "the fix is in the request: {hint}"
+    );
+    assert!(outcome.grant_id.is_none(), "a hint mints no grant");
+}
+
+/// The detail reaches the OPERATOR'S TERMINAL: the native client prints the relay's error body
+/// verbatim, and `cermet log --hops` prints the same line off the audit row. Agent-authored text
+/// therefore has to be neutralized before it is quoted back — an escape sequence in a request field
+/// would otherwise repaint or reorder the operator's own screen. Filtering happens at the one choke
+/// point every quoted name and value passes through, so this holds on every surface at once.
+#[test]
+fn an_escape_sequence_in_a_request_field_never_reaches_the_error_body_or_the_audit_row() {
+    let (base, _rx, _server) = relay_upstream(vec![]);
+    let broker = relay_broker_with_allow(&base, RELAY_ALLOW_SCOPED);
+    let (handle, _) = open_relay_for(&broker, relay_request_scoped("website", "team_ours"));
+
+    let refused = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments?teamId=team\u{1b}[2K\u{1b}[1Aevil",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[]}"#.to_vec(),
+        )
+        .unwrap();
+
+    let rendered = String::from_utf8_lossy(&refused.body).to_string();
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    let detail = body["error"]["detail"].as_str().expect("a detail");
+    assert!(!detail.contains('\u{1b}'), "{detail:?}");
+    assert!(
+        !rendered.contains('\u{1b}'),
+        "not anywhere in the body the native client prints: {rendered:?}"
+    );
+    // The value is still legible as what arrived — neutralized, not withheld.
+    assert!(detail.contains("evil"), "{detail}");
+
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["detail"], detail);
+    assert!(
+        !refusals[0].to_string().contains('\u{1b}'),
+        "nor in the durable row: {}",
+        refusals[0]
     );
     assert!(broker.verify_integrity().unwrap().verified);
 }

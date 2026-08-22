@@ -3,22 +3,76 @@
 use super::*;
 use crate::templates::ActionTemplate;
 
+/// The refusal a verdict carries. Panics on a forward, which is what a test asserting a refusal
+/// means to do.
+#[track_caller]
+fn refusal_of(verdict: RelayVerdict) -> RelayRefusal {
+    match verdict {
+        RelayVerdict::Refuse(refusal) => refusal,
+        RelayVerdict::Forward { effect, .. } => {
+            panic!("expected a refusal, got a forward (effect: {effect})")
+        }
+    }
+}
+
+/// A forward as an EXPECTED value: the hop is authorized and carried nothing outside its shape's
+/// declared vocabulary. The observation a forward carries is asserted by the tests that are about
+/// it (see [`observed_of`]), so the rest read as the authority assertions they are.
+fn forwarded(effect: bool) -> RelayVerdict {
+    RelayVerdict::Forward {
+        effect,
+        undeclared: Vec::new(),
+    }
+}
+
+/// What one FORWARDED hop carried outside its matched shape's declared vocabulary, or a panic
+/// naming the refusal that came back instead.
+#[track_caller]
+fn observed_of(verdict: RelayVerdict) -> Vec<String> {
+    match verdict {
+        RelayVerdict::Forward { undeclared, .. } => undeclared,
+        RelayVerdict::Refuse(refusal) => {
+            panic!("expected a forward, got {}", refusal.reason())
+        }
+    }
+}
+
+/// One verdict reduced to what most of these tests are about: the stable reason WORD, or `forward`.
+/// The disclosure a refusal carries BESIDE that word is asserted by the tests that are about it, so
+/// the class assertions keep reading as class assertions.
+#[track_caller]
+fn reason(verdict: &RelayVerdict) -> &'static str {
+    match verdict {
+        RelayVerdict::Forward { .. } => "forward",
+        RelayVerdict::Refuse(refusal) => refusal.reason(),
+    }
+}
+
+/// The single-line disclosure one refused hop carries, or a panic naming what came back instead.
+#[track_caller]
+fn detail_of(verdict: RelayVerdict) -> String {
+    let refusal = refusal_of(verdict);
+    refusal
+        .detail()
+        .unwrap_or_else(|| panic!("{}: this refusal class discloses nothing", refusal.reason()))
+}
+
 /// A session over the SHIPPED `vercel.deploy` predicate — the tests judge the real verb, not a
-/// fixture that could drift from it. The default scope is `personal`, the frozen `team` value whose
-/// bind means "no `teamId` may ride along".
+/// fixture that could drift from it. The default is the UNSCOPED session: `team` is optional, this
+/// request named no scope, so it froze as ABSENCE and the `teamId` binds constrain nothing.
 fn session(project: &str) -> RelaySession {
-    session_scoped(project, "personal")
+    session_frozen(project, None, "preview")
 }
 
 /// The same session frozen to a NAMED team — the scope a team account's CLI stamps on every call.
 fn session_scoped(project: &str, team: &str) -> RelaySession {
-    session_frozen(project, team, "preview")
+    session_frozen(project, Some(team), "preview")
 }
 
 /// The same session frozen to a NAMED target — a production approval, whose create response Vercel
 /// answers with `target: "production"` rather than the preview case's absent/null key.
 fn session_targeted(project: &str, target: &str) -> RelaySession {
-    session_frozen(project, "personal", target)
+    session_frozen(project, None, target)
 }
 
 /// The SHIPPED `vercel.deploy` predicate, exactly as the daemon loads it.
@@ -35,12 +89,14 @@ fn shipped_predicate() -> Vec<PredicateRule> {
         .to_vec()
 }
 
-fn session_frozen(project: &str, team: &str, target: &str) -> RelaySession {
+/// `team: None` is the request that named no scope — the field froze as ABSENCE, which is a
+/// different state from "missing from the map" (that one is unreachable and fails closed).
+fn session_frozen(project: &str, team: Option<&str>, target: &str) -> RelaySession {
     let predicate = shipped_predicate();
     let mut frozen = BTreeMap::new();
-    frozen.insert("project".to_string(), project.to_string());
-    frozen.insert("target".to_string(), target.to_string());
-    frozen.insert("team".to_string(), team.to_string());
+    frozen.insert("project".to_string(), Some(project.to_string()));
+    frozen.insert("target".to_string(), Some(target.to_string()));
+    frozen.insert("team".to_string(), team.map(str::to_string));
     RelaySession::new(
         "HANDLEabcdefghij123456".into(),
         "gr_1".into(),
@@ -129,7 +185,7 @@ fn the_declared_shapes_pass_and_the_create_carries_the_frozen_project() {
     let mut s = session("website");
     assert_eq!(
         s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true },
+        forwarded(true),
         "the deployment create of the pinned project is THE effect"
     );
     // The read shapes are bound to the deployment THIS session created, so the create's
@@ -174,7 +230,7 @@ fn the_unlinked_team_resolution_hop_is_admitted() {
         assert!(
             matches!(
                 s.authorize(method, target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "{method} {target} is the unlinked CLI's own opening sequence"
         );
@@ -186,15 +242,14 @@ fn the_unlinked_team_resolution_hop_is_admitted() {
 #[test]
 fn the_admitted_teams_shape_is_exactly_the_observed_one() {
     for (method, target) in [
-        ("GET", "/v1/teams?slug=team_other"),
         ("POST", "/v1/teams"),
         ("DELETE", "/v1/teams"),
         ("GET", "/v1/teams/team_other"),
     ] {
         let mut s = session("website");
         assert_eq!(
-            s.authorize(method, target, b"{}", NOW),
-            RelayVerdict::Refuse(RelayRefusal::NoMatchingShape),
+            reason(&s.authorize(method, target, b"{}", NOW)),
+            "no_matching_shape",
             "{method} {target} was never observed and is not admitted"
         );
     }
@@ -203,80 +258,78 @@ fn the_admitted_teams_shape_is_exactly_the_observed_one() {
 #[test]
 fn an_undeclared_shape_is_refused_and_burns_the_session() {
     // Each case is a request the relay predicate exists to refuse.
-    let cases: [(&str, &str, &str, RelayRefusal); 9] = [
+    let cases: [(&str, &str, &str, &str); 8] = [
         (
             "reading the project's environment variables",
             "GET",
             "/v9/projects/website/env",
-            RelayRefusal::NoMatchingShape,
+            "no_matching_shape",
         ),
         (
             "promoting a deployment to production",
             "PATCH",
             "/v13/deployments/dpl_abc123",
-            RelayRefusal::NoMatchingShape,
+            "no_matching_shape",
         ),
         (
             "deleting a deployment",
             "DELETE",
             "/v13/deployments/dpl_abc123",
-            RelayRefusal::NoMatchingShape,
+            "no_matching_shape",
         ),
         (
             "aliasing under a wildcard that admits only one segment",
             "GET",
             "/v13/deployments/dpl_abc123/aliases",
-            RelayRefusal::NoMatchingShape,
+            "no_matching_shape",
         ),
         (
             // `teamId` is an ADMITTED KEY (team accounts append it to every call), but its VALUE
-            // is bound to the frozen `team`, so on this personal-scope session the key must be
-            // absent — a create that carries one is a scope redirect and refuses at the bind,
+            // is bound to the frozen `team`, so on this scoped session it must carry that exact
+            // team — a create that names another is a scope redirect and refuses at the bind,
             // without the credential.
             "a create carrying teamId outside the frozen scope fails its bind",
             "POST",
             "/v13/deployments?teamId=team_other",
-            RelayRefusal::BindMismatch,
-        ),
-        (
-            "an undeclared query key on a read",
-            "GET",
-            "/v13/deployments/dpl_abc123?slug=team_other",
-            RelayRefusal::NoMatchingShape,
+            "bind_mismatch",
         ),
         (
             "percent-encoded traversal out of the wildcard segment",
             "GET",
             "/v13/deployments/%2e%2e%2fprojects",
-            RelayRefusal::MalformedRequest,
+            "malformed_request",
         ),
         (
             "an absolute URL instead of a path",
             "GET",
             "http://evil.test/v13/deployments/dpl_1",
-            RelayRefusal::MalformedRequest,
+            "malformed_request",
         ),
         (
             "a traversal segment",
             "GET",
             "/v13/../v9/projects",
-            RelayRefusal::MalformedRequest,
+            "malformed_request",
         ),
     ];
+    // A SCOPED session: one case below is a scope redirect, which only has a bind to miss when the
+    // approval froze a team. Shape and syntax refusals precede the binds, so the other eight are
+    // decided identically either way.
     for (why, method, target, expected) in cases {
-        let mut s = session("website");
+        let mut s = session_scoped("website", "team_ours");
         let verdict = s.authorize(method, target, b"{}", NOW);
-        assert_eq!(verdict, RelayVerdict::Refuse(expected.clone()), "{why}");
-        s.note_refusal(expected.clone(), method, target);
+        assert_eq!(reason(&verdict), expected, "{why}");
+        let refusal = refusal_of(verdict);
+        s.note_refusal(refusal, method, target);
         assert_eq!(
-            s.burned(),
-            Some(&expected),
+            s.burned().map(RelayRefusal::reason),
+            Some(expected),
             "{why}: a probed session is done"
         );
         // Every later hop — including a legitimate one — is now an unknown handle.
         assert_eq!(
-            s.authorize("POST", "/v2/files", b"bytes", NOW),
-            RelayVerdict::Refuse(RelayRefusal::UnknownHandle),
+            reason(&s.authorize("POST", "/v2/files", b"bytes", NOW)),
+            "unknown_handle",
             "{why}: the burned session is an unknown handle from here on"
         );
     }
@@ -296,11 +349,19 @@ fn no_refusal_speaks_in_auth_statuses_and_every_one_carries_the_truth() {
         RelayRefusal::UnknownHandle,
         RelayRefusal::Expired,
         RelayRefusal::MalformedRequest,
-        RelayRefusal::NoMatchingShape,
-        RelayRefusal::BindMismatch,
-        RelayRefusal::UndeclaredBodyKey {
-            keys: vec!["deploymentId".into()],
-        },
+        RelayRefusal::NoMatchingShape(RelayShapeMiss {
+            method: "DELETE".into(),
+            path: "/v13/deployments/dpl_1".into(),
+            admitted: vec!["`POST /v13/deployments`".into()],
+        }),
+        RelayRefusal::BindMismatch(RelayBindMismatch {
+            field: "team".into(),
+            position: RelayBindPosition::Query,
+            key: "teamId".into(),
+            bound: RelayBound::Value("team_ours".into()),
+            offered: RelayOffered::Value("team_other".into()),
+        }),
+        RelayRefusal::BodyNotAnObject,
         RelayRefusal::EffectAlreadyUsed,
         RelayRefusal::BodyTooLarge,
         RelayRefusal::OutcomeMismatch,
@@ -354,12 +415,8 @@ fn a_bound_field_that_disagrees_with_the_approval_is_refused_and_burns() {
     for (why, body) in cases {
         let mut s = session("website");
         let verdict = s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW);
-        assert_eq!(
-            verdict,
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
-            "{why}"
-        );
-        s.note_refusal(RelayRefusal::BindMismatch, "POST", "/v13/deployments");
+        assert_eq!(reason(&verdict), "bind_mismatch", "{why}");
+        s.note_refusal(refusal_of(verdict), "POST", "/v13/deployments");
         assert!(s.burned().is_some(), "{why}: a bind mismatch burns");
     }
     // The safe case really is the key's ABSENCE (Vercel has no legal `target: preview`), and an
@@ -372,20 +429,20 @@ fn a_bound_field_that_disagrees_with_the_approval_is_refused_and_burns() {
         assert!(
             matches!(
                 s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW),
-                RelayVerdict::Forward { effect: true }
+                RelayVerdict::Forward { effect: true, .. }
             ),
             "an omitted target IS the preview case: {body}"
         );
     }
     // ...and the literal string `preview` is NOT what Vercel's API means, so it is refused too.
     assert_eq!(
-        s.authorize(
+        reason(&s.authorize(
             "POST",
             "/v13/deployments",
             br#"{"name":"website","target":"preview"}"#,
             NOW
-        ),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch)
+        )),
+        "bind_mismatch"
     );
 }
 
@@ -393,7 +450,7 @@ fn a_bound_field_that_disagrees_with_the_approval_is_refused_and_burns() {
 fn exactly_one_deployment_create_passes_per_session() {
     let mut s = session("website");
     let verdict = s.authorize("POST", "/v13/deployments", &create_body("website"), NOW);
-    assert_eq!(verdict, RelayVerdict::Forward { effect: true });
+    assert_eq!(verdict, forwarded(true));
     s.note_forward(true);
     assert!(s.effect_used());
 
@@ -409,7 +466,7 @@ fn exactly_one_deployment_create_passes_per_session() {
     for _ in 0..50 {
         assert!(matches!(
             s.authorize("POST", "/v2/files", b"bytes", NOW),
-            RelayVerdict::Forward { effect: false }
+            RelayVerdict::Forward { effect: false, .. }
         ));
         s.note_forward(false);
     }
@@ -425,14 +482,14 @@ fn a_provider_rejected_create_releases_the_effect() {
     let mut s = session("website");
     assert_eq!(
         s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true }
+        forwarded(true)
     );
     s.note_forward(true);
     s.observe_response(true, 400, br#"{"error":{"code":"missing_files"}}"#);
     assert!(!s.effect_used(), "a definite 4xx is a definite no-effect");
     assert_eq!(
         s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true },
+        forwarded(true),
         "the retry after the upload is the SAME single effect, not a second one"
     );
 
@@ -493,41 +550,43 @@ fn the_receipt_is_derived_from_observed_responses_never_from_a_claim() {
     assert!(receipt["state"].is_null());
 }
 
-/// A bound key is not the whole body. Vercel's create-deployment API documents body parameters
-/// that OVERRIDE the fields the sentence pinned — `project` ("when defined, this parameter
-/// overrides name"), `customEnvironmentSlugOrId` (overrides the target environment), and
-/// `deploymentId` (redeploy an arbitrary existing deployment). Checking only the bound keys would
-/// let each of them ride through credentialed, so the body key set is a CLOSED allowlist like
-/// `query_keys`.
+/// A key the descriptor never enumerated is FORWARDED and named on the hop record — including the
+/// ones Vercel documents as overriding a pinned field. That is deliberate: refusing them made the
+/// broker a content firewall over a body it does not own, and the pins that decide where a deploy
+/// lands are enforced by their BINDS, in this same body, on the very next lines of `authorize`.
+///
+/// So the observation is what these keys produce now: `project`, `deploymentId` and
+/// `customEnvironmentSlugOrId` each show up by name on the forwarded hop's record, where an
+/// operator can see them and decide whether the verb should pin them.
 #[test]
-fn an_undeclared_create_body_key_is_refused_and_burns_the_session() {
-    // Each case keeps `name` correct and `target` absent — the binds all hold. The refusal has to come
-    // from the key the rule never declared.
+fn an_undeclared_create_body_key_forwards_and_is_named_on_the_hop_record() {
+    // Each case keeps `name` correct and `target` absent — the binds all hold, so nothing here is
+    // about the binds.
     let cases: [(&str, &str, &str); 6] = [
         (
-            "`project` overrides `name`, voiding the identity pin (T1 injection)",
+            "`project`, which Vercel documents as overriding `name`",
             r#"{"name":"website","project":"prj_someone_else"}"#,
             "project",
         ),
         (
-            "`deploymentId` redeploys an arbitrary existing deployment",
+            "`deploymentId`, which redeploys an existing deployment",
             r#"{"name":"website","deploymentId":"dpl_not_ours"}"#,
             "deploymentId",
         ),
         (
-            "`customEnvironmentSlugOrId` overrides the target environment",
+            "`customEnvironmentSlugOrId`, which names another target environment",
             r#"{"name":"website","customEnvironmentSlugOrId":"prod-clone"}"#,
             "customEnvironmentSlugOrId",
         ),
         (
-            "`alias` assigns a domain the grant never authorized",
+            "`alias`, which assigns a domain",
             r#"{"name":"website","alias":["www.example.com"]}"#,
             "alias",
         ),
         (
-            "`project` overrides the pinned name with an arbitrary project id",
-            r#"{"name":"website","project":"prj_other"}"#,
-            "project",
+            "the project's own route configuration, folded in by the CLI",
+            r#"{"name":"website","redirects":[]}"#,
+            "redirects",
         ),
         (
             "a body parameter Vercel adds after this predicate was ratified",
@@ -535,34 +594,63 @@ fn an_undeclared_create_body_key_is_refused_and_burns_the_session() {
             "someFutureParameter",
         ),
     ];
-    for (why, body, offending) in cases {
+    for (why, body, carried) in cases {
         let mut s = session("website");
-        // The refusal carries the offending key NAME — that is what the audit row and the client
-        // message print, and what an operator ratifies from.
-        let expected = RelayRefusal::UndeclaredBodyKey {
-            keys: vec![offending.to_string()],
-        };
-        assert_eq!(
-            s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW),
-            RelayVerdict::Refuse(expected.clone()),
-            "{why}"
-        );
+        let verdict = s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW);
+        assert_eq!(reason(&verdict), "forward", "{why}");
+        assert_eq!(observed_of(verdict), vec![carried.to_string()], "{why}");
         assert!(
-            expected.message().contains(offending),
-            "{why}: the client-visible message must name the key"
+            s.burned().is_none(),
+            "{why}: a forwarded hop is not a probe, so nothing burns"
         );
-        s.note_refusal(expected.clone(), "POST", "/v13/deployments");
-        assert_eq!(
-            s.burned(),
-            Some(&expected),
-            "{why}: an undeclared body key is a probe, so the session is done"
-        );
-        assert_eq!(expected.status(), 422);
     }
 }
 
-/// The other half of the closed body allowlist: the declared payload the CLI actually sends still
-/// passes, and the upload path — a non-JSON body with no binds and no `body_keys` — is untouched.
+/// NAMES ONLY. The name is what a widening decision reads; the VALUE is the agent's payload and has
+/// no business in a durable audit row.
+#[test]
+fn the_observed_key_list_carries_names_and_never_values() {
+    let mut s = session("website");
+    let observed = observed_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        br#"{"name":"website","deploymentId":"dpl_someone_else"}"#,
+        NOW,
+    ));
+    assert_eq!(observed, vec!["deploymentId".to_string()]);
+    assert!(
+        !observed.join(" ").contains("dpl_someone_else"),
+        "{observed:?}"
+    );
+}
+
+/// A body assembled from injected content (T1) can carry hundreds of keys, and the record is
+/// durable. The list is bounded — and SAYS it was bounded, because a reader who cannot tell a
+/// complete list from a truncated one cannot widen anything from it.
+#[test]
+fn the_observed_key_list_is_bounded_and_says_when_it_was_cut() {
+    let mut s = session("website");
+    let mut body = serde_json::Map::new();
+    body.insert("name".into(), serde_json::json!("website"));
+    // Named `k00`..`k11` so the sorted body order is the order they are reported in.
+    for n in 0..12 {
+        body.insert(format!("k{n:02}"), serde_json::json!(1));
+    }
+    let observed = observed_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        serde_json::Value::Object(body).to_string().as_bytes(),
+        NOW,
+    ));
+    assert_eq!(observed.len(), MAX_NAMED_UNDECLARED_KEYS + 1);
+    assert_eq!(observed[0], "k00");
+    assert_eq!(observed[MAX_NAMED_UNDECLARED_KEYS - 1], "k07");
+    assert_eq!(observed[MAX_NAMED_UNDECLARED_KEYS], "+4 more");
+}
+
+/// The declared vocabulary's own half: the payload the CLI actually sends carries nothing outside
+/// it, so the hop forwards observing nothing — and the upload path, a non-JSON body with no binds
+/// and no `body_keys`, is never parsed at all.
 #[test]
 fn the_declared_create_body_keys_pass_and_the_upload_path_is_unaffected() {
     let mut s = session("website");
@@ -581,7 +669,7 @@ fn the_declared_create_body_keys_pass_and_the_upload_path_is_unaffected() {
     .to_string();
     assert_eq!(
         s.authorize("POST", "/v13/deployments", create.as_bytes(), NOW),
-        RelayVerdict::Forward { effect: true },
+        forwarded(true),
         "the ratified create payload still deploys"
     );
 
@@ -594,7 +682,7 @@ fn the_declared_create_body_keys_pass_and_the_upload_path_is_unaffected() {
         assert!(
             matches!(
                 s.authorize("POST", "/v2/files", body, NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "an upload body is opaque to the relay"
         );
@@ -611,22 +699,29 @@ fn a_burned_session_receipt_names_the_hop_that_burned_it() {
     let mut s = session("website");
     let target = "/v13/deployments";
     let body = br#"{"name":"website","target":"production"}"#;
-    assert_eq!(
-        s.authorize("POST", target, body, NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch)
-    );
-    s.note_refusal(RelayRefusal::BindMismatch, "POST", target);
+    let verdict = s.authorize("POST", target, body, NOW);
+    assert_eq!(reason(&verdict), "bind_mismatch");
+    s.note_refusal(refusal_of(verdict), "POST", target);
 
     let receipt = s.receipt("burned");
     assert_eq!(receipt["burned"], "bind_mismatch");
     assert_eq!(receipt["burned_method"], "POST");
     assert_eq!(receipt["burned_target"], target);
+    // ...and WHY, which is the whole point of the agent's own mirror: the reason word says the
+    // class, and this says which field, what it was frozen to, and what the hop offered instead.
+    let detail = receipt["burned_detail"]
+        .as_str()
+        .expect("a burning refusal that knows a field says so on the receipt");
+    assert!(detail.contains("`target`"), "{detail}");
+    assert!(detail.contains("must be absent"), "{detail}");
+    assert!(detail.contains("`production`"), "{detail}");
 
     // A session that never burned keeps a receipt with nothing to explain.
     let clean = session("website").receipt("ttl");
     assert!(clean["burned"].is_null());
     assert!(clean["burned_method"].is_null());
     assert!(clean["burned_target"].is_null());
+    assert!(clean["burned_detail"].is_null());
 }
 
 /// `teamId` is an authority-bearing query VALUE. The key was admitted on every scoped
@@ -648,7 +743,7 @@ fn a_scoped_create_is_pinned_to_the_frozen_team() {
             &create_body("website"),
             NOW
         ),
-        RelayVerdict::Forward { effect: true },
+        forwarded(true),
         "the honest create — right project, right scope — is THE effect"
     );
 
@@ -669,42 +764,80 @@ fn a_scoped_create_is_pinned_to_the_frozen_team() {
     ];
     for (why, target) in cases {
         let mut s = session_scoped("website", "team_ours");
+        let verdict = s.authorize("POST", target, &create_body("website"), NOW);
+        assert_eq!(reason(&verdict), "bind_mismatch", "{why}");
+        s.note_refusal(refusal_of(verdict), "POST", target);
         assert_eq!(
-            s.authorize("POST", target, &create_body("website"), NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
-            "{why}"
-        );
-        s.note_refusal(RelayRefusal::BindMismatch, "POST", target);
-        assert_eq!(
-            s.burned(),
-            Some(&RelayRefusal::BindMismatch),
+            s.burned().map(RelayRefusal::reason),
+            Some("bind_mismatch"),
             "{why}: a scope the approval never froze is a probe, so the session is done"
         );
     }
 }
 
-/// The `omit:` half of the same bind. A PERSONAL-scope token sends no `teamId` at all, so
-/// `team = personal` means the key must be ABSENT — the same "no legal value for the safe case"
-/// shape `body.target: target|omit:preview` already had.
+/// The other half of the same bind: `team` is OPTIONAL, and a request that named no scope froze it
+/// as ABSENCE. A bind with nothing frozen behind it constrains nothing — the `teamId` key rides with
+/// any value, or not at all, on every shape. This is the deploy whose scope follows the native CLI's
+/// own workspace configuration; the hop record's target is then the only account of which scope that
+/// turned out to be.
 #[test]
-fn a_personal_scope_admits_the_absent_key_and_refuses_a_present_one() {
-    let mut s = session("website");
-    assert_eq!(
-        s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true },
-        "a personal deploy sends no teamId, and that IS the frozen scope"
-    );
+fn an_unnamed_scope_binds_nothing_and_admits_every_team_id() {
     for target in [
+        "/v13/deployments",
         "/v13/deployments?teamId=team_ours",
-        "/v13/deployments?teamId=personal",
-        "/v13/deployments?forceNew=1&teamId=team_ours",
+        "/v13/deployments?teamId=team_other",
+        "/v13/deployments?forceNew=1&teamId=team_whatever",
+        // Even the degenerate spellings a PINNED scope refuses: a valueless key, and a repeat.
+        "/v13/deployments?teamId",
+        "/v13/deployments?teamId=team_ours&teamId=team_other",
     ] {
+        let mut s = session("website");
         assert_eq!(
             s.authorize("POST", target, &create_body("website"), NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
-            "a personal-scope approval never authorizes a team-scoped hop: {target}"
+            forwarded(true),
+            "nothing was frozen, so nothing about the scope is enforced: {target}"
+        );
+        assert!(
+            s.burned().is_none(),
+            "an unconstrained bind is not a refusal: {target}"
         );
     }
+}
+
+/// An absent bind relaxes ITS OWN position and nothing else: the frozen `project`/`target` binds
+/// still hold on the very same hop.
+///
+/// NOTE (accepted, not code): `slug` is Vercel's other spelling of the account scope, and it is not
+/// enumerated by this shape, so it FORWARDS and is named on the hop record. It is not pinned,
+/// because a slug is not the id the frozen `team` holds and there is nothing to compare it against;
+/// what constrains a scope is a bind, and `query.teamId` is the one this verb ratified. The record
+/// is what makes the other spelling visible. What would change it: a canonicalization that resolves
+/// a slug to the same id the sentence froze, at which point `query.slug` becomes bindable.
+#[test]
+fn an_unnamed_scope_relaxes_only_its_own_bind() {
+    let mut s = session("website");
+    assert_eq!(
+        reason(&s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            &create_body("someone-elses-site"),
+            NOW
+        )),
+        "bind_mismatch",
+        "the frozen project still pins the create on an unscoped session"
+    );
+
+    let mut s = session("website");
+    assert_eq!(
+        reason(&s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            br#"{"name":"website","target":"production","files":[]}"#,
+            NOW
+        )),
+        "bind_mismatch",
+        "the frozen preview target still pins the create on an unscoped session"
+    );
 }
 
 /// The bind holds on every shape where the value decides WHERE the deploy lands, not only on the
@@ -727,33 +860,33 @@ fn a_query_bind_holds_on_the_non_effect_shapes_too() {
         assert!(
             matches!(
                 s.authorize("GET", target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "the in-scope read is what the CLI actually does: {target}"
         );
         let redirected = target.replace("teamId=team_ours", "teamId=team_other");
         assert_eq!(
-            s.authorize("GET", &redirected, b"", NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+            reason(&s.authorize("GET", &redirected, b"", NOW)),
+            "bind_mismatch",
             "a read redirected out of the frozen scope refuses: {redirected}"
         );
         let unscoped = target
             .replace("?teamId=team_ours", "")
             .replace("&teamId=team_ours", "");
         assert_eq!(
-            s.authorize("GET", &unscoped, b"", NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+            reason(&s.authorize("GET", &unscoped, b"", NOW)),
+            "bind_mismatch",
             "a missing declared scope refuses too — absence is not agreement: {unscoped}"
         );
     }
     // The upload path is bound the same way, and its body stays opaque.
     assert!(matches!(
         s.authorize("POST", "/v2/files?teamId=team_ours", b"raw bytes", NOW),
-        RelayVerdict::Forward { effect: false }
+        RelayVerdict::Forward { effect: false, .. }
     ));
     assert_eq!(
-        s.authorize("POST", "/v2/files?teamId=team_other", b"raw bytes", NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch)
+        reason(&s.authorize("POST", "/v2/files?teamId=team_other", b"raw bytes", NOW)),
+        "bind_mismatch"
     );
 }
 
@@ -766,7 +899,7 @@ fn the_bootstrap_reads_stay_bind_less() {
         assert!(
             matches!(
                 s.authorize("GET", target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "{target} is how the CLI learns which teams the token reaches"
         );
@@ -792,7 +925,7 @@ fn the_team_context_read_is_ratified_authority_free() {
     assert!(
         matches!(
             s.authorize("GET", "/teams/team_ours", b"", NOW),
-            RelayVerdict::Forward { effect: false }
+            RelayVerdict::Forward { effect: false, .. }
         ),
         "the verbatim CLI 58.5.1 call must forward, or no team-scoped deploy can start"
     );
@@ -806,26 +939,26 @@ fn the_team_context_read_is_ratified_authority_free() {
         assert!(
             matches!(
                 s.authorize("GET", target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "the team-context read is read-only disclosure ≤ `GET /v1/teams`: {target}"
         );
     }
-    // Key closure still holds on this shape, and the scope of the EFFECT is untouched: a create
+    // An unenumerated parameter rides along on a read this classification already called
+    // authority-free, and the record names it. The scope of the EFFECT is untouched: a create
     // pointed at another team still refuses at its own bind.
     assert_eq!(
-        s.authorize("GET", "/teams/team_ours?slug=team_other", b"", NOW),
-        RelayVerdict::Refuse(RelayRefusal::NoMatchingShape),
-        "an unratified parameter still never rides along"
+        observed_of(s.authorize("GET", "/teams/team_ours?slug=team_other", b"", NOW)),
+        vec!["slug".to_string()]
     );
     assert_eq!(
-        s.authorize(
+        reason(&s.authorize(
             "POST",
             "/v13/deployments?teamId=team_other",
             &create_body("website"),
             NOW
-        ),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        )),
+        "bind_mismatch",
         "reading another team's metadata never widened where a deploy may land"
     );
 }
@@ -842,7 +975,7 @@ fn the_linked_project_retrieve_is_ratified_authority_free() {
     assert!(
         matches!(
             s.authorize("GET", "/v9/projects/website", b"", NOW),
-            RelayVerdict::Forward { effect: false }
+            RelayVerdict::Forward { effect: false, .. }
         ),
         "the verbatim linked-dir opener must forward, or no linked deploy can start"
     );
@@ -856,25 +989,24 @@ fn the_linked_project_retrieve_is_ratified_authority_free() {
         assert!(
             matches!(
                 s.authorize("GET", target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "the linked-project retrieve is read-only, token-scoped disclosure: {target}"
         );
     }
-    // Key closure still holds, and the effect's own scope bind is untouched.
+    // An unenumerated parameter rides along and is named; the effect's own scope bind is untouched.
     assert_eq!(
-        s.authorize("GET", "/v9/projects/website?slug=team_other", b"", NOW),
-        RelayVerdict::Refuse(RelayRefusal::NoMatchingShape),
-        "an unratified parameter still never rides along"
+        observed_of(s.authorize("GET", "/v9/projects/website?slug=team_other", b"", NOW)),
+        vec!["slug".to_string()]
     );
     assert_eq!(
-        s.authorize(
+        reason(&s.authorize(
             "POST",
             "/v13/deployments?teamId=team_other",
             &create_body("website"),
             NOW
-        ),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        )),
+        "bind_mismatch",
         "reading project metadata never widened where a deploy may land"
     );
 }
@@ -885,7 +1017,7 @@ fn the_linked_project_retrieve_is_ratified_authority_free() {
 /// flow the stub capture missed.
 #[test]
 fn the_live_linked_dir_preamble_forwards() {
-    let mut s = session_frozen("website", "team_ours", "preview");
+    let mut s = session_frozen("website", Some("team_ours"), "preview");
     for (hop, method, target) in [
         ("hop 1", "GET", "/v2/user"),
         ("hop 2", "GET", "/v9/projects/website"),
@@ -893,7 +1025,7 @@ fn the_live_linked_dir_preamble_forwards() {
     ] {
         let verdict = s.authorize(method, target, b"", NOW);
         assert!(
-            matches!(verdict, RelayVerdict::Forward { effect: false }),
+            matches!(verdict, RelayVerdict::Forward { effect: false, .. }),
             "{hop}: the CLI's own {method} {target} was refused: {verdict:?}"
         );
         s.note_forward(false);
@@ -905,7 +1037,7 @@ fn the_live_linked_dir_preamble_forwards() {
         NOW,
     );
     assert!(
-        matches!(verdict, RelayVerdict::Forward { effect: true }),
+        matches!(verdict, RelayVerdict::Forward { effect: true, .. }),
         "the scoped create must forward after the query-less preamble: {verdict:?}"
     );
 }
@@ -974,10 +1106,10 @@ fn the_captured_cli_deploy_sequence_forwards_hop_for_hop() {
         ),
     ];
 
-    let mut s = session_frozen("stubsite", "team_stub", "preview");
+    let mut s = session_frozen("stubsite", Some("team_stub"), "preview");
     for (seq, method, target, body) in hops {
         let verdict = s.authorize(method, target, body, NOW);
-        let RelayVerdict::Forward { effect } = verdict else {
+        let RelayVerdict::Forward { effect, .. } = verdict else {
             panic!("{seq}: the CLI's own {method} {target} was refused: {verdict:?}");
         };
         s.note_forward(effect);
@@ -1009,7 +1141,7 @@ fn the_captured_cli_deploy_sequence_forwards_hop_for_hop() {
                 b"",
                 NOW
             ),
-            RelayVerdict::Forward { effect: false }
+            RelayVerdict::Forward { effect: false, .. }
         ),
         "the poll the CLI actually makes must forward, or every deploy burns its victory lap"
     );
@@ -1019,31 +1151,33 @@ fn the_captured_cli_deploy_sequence_forwards_hop_for_hop() {
     assert_eq!(receipt["deployment_url"], "stubsite-abc.vercel.app");
 }
 
-/// The two dimensions, kept distinct: KEY closure refuses a parameter nobody ratified
-/// (`slug`, which redirects scope by name), and the VALUE bind pins the one that is ratified. A
-/// refusal from the first dimension is `no_matching_shape`; from the second, `bind_mismatch`.
+/// The declaration and the bind are different jobs. `query_keys` says which parameters this shape
+/// KNOWS ABOUT — that is vocabulary, and a parameter outside it is forwarded and named. The bind is
+/// what the approval FROZE, and it refuses. So the honest `teamId` deploys, an unenumerated `slug`
+/// rides along visibly, and a `teamId` naming another scope refuses at its bind on the very hop
+/// that carried the unenumerated key.
 #[test]
-fn key_closure_and_value_binds_are_separate_dimensions() {
+fn a_declared_key_is_vocabulary_and_a_bound_key_is_authority() {
+    let mut s = session_scoped("website", "team_ours");
+    let verdict = s.authorize(
+        "POST",
+        "/v13/deployments?slug=team-other&teamId=team_ours",
+        &create_body("website"),
+        NOW,
+    );
+    assert_eq!(reason(&verdict), "forward");
+    assert_eq!(observed_of(verdict), vec!["slug".to_string()]);
+
     let mut s = session_scoped("website", "team_ours");
     assert_eq!(
-        s.authorize(
+        reason(&s.authorize(
             "POST",
-            "/v13/deployments?slug=team-other&teamId=team_ours",
+            "/v13/deployments?slug=team-other&teamId=team_other",
             &create_body("website"),
             NOW
-        ),
-        RelayVerdict::Refuse(RelayRefusal::NoMatchingShape),
-        "an unlisted parameter never reaches the value check — the key set is closed"
-    );
-    assert_eq!(
-        s.authorize(
-            "POST",
-            "/v13/deployments?teamId=team_other",
-            &create_body("website"),
-            NOW
-        ),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
-        "a listed parameter carrying an unapproved value refuses at its bind"
+        )),
+        "bind_mismatch",
+        "the bound parameter carrying an unapproved value refuses, undeclared company or not"
     );
 }
 
@@ -1063,8 +1197,8 @@ fn a_query_value_is_compared_raw_and_ambiguity_fails_closed() {
         "/v13/deployments?teamId=team_other&teamId=team_ours",
     ] {
         assert_eq!(
-            s.authorize("POST", target, &create_body("website"), NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+            reason(&s.authorize("POST", target, &create_body("website"), NOW)),
+            "bind_mismatch",
             "{target}"
         );
     }
@@ -1086,12 +1220,13 @@ fn a_poll_before_the_create_refuses_and_burns() {
         "/v3/now/deployments/dpl_someone_else/events?format=lines",
     ] {
         let mut s = session("website");
+        let verdict = s.authorize("GET", target, b"", NOW);
         assert_eq!(
-            s.authorize("GET", target, b"", NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+            reason(&verdict),
+            "bind_mismatch",
             "nothing is captured yet, so no deployment id agrees: {target}"
         );
-        s.note_refusal(RelayRefusal::BindMismatch, "GET", target);
+        s.note_refusal(refusal_of(verdict), "GET", target);
         assert!(
             s.burned().is_some(),
             "a read outside the session's own effect is a probe: {target}"
@@ -1105,7 +1240,7 @@ fn a_poll_is_confined_to_the_deployment_this_session_created() {
     let mut s = session("website");
     assert_eq!(
         s.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true }
+        forwarded(true)
     );
     s.note_forward(true);
     assert!(
@@ -1123,7 +1258,7 @@ fn a_poll_is_confined_to_the_deployment_this_session_created() {
         assert!(
             matches!(
                 s.authorize("GET", target, b"", NOW),
-                RelayVerdict::Forward { effect: false }
+                RelayVerdict::Forward { effect: false, .. }
             ),
             "the CLI's own victory lap over the deployment it just created: {target}"
         );
@@ -1134,8 +1269,8 @@ fn a_poll_is_confined_to_the_deployment_this_session_created() {
         "/v3/now/deployments/dpl_theirs/events?format=lines",
     ] {
         assert_eq!(
-            s.authorize("GET", target, b"", NOW),
-            RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+            reason(&s.authorize("GET", target, b"", NOW)),
+            "bind_mismatch",
             "another deployment is not this session's consequence: {target}"
         );
     }
@@ -1158,8 +1293,8 @@ fn a_capture_is_write_once() {
         "the FIRST observed effect response is the one the session is confined to"
     );
     assert_eq!(
-        s.authorize("GET", "/v13/deployments/dpl_second", b"", NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        reason(&s.authorize("GET", "/v13/deployments/dpl_second", b"", NOW)),
+        "bind_mismatch",
         "a second response never re-points a live session"
     );
 }
@@ -1178,8 +1313,8 @@ fn an_effect_response_that_names_nothing_captures_nothing() {
         .is_none());
     assert!(!s.effect_used(), "a definite 4xx is a definite no-effect");
     assert_eq!(
-        s.authorize("GET", "/v13/deployments/dpl_anything", b"", NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        reason(&s.authorize("GET", "/v13/deployments/dpl_anything", b"", NOW)),
+        "bind_mismatch",
         "nothing was created, so nothing is pollable"
     );
 
@@ -1194,8 +1329,8 @@ fn an_effect_response_that_names_nothing_captures_nothing() {
         )
         .is_none());
     assert_eq!(
-        s.authorize("GET", "/v13/deployments/dpl_ours", b"", NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        reason(&s.authorize("GET", "/v13/deployments/dpl_ours", b"", NOW)),
+        "bind_mismatch",
         "an unreadable outcome is not evidence of what was created"
     );
 }
@@ -1317,7 +1452,7 @@ fn the_upload_shape_spends_a_declared_use_budget() {
     for use_index in 0..caps.max_uses {
         assert_eq!(
             s.authorize("POST", "/v2/files", b"f", NOW),
-            RelayVerdict::Forward { effect: false },
+            forwarded(false),
             "upload {use_index} is inside the declared budget"
         );
     }
@@ -1371,7 +1506,7 @@ fn the_upload_shape_spends_a_declared_byte_budget() {
     for hop in 0..hops {
         assert_eq!(
             s.authorize("POST", "/v2/files", &body, NOW),
-            RelayVerdict::Forward { effect: false },
+            forwarded(false),
             "hop {hop} is inside the declared byte budget"
         );
     }
@@ -1406,18 +1541,18 @@ fn the_budget_is_per_session_and_per_shape() {
     // create is still the one effect this grant bought.
     assert_eq!(
         spent.authorize("GET", "/v2/user", b"", NOW),
-        RelayVerdict::Forward { effect: false },
+        forwarded(false),
         "spending the upload budget does not spend a shape that declares no budget"
     );
     assert_eq!(
         spent.authorize("POST", "/v13/deployments", &create_body("website"), NOW),
-        RelayVerdict::Forward { effect: true }
+        forwarded(true)
     );
     // ...and a different session is a different budget: one grant's spend cannot exhaust another's.
     let mut fresh = session("website");
     assert_eq!(
         fresh.authorize("POST", "/v2/files", b"f", NOW),
-        RelayVerdict::Forward { effect: false },
+        forwarded(false),
         "a second session opens with its own budget"
     );
 }
@@ -1436,8 +1571,8 @@ fn an_out_of_scope_upload_still_reports_the_bind_not_the_budget() {
         ));
     }
     assert_eq!(
-        s.authorize("POST", "/v2/files?teamId=team_other", b"f", NOW),
-        RelayVerdict::Refuse(RelayRefusal::BindMismatch),
+        reason(&s.authorize("POST", "/v2/files?teamId=team_other", b"f", NOW)),
+        "bind_mismatch",
         "the scope redirect is what this hop is refused for, budget or no budget"
     );
 }
@@ -1455,4 +1590,425 @@ fn a_burned_receipts_target_is_bounded() {
         named.len() < huge.len() && huge.starts_with(named),
         "{named}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// What a refusal SAYS.
+//
+// At the moment it refuses, the engine already holds the frozen field map, the offending key and
+// the shape inventory. Disclosure here is saying what it already knows: no new authority, no new
+// state, and nothing that is not either descriptor text the catalog prints, a field this caller's
+// own approval froze, or a value off the hop this caller just wrote.
+//
+// It also has to be UNIFORM. A layer that names its field teaches requesters that a silent layer
+// means "that part was fine", so every class either discloses or has nothing left to say.
+// ---------------------------------------------------------------------------------------------
+
+/// One line, and legible as a sentence rather than as a wrapped string literal.
+#[track_caller]
+fn assert_reads_as_prose(text: &str) {
+    assert!(
+        !text.contains('\n'),
+        "a refusal detail is one line: {text:?}"
+    );
+    assert!(
+        !text.contains("  "),
+        "a refusal detail carries a wrapped-literal space run: {text:?}"
+    );
+}
+
+/// The observed defect: a scope-redirected create refused with the word `bind_mismatch` and nothing
+/// else, while the engine held the field name, the frozen team, and the offered one. Six grants went
+/// into guessing which of three bound fields had disagreed.
+#[test]
+fn a_query_bind_mismatch_names_the_field_the_frozen_value_and_the_offered_one() {
+    let mut s = session_scoped("website", "team_ours");
+    let detail = detail_of(s.authorize(
+        "POST",
+        "/v13/deployments?teamId=team_other",
+        &create_body("website"),
+        NOW,
+    ));
+    assert_reads_as_prose(&detail);
+    assert!(
+        detail.contains("the grant froze `team`"),
+        "the FIELD: {detail}"
+    );
+    assert!(detail.contains("`teamId`"), "the wire KEY: {detail}");
+    assert!(detail.contains("query parameter"), "the POSITION: {detail}");
+    assert!(detail.contains("`team_ours`"), "the FROZEN value: {detail}");
+    assert!(
+        detail.contains("`team_other`"),
+        "the OFFERED value: {detail}"
+    );
+    // The remedy is the re-request shape with the field set to what is enforced — and it says the
+    // grant is spent, because a bind mismatch burned this session on its way out.
+    assert!(
+        detail.contains("request the capability again") && detail.contains("carries `team_ours`"),
+        "the remedy: {detail}"
+    );
+}
+
+/// The `omit:` case, which is the one a value-only refusal states WRONG: Vercel has no legal
+/// `target: preview`, so the enforced constraint is the key's ABSENCE. A refusal reporting the frozen
+/// value there ("target must be preview") sends the requester straight back into the same refusal.
+#[test]
+fn an_omit_bind_reports_absence_as_the_constraint_not_the_frozen_literal() {
+    let mut s = session("website");
+    let detail = detail_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        br#"{"name":"website","target":"production"}"#,
+        NOW,
+    ));
+    assert_reads_as_prose(&detail);
+    assert!(detail.contains("`target`"), "{detail}");
+    assert!(detail.contains("body key"), "{detail}");
+    assert!(detail.contains("must be absent"), "{detail}");
+    assert!(
+        !detail.contains("must carry `preview`"),
+        "the frozen literal is not what is enforced here: {detail}"
+    );
+    assert!(detail.contains("`production`"), "what arrived: {detail}");
+    assert!(
+        detail.contains("is not sent at all"),
+        "the remedy names the enforced shape: {detail}"
+    );
+}
+
+/// The other two shapes a bound position can arrive in, each stated as itself rather than collapsed
+/// into "absent" — a refusal that mis-states what arrived is worse than one that says nothing.
+#[test]
+fn a_bind_mismatch_distinguishes_absent_from_bare_from_repeated() {
+    let cases: [(&str, &str); 3] = [
+        ("no scope at all", "/v13/deployments"),
+        ("the key with no value", "/v13/deployments?teamId"),
+        (
+            "the key twice, which is ambiguous upstream",
+            "/v13/deployments?teamId=team_ours&teamId=team_other",
+        ),
+    ];
+    let mut seen = Vec::new();
+    for (why, target) in cases {
+        let mut s = session_scoped("website", "team_ours");
+        let detail = detail_of(s.authorize("POST", target, &create_body("website"), NOW));
+        assert_reads_as_prose(&detail);
+        assert!(detail.contains("`teamId`"), "{why}: {detail}");
+        seen.push(detail);
+    }
+    assert!(seen[0].contains("it was absent"), "{}", seen[0]);
+    assert!(seen[1].contains("no value at all"), "{}", seen[1]);
+    assert!(seen[2].contains("more than once"), "{}", seen[2]);
+}
+
+/// A path bind has nothing to name before the grant's own effect lands, and no remedy to offer
+/// either. It says exactly that instead of inventing a value or falling silent.
+#[test]
+fn a_path_bind_with_nothing_captured_says_so_and_promises_no_remedy() {
+    let mut s = session("website");
+    let detail = detail_of(s.authorize("GET", "/v13/deployments/dpl_someone_else", b"", NOW));
+    assert_reads_as_prose(&detail);
+    assert!(detail.contains("`captured.deployment_id`"), "{detail}");
+    assert!(detail.contains("captured nothing yet"), "{detail}");
+    assert!(
+        detail.contains("`dpl_someone_else`"),
+        "what it asked for: {detail}"
+    );
+    assert!(
+        !detail.contains("request the capability again"),
+        "there is no re-request that makes an uncreated deployment readable: {detail}"
+    );
+}
+
+/// A shape miss said "the approved sentence does not authorize this request", which is true of every
+/// miss and names none of the three dimensions. The predicate's own `method`/`path` patterns are
+/// descriptor text `cermet catalog` already prints, so naming them discloses nothing new.
+#[test]
+fn a_shape_miss_names_what_was_attempted_and_what_is_admitted() {
+    let mut s = session("website");
+    let detail = detail_of(s.authorize("GET", "/v9/projects/website/env", b"", NOW));
+    assert_reads_as_prose(&detail);
+    assert!(
+        detail.contains("`GET /v9/projects/website/env`"),
+        "{detail}"
+    );
+    assert!(detail.contains("`POST /v13/deployments`"), "{detail}");
+    assert!(detail.contains("`GET /v9/projects/*`"), "{detail}");
+}
+
+/// A `no_matching_shape` is now exactly one thing: the verb admits no such method and path. It
+/// discloses the whole inventory, because there is no narrower fact to report — a hop that missed is
+/// a hop asking for an effect this verb does not have.
+#[test]
+fn a_shape_miss_discloses_the_whole_admitted_inventory() {
+    let mut s = session("website");
+    let detail = detail_of(s.authorize("DELETE", "/v13/deployments/dpl_abc123", b"", NOW));
+    assert_reads_as_prose(&detail);
+    assert!(detail.contains("`POST /v13/deployments`"), "{detail}");
+    assert!(detail.contains("`GET /v2/user`"), "{detail}");
+    assert!(
+        detail.contains("ratify this shape in the verb's predicate"),
+        "the remedy is a template edit: {detail}"
+    );
+}
+
+/// Uniformity is the property, not any one message: a class that stays silent teaches requesters
+/// that silence means "that part was fine". Every refusal that KNOWS something says it, and the
+/// ones that stay silent are exactly the ones whose reason word is the whole fact.
+#[test]
+fn every_refusal_that_knows_something_says_it_and_the_silent_ones_have_nothing_left() {
+    let mut s = session_scoped("website", "team_ours");
+    let disclosing = [
+        s.clone()
+            .authorize("GET", "/v9/projects/website/env", b"", NOW),
+        s.clone().authorize(
+            "POST",
+            "/v13/deployments?teamId=team_other",
+            &create_body("website"),
+            NOW,
+        ),
+        s.authorize(
+            "POST",
+            "/v13/deployments?teamId=team_ours",
+            b"not json at all",
+            NOW,
+        ),
+    ];
+    for verdict in disclosing {
+        let refusal = refusal_of(verdict);
+        let detail = refusal
+            .detail()
+            .unwrap_or_else(|| panic!("{} knows more than its word", refusal.reason()));
+        assert_reads_as_prose(&detail);
+        // Every detailed refusal is also folded into what the native client prints, because
+        // `message` is the only field that CLI surfaces at all.
+        assert!(
+            refusal.message().contains(&detail),
+            "{}: the detail must reach the native client: {}",
+            refusal.reason(),
+            refusal.message()
+        );
+    }
+    // The silent classes: the reason word IS the whole fact, and there is nothing further the
+    // engine holds. A detail here would be invented, not disclosed.
+    for refusal in [
+        RelayRefusal::UnknownHandle,
+        RelayRefusal::Expired,
+        RelayRefusal::MalformedRequest,
+        RelayRefusal::EffectAlreadyUsed,
+        RelayRefusal::BodyTooLarge,
+        RelayRefusal::OutcomeMismatch,
+    ] {
+        assert_eq!(refusal.detail(), None, "{refusal:?}");
+    }
+}
+
+/// The values a refusal quotes back come off the caller's own hop, so their LENGTH is the caller's
+/// too (T1: a body or query assembled from injected content). They are bounded like every other
+/// borrowed string that reaches a durable audit row.
+#[test]
+fn a_disclosed_value_is_bounded() {
+    let mut s = session_scoped("website", "team_ours");
+    // Under the target's own path cap (a longer one is refused as malformed before any bind
+    // runs) and well over what a refusal will quote.
+    let huge = "z".repeat(300);
+    let detail = detail_of(s.authorize(
+        "POST",
+        &format!("/v13/deployments?teamId={huge}"),
+        &create_body("website"),
+        NOW,
+    ));
+    assert!(detail.len() < 400, "{}", detail.len());
+    assert!(detail.contains('…'), "and it says it was cut: {detail}");
+}
+
+/// The OTHER path-bind arm: this session HAS captured, and the hop named a different deployment.
+///
+/// A capture is not a frozen field — it is the approved effect's own consequence, read off the
+/// provider's response, and deliberately not something an approval can pin in advance. So the
+/// refusal must not claim the grant froze it, and must not prescribe re-requesting the capability:
+/// a fresh grant has captured nothing, so that hop lands on the empty-capture arm and refuses with
+/// the opposite message.
+#[test]
+fn a_captured_path_bind_states_its_own_provenance_and_prescribes_no_re_request() {
+    let mut s = session("website");
+    s.note_forward(true);
+    s.observe_response(true, 200, &create_response("dpl_ours", "website"));
+    let detail = detail_of(s.authorize("GET", "/v13/deployments/dpl_theirs", b"", NOW));
+    assert_reads_as_prose(&detail);
+    assert!(
+        !detail.contains("froze"),
+        "a capture is the effect's consequence, not something an approval pinned: {detail}"
+    );
+    assert!(
+        detail.contains("this session's own effect returned `dpl_ours`"),
+        "the true provenance: {detail}"
+    );
+    assert!(
+        detail.contains("`dpl_theirs`"),
+        "what it asked for: {detail}"
+    );
+    assert!(
+        !detail.contains("request the capability again"),
+        "a fresh grant has captured nothing, so this remedy refuses on the opposite arm: {detail}"
+    );
+    // The MESSAGE head carries the same provenance claim, so it must be as true as the detail.
+    let message = refusal_of(
+        s.clone()
+            .authorize("GET", "/v13/deployments/dpl_theirs", b"", NOW),
+    )
+    .message();
+    assert!(!message.contains("froze"), "{message}");
+    assert!(
+        message.contains("reaches past the single effect this grant authorized"),
+        "{message}"
+    );
+}
+
+/// The frozen side of a bind is agent-chosen wherever the standing rule pins nothing, and it reached
+/// the durable audit row, the session receipt and the HTTP body UNCAPPED — twice per detail. It is
+/// bounded exactly like the offered side, which is the same class of borrowed string.
+#[test]
+fn the_frozen_side_of_a_bind_is_bounded_like_the_offered_side() {
+    let huge = "p".repeat(4096);
+    let mut s = session_frozen(&huge, None, "preview");
+    let detail = detail_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        br#"{"name":"other-site","files":[]}"#,
+        NOW,
+    ));
+    assert!(detail.len() < 512, "{}", detail.len());
+    assert!(detail.contains('…'), "and it says it was cut: {detail}");
+}
+
+/// Agent-authored text reaches the OPERATOR'S TERMINAL: the native CLI prints the relay's error
+/// body verbatim, and `cermet log --hops` prints the same detail off the audit row. An escape
+/// sequence in a request field would replay there — repainting the line, or reordering it with a
+/// bidi override. Filtering happens at the one choke point every name and value passes through, so
+/// no render site has to remember.
+#[test]
+fn agent_supplied_names_and_values_never_carry_terminal_control_into_a_detail() {
+    // The offered side, in a query value.
+    let mut s = session_scoped("website", "team_ours");
+    let detail = detail_of(s.authorize(
+        "POST",
+        "/v13/deployments?teamId=team\u{1b}[2Kevil",
+        &create_body("website"),
+        NOW,
+    ));
+    assert!(!detail.contains('\u{1b}'), "{detail:?}");
+
+    // The bound side, where the standing rule pinned nothing and the request chose the value.
+    let mut s = session_frozen("site\u{1b}[31m", None, "preview");
+    let detail = detail_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        br#"{"name":"other-site","files":[]}"#,
+        NOW,
+    ));
+    assert!(!detail.contains('\u{1b}'), "{detail:?}");
+
+    // A key NAME, which is agent-authored — it rides the FORWARDED hop's observation now, through
+    // the same choke point, because the record it lands on is read in the same terminal.
+    let mut s = session("website");
+    let observed = observed_of(s.authorize(
+        "POST",
+        "/v13/deployments",
+        "{\"name\":\"website\",\"ev\u{202e}il\":1}".as_bytes(),
+        NOW,
+    ));
+    assert!(
+        !observed.join(" ").contains('\u{202e}'),
+        "a bidi override reorders the operator's line as surely as an escape does: {observed:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Descriptors BIND; they do not block. A shape's declared keys are the vocabulary a sentence may
+// pin, and every hop is judged on those pins. Whatever else the native tool puts in a body or a
+// query is the native tool's business: it is forwarded, and surfaced by name on the hop's record.
+// ---------------------------------------------------------------------------------------------
+
+/// A `vercel deploy` of a directory whose own `vercel.json` carries route configuration. The CLI
+/// folds that configuration into the create body verbatim, so the body arrives carrying keys the
+/// descriptor never enumerated — and refusing it made the broker a content firewall over a payload
+/// that decides nothing about WHERE the deploy lands. The bound keys still decide that, in this
+/// same body, and they are checked here exactly as before.
+#[test]
+fn a_create_body_carrying_the_projects_own_configuration_forwards() {
+    let mut s = session("website");
+    let body = serde_json::json!({
+        "name": "website",
+        "files": [],
+        // The rest of the vercel.json family, none of it enumerated by the descriptor.
+        "redirects": [{ "source": "/old", "destination": "/new" }],
+        "rewrites": [],
+        "cleanUrls": true,
+        "trailingSlash": false,
+    })
+    .to_string();
+    let verdict = s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW);
+    assert_eq!(
+        reason(&verdict),
+        "forward",
+        "the project's own configuration is the native tool's payload, not a probe"
+    );
+    // ...and the hop record says what rode along, so widening is an operator decision made on
+    // evidence rather than a deploy the agent had to mutilate to get through.
+    assert_eq!(
+        observed_of(verdict),
+        vec!["cleanUrls", "redirects", "rewrites", "trailingSlash"]
+    );
+}
+
+/// The bind is what the approval froze, and an undeclared key beside it changes nothing about
+/// that: the same body carrying BOTH a key the descriptor never enumerated AND a bound key with the
+/// wrong value refuses on the BIND. The undeclared key must not mask it, and must not become the
+/// refusal's story.
+#[test]
+fn a_bound_key_still_refuses_when_undeclared_keys_ride_beside_it() {
+    let mut s = session("website");
+    let body = serde_json::json!({
+        "name": "someone-elses-site",
+        "files": [],
+        "redirects": [],
+    })
+    .to_string();
+    let verdict = s.authorize("POST", "/v13/deployments", body.as_bytes(), NOW);
+    assert_eq!(reason(&verdict), "bind_mismatch");
+    let detail = detail_of(verdict);
+    assert!(detail.contains("`project`"), "{detail}");
+    assert!(
+        !detail.contains("redirects"),
+        "the bind is what refused; the undeclared key is not the story: {detail}"
+    );
+}
+
+/// The same retirement on the query side: a method+path match is what identifies WHICH effect a hop
+/// is, and a parameter the descriptor never enumerated does not un-identify it.
+#[test]
+fn an_undeclared_query_key_forwards() {
+    let mut s = session("website");
+    for target in [
+        "/v1/teams?slug=team_other",
+        "/v9/projects/website?slug=team_other",
+    ] {
+        assert!(
+            matches!(
+                s.authorize("GET", target, b"", NOW),
+                RelayVerdict::Forward { effect: false, .. }
+            ),
+            "{target}: an unenumerated parameter is forwarded, not refused"
+        );
+    }
+}
+
+/// The pure method+path miss is untouched — it is the one that says a hop is not this verb's
+/// business at all, and it still discloses the admitted inventory.
+#[test]
+fn a_method_and_path_miss_still_refuses_with_its_inventory() {
+    let mut s = session("website");
+    let detail = detail_of(s.authorize("GET", "/v9/projects/website/env", b"", NOW));
+    assert!(detail.contains("`POST /v13/deployments`"), "{detail}");
 }

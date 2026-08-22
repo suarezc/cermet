@@ -72,8 +72,11 @@ One non-comment line is one rule:
 
 Blank lines and `#` comments outside quoted strings are ignored. Canonical output uses one space
 between tokens, authored rule order, and one trailing LF when nonempty. `cermet doc check --fix` asks
-the daemon to resolve, validate, pin sets, and print that canonical form. `doc apply` refuses a
-noncanonical body.
+the daemon to resolve, validate, pin sets, and print that canonical form. The pinned `CERMET.md`
+flow refuses a noncanonical body — the document carries a marker naming exact bytes, so the bytes
+have to be exact. A preset document (`CERMET_<name>.md`) carries no marker and is canonicalized
+during the ceremony: what you review, commit, and store is the daemon's canonical form of what you
+wrote.
 
 Selectors:
 
@@ -973,12 +976,14 @@ predicate:
   - method: POST                       # GET/POST/PUT/PATCH/DELETE, uppercase
     path: /v13/deployments             # `/`-rooted; a `*` segment matches exactly ONE segment
     once: true                         # THE single effect (exactly one rule declares it)
-    query_keys: [forceNew, teamId]     # closed allowlist; absent ⇒ NO query string is admitted
-    body_keys: [files, projectSettings]  # closed allowlist of TOP-LEVEL body keys; required with body binds
+    query_keys: [forceNew, teamId]     # the parameter names this shape KNOWS ABOUT (vocabulary)
+    body_keys: [files, projectSettings]  # the TOP-LEVEL body keys it knows about; required with body binds
     bind:
       body.name: project               # a body key must equal this frozen field
       body.target: "target|omit:preview"   # ...or, at this frozen value, be ABSENT
-      query.teamId: "team|omit:personal"   # a query VALUE must equal this frozen field
+      query.teamId: team                 # a query VALUE must equal this frozen field
+                                         # (…and constrains nothing when the field is optional
+                                         #  and the request omitted it)
     capture:
       deployment_id: id                # session state DERIVED from this effect's own 2xx response
     assert:
@@ -1003,16 +1008,20 @@ Rules the validator enforces (each one refuses the document, not the request):
 - **Exactly one** rule declares `once: true` — one grant, one effect. Every other admitted shape
   (uploads, reads) is repeatable inside the session TTL, bounded only by its own `caps` if it
   declares one.
-- `query_keys` is a closed allowlist of parameter NAMES, capped at 16. Absent means no query string is
-  admitted at all, so a parameter nobody ratified cannot ride along at all.
+- `query_keys` is the shape's declared parameter VOCABULARY: the names it knows about, capped at 16.
+  It admits and refuses nothing on its own — a parameter outside it is forwarded and named on the
+  hop's record (`undeclared_keys`). What constrains a parameter is a `bind` on it. Absent means the
+  shape declares no query vocabulary, so every parameter a hop carries is reported as one it does not
+  enumerate.
 - `bind` maps a request location to a value the session holds. Three location forms: `body.<key>`, a
   top-level JSON body key; `query.<key>`, a query parameter's VALUE; and `path.*`, EVERY wildcard
   segment of that rule's own path. A BODY bind is refused on a bodyless method (`GET`/`DELETE`); a
   query bind reads the target, so it is legal on every method — the reads a session makes carry scope
   too. A bound query key must be listed in that rule's own `query_keys`: a value bind on a key that
-  can never arrive enforces nothing, and reads as protection that is not there. Admitting a key and
-  pinning its value are the two dimensions, and BOTH are needed — see
-  `docs/provider_design_principles.md`, *Admitting a key means classifying its value*.
+  can never arrive is a shape whose declared vocabulary contradicts its own enforcement, and the
+  record would then report a PINNED key as one the shape does not know about. Declaring a key and
+  pinning its value are different jobs — see `docs/provider_design_principles.md`, *A key that
+  carries authority is bound, not blocked*.
 - `capture` (on the `once` rule only) names session state DERIVED from the effect's own 2xx response:
   `<name>: <top-level response key>`, read as a string, WRITE-ONCE. A `path.*` bind reads it back as
   `captured.<name>`, and that is the only value form a path bind takes — a wildcard segment is the
@@ -1026,12 +1035,14 @@ Rules the validator enforces (each one refuses the document, not the request):
   capped at 4. Its fields obey the same comparability rules as bound fields and count toward
   `consumes`. It is **detection, not prevention** — the effect has already landed when the response is
   read; a mismatch burns the session and writes a high-severity audit row carrying frozen-vs-observed.
-- `body_keys` is the closed allowlist of TOP-LEVEL body keys, capped at 32, and is **required on any
-  rule that binds a BODY key** — declare `body_keys: []` to admit only the bound keys. A bound key is
-  admitted implicitly (its VALUE is checked), so listing it here is refused as a passthrough. Absent
-  means the body is never parsed at all, which is legal only for a rule with no body binds: an opaque
-  upload (`POST /v2/files` carries raw file bytes, not JSON — while a query bind can still pin the
-  scope those bytes land in). Refused on a bodyless method.
+- `body_keys` is the shape's declared TOP-LEVEL body VOCABULARY, capped at 32, and is **required on
+  any rule that binds a BODY key** — declare `body_keys: []` for a rule whose only vocabulary is what
+  it binds. A bound key is implicit (its VALUE is checked), so listing it here is refused as a
+  passthrough. A top-level key outside the declaration is forwarded and named on the hop's record;
+  what constrains a body key is a `bind` on it. Absent means the body is never parsed at all, which
+  is legal only for a rule with no body binds: an opaque upload (`POST /v2/files` carries raw file
+  bytes, not JSON — while a query bind can still pin the scope those bytes land in). Refused on a
+  bodyless method.
 - `caps` (legal on any rule) is that shape's **per-session budget**: `max_uses`, the number of hops of
   it a session may have AUTHORIZED, and `max_total_bytes`, the aggregate REQUEST body bytes those hops
   may carry. Both are required together and both must be positive — a count with no byte bound (or the
@@ -1050,10 +1061,11 @@ Rules the validator enforces (each one refuses the document, not the request):
 - `consumes` must equal the bound-and-asserted field set exactly — a relay executor reads nothing else.
 - `money` and `request_evidence` are refused on a relay verb.
 
-A hop outside the predicate is refused before the credential is attached. What that refusal then costs
+A hop whose method and path match no shape, or that contradicts a bind, is refused before the
+credential is attached. What that refusal then costs
 — the session burn, the other close causes, and the receipt each close carries — is grant-kernel
 enforcement, not language: `docs/REFERENCE.md` → Grant Kernel → *Relay enforcement (validated per
-hop)*, which also carries the rationale for the closed body-key set.
+hop)*, which also carries what the declared key sets are for and what happens to a key outside them.
 
 ### `fixed` — the template pins a field's only legal value
 

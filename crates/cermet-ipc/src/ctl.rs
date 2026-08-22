@@ -52,6 +52,13 @@ pub enum LockdownSnapshot {
 pub struct SentenceAuthorityStatus {
     pub sentence: SentenceSnapshot,
     pub lockdown: LockdownSnapshot,
+    /// The stored profile whose body IS the served corpus, joined at READ against the profile
+    /// table. `None` when nothing is served or no stored body matches — the join stores nothing,
+    /// so a corpus that is edited away from the profile it came from stops being named by it.
+    ///
+    /// It rides on this read rather than on a second one so the name and the digest a caller
+    /// renders side by side come from one observation of the daemon.
+    pub profile: Option<String>,
 }
 
 /// The typed inert result of staging one exact canonical sentence corpus.
@@ -153,6 +160,12 @@ pub enum CtlRequest {
     },
     /// List the connected providers (the operator view; a non-mutating read).
     ListCredentials,
+    /// Every stored authority profile (name, canonical body, rule count, updated_at). Read-only,
+    /// and `ctl`-ONLY — deliberately absent from `agent.sock`, because a stored body is the
+    /// operator's own authority draft. There is no companion WRITE op by design: a profile is
+    /// stored only as part of [`CtlRequest::CommitSentences`], so every stored body carries the
+    /// same staged-and-attested evidence a live corpus does.
+    ListPresets,
     // ---- Keyholder ops: the broker operations cermet-app drives over ctl.sock instead of
     // opening its own vault. Each maps 1:1 onto a `BrokerHandle` method and replies with the uniform
     // `{"kind":"ok","view":..}` / `{"kind":"error",..}` envelope.
@@ -241,7 +254,15 @@ pub enum CtlRequest {
     /// token writes NOTHING and returns a typed refusal), then emits the custody audit STRICTLY AFTER
     /// the commit (idempotent, occurrence-keyed). A crash between stage and commit leaves the prior
     /// generation live; staged records are inert and TTL-swept. Human-only ceremony RPC; every OS.
-    CommitSentences { staging_token: String },
+    ///
+    /// `preset` names the key the committed body is ALSO stored under. It rides here rather than on
+    /// a write op of its own so a stored profile can only ever be a body that went through this
+    /// exact ceremony — there is no second path by which one could appear.
+    CommitSentences {
+        staging_token: String,
+        #[serde(default)]
+        preset: Option<String>,
+    },
     // ---- MCP-repoint quiesce barrier: the daemon-held transaction `cermet mcp
     // install` uses to prove no NEW execution can begin under the old MCP server and classify whether
     // an in-flight/terminal lease may leave an agent-side child running. `ctl`-ONLY (a human operator)
@@ -311,6 +332,7 @@ mod tests {
                 token: RedactedToken("tok_xxx".into()),
             },
             CtlRequest::ListCredentials,
+            CtlRequest::ListPresets,
             CtlRequest::VerifyAudit,
             CtlRequest::ReadArtifact {
                 handle: "art_1".into(),
@@ -360,6 +382,11 @@ mod tests {
             },
             CtlRequest::CommitSentences {
                 staging_token: "ab".repeat(32),
+                preset: None,
+            },
+            CtlRequest::CommitSentences {
+                staging_token: "ab".repeat(32),
+                preset: Some("designer".into()),
             },
             CtlRequest::BeginMcpRepoint { ttl_secs: 120 },
             CtlRequest::McpRepointStatus {
@@ -393,6 +420,8 @@ mod tests {
                 request_id: "req_0123456789abcdef".into(),
             },
             CtlRequest::RelayHops,
+            // Stored authority profiles are the operator's own drafts; an agent has no counterpart.
+            CtlRequest::ListPresets,
             // UNIFIED CUSTODY: the sentence-ceremony ctl ops observe/install authority and are
             // ctl-ONLY — none may decode as an AgentRequest.
             CtlRequest::SentenceSnapshot,
@@ -405,6 +434,7 @@ mod tests {
             },
             CtlRequest::CommitSentences {
                 staging_token: "cd".repeat(32),
+                preset: None,
             },
             // MCP-repoint quiesce barrier: begin/status/end gate execution custody — ctl-ONLY,
             // so none may decode as an AgentRequest (no agent counterpart on `agent.sock`).
@@ -459,6 +489,17 @@ mod tests {
                 "agent-framed `{tag}` must be rejected (no agent counterpart)"
             );
         }
+    }
+
+    /// Stored authority profiles are operator drafts, so the read op is ctl-only: its tag is absent
+    /// from the accepted-agent-op closed set AND fails to decode as an AgentRequest.
+    #[test]
+    fn the_preset_read_op_is_absent_from_the_agent_wire_vocabulary() {
+        assert!(!crate::wire::accepted_agent_request_operation_tags().contains(&"list_presets"));
+        assert!(serde_json::from_value::<crate::wire::AgentRequest>(
+            serde_json::json!({ "op": "list_presets" })
+        )
+        .is_err());
     }
 
     // MCP-repoint quiesce barrier: begin/status/end gate execution custody and are ctl-ONLY.

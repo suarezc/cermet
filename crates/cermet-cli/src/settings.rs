@@ -1,9 +1,10 @@
 //! The operator's own settings file: `$HOME/.config/cermet/config.toml`.
 //!
-//! ONE knob lives here — `update_check`, the daily release check (`crate::update_check`). It is
-//! per-operator rather than a daemon setting: it governs nothing the daemon does, two humans on one
-//! box may differ, and changing your mind must not need root. It follows the ordinary shape for a
-//! CLI's own settings: one self-documenting TOML file under the user's config directory.
+//! TWO knobs live here — `update_check`, the daily release check (`crate::update_check`), and
+//! `journal`, the CLI's own output journal (`crate::journal`). Both are per-operator rather than
+//! daemon settings: they govern nothing the daemon does, two humans on one box may differ, and
+//! changing your mind must not need root. The file follows the ordinary shape for a CLI's own
+//! settings: one self-documenting TOML file under the user's config directory.
 //!
 //! # One grammar, and writes that touch only what they own
 //!
@@ -18,8 +19,14 @@ use std::path::{Path, PathBuf};
 
 use crate::CliError;
 
-/// The knob's key, spelled once.
+/// Each knob's key, spelled once.
 pub const UPDATE_CHECK_KEY: &str = "update_check";
+pub const JOURNAL_KEY: &str = "journal";
+
+/// The commands that rewrite each knob, named in every message about it — a setting an operator
+/// cannot find the switch for is the thing these strings exist to prevent.
+const UPDATE_CHECK_COMMANDS: &str = "`cermet update --daily on` / `cermet update --daily off`";
+const JOURNAL_COMMANDS: &str = "`cermet journal on` / `cermet journal off`";
 
 /// The operator's own settings file, on every surface.
 ///
@@ -54,6 +61,34 @@ pub fn config_path_in(home: Option<PathBuf>) -> PathBuf {
 /// answer. Keys this build does not own are ignored: the file is the operator's, and a line nothing
 /// here reads is not a reason to refuse the line that is read.
 pub fn read_update_check(path: &Path) -> Result<bool, CliError> {
+    read_switch(path, UPDATE_CHECK_KEY, UPDATE_CHECK_COMMANDS)
+}
+
+/// May the CLI journal what it prints? Same shape, same defaults, same file — an absent file is a
+/// box in its default state (on), and a value this build does not know is an error rather than a
+/// quiet guess in either direction.
+pub fn read_journal(path: &Path) -> Result<bool, CliError> {
+    read_switch(path, JOURNAL_KEY, JOURNAL_COMMANDS)
+}
+
+/// Write the knob. An absent file is created with its documentation; an existing one has exactly the
+/// `update_check` assignment rewritten and nothing else touched.
+pub fn write_update_check(path: &Path, enabled: bool) -> Result<(), CliError> {
+    write_switch(path, UPDATE_CHECK_KEY, enabled, |value| {
+        settings_file(value, true)
+    })
+}
+
+/// Write the journal knob, on the same terms: only its own assignment is touched.
+pub fn write_journal(path: &Path, enabled: bool) -> Result<(), CliError> {
+    write_switch(path, JOURNAL_KEY, enabled, |value| {
+        settings_file(true, value)
+    })
+}
+
+/// The one read both knobs share. `commands` names the CLI forms that rewrite this key, so every
+/// complaint about the file also says how to fix it.
+fn read_switch(path: &Path, key: &str, commands: &str) -> Result<bool, CliError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
@@ -64,10 +99,9 @@ pub fn read_update_check(path: &Path) -> Result<bool, CliError> {
             )))
         }
     };
-    let value = crate::setup::active_string_value(&text, UPDATE_CHECK_KEY).map_err(|error| {
+    let value = crate::setup::active_string_value(&text, key).map_err(|error| {
         CliError::Malformed(format!(
-            "{}: {error}\nfix it by hand, or run `cermet update --daily on` / \
-             `cermet update --daily off` to rewrite the line",
+            "{}: {error}\nfix it by hand, or run {commands} to rewrite the line",
             path.display()
         ))
     })?;
@@ -76,19 +110,24 @@ pub fn read_update_check(path: &Path) -> Result<bool, CliError> {
         Some("on") => Ok(true),
         Some("off") => Ok(false),
         Some(other) => Err(CliError::Malformed(format!(
-            "{} sets {UPDATE_CHECK_KEY} = {other:?}, which is neither \"on\" nor \"off\"\nfix it by \
-             hand, or run `cermet update --daily on` / `cermet update --daily off` to rewrite it",
+            "{} sets {key} = {other:?}, which is neither \"on\" nor \"off\"\nfix it by hand, or \
+             run {commands} to rewrite it",
             path.display()
         ))),
     }
 }
 
-/// Write the knob. An absent file is created with its documentation; an existing one has exactly the
-/// `update_check` assignment rewritten and nothing else touched.
-pub fn write_update_check(path: &Path, enabled: bool) -> Result<(), CliError> {
+/// The one write both knobs share. `fresh` supplies the whole documented file when there is none
+/// yet; when there is one, only this key's ONE active assignment is rewritten.
+fn write_switch(
+    path: &Path,
+    key: &str,
+    enabled: bool,
+    fresh: impl Fn(bool) -> String,
+) -> Result<(), CliError> {
     let updated = match std::fs::read_to_string(path) {
-        Ok(text) => crate::setup::set_string_key(&text, UPDATE_CHECK_KEY, switch(enabled)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => settings_file(enabled),
+        Ok(text) => crate::setup::set_string_key(&text, key, switch(enabled)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fresh(enabled),
         Err(error) => {
             return Err(CliError::Malformed(format!(
                 "cannot read {}: {error}",
@@ -107,7 +146,7 @@ pub fn record_default(path: &Path) -> Result<bool, CliError> {
     if path.exists() {
         return Ok(false);
     }
-    write_file(path, &settings_file(true))?;
+    write_file(path, &settings_file(true, true))?;
     Ok(true)
 }
 
@@ -131,7 +170,7 @@ fn switch(on: bool) -> &'static str {
 
 /// A fresh settings file's exact bytes. It documents itself: an operator who finds this file a year
 /// from now can read what the line governs without leaving the file.
-pub fn settings_file(update_check: bool) -> String {
+pub fn settings_file(update_check: bool, journal: bool) -> String {
     format!(
         "# Cermet operator settings. Written by `cermet setup`; edit it by hand if you prefer.\n\
          \n\
@@ -148,8 +187,25 @@ pub fn settings_file(update_check: bool) -> String {
          # never an installation.\n\
          # Change it at any time: `cermet update --daily off`, `cermet update --daily on`, or edit\n\
          # the line below by hand.\n\
-         {UPDATE_CHECK_KEY} = \"{value}\"\n",
+         {UPDATE_CHECK_KEY} = \"{value}\"\n\
+         \n\
+         # The output journal: every `cermet` command appends one JSON line to\n\
+         # $XDG_STATE_HOME/cermet/journal.jsonl (by default ~/.local/state/cermet/journal.jsonl)\n\
+         # recording its arguments, its exit code, and the first {cap} bytes of what it PRINTED.\n\
+         # Default: on.\n\
+         #\n\
+         # It stays on this machine and is sent nowhere. Nothing you TYPE is recorded — only\n\
+         # output is captured, so the no-echo token prompt in `cermet connect` cannot appear in\n\
+         # it. It is a convenience record for reading back what a command said, not the audit\n\
+         # log: the broker's receipts are `cermet log` and `cermet audit-verify`.\n\
+         # The file rotates whole at {rotate}, keeping one previous generation as journal.jsonl.1.\n\
+         # Change it at any time: `cermet journal off`, `cermet journal on`, or edit the line\n\
+         # below by hand. `cermet journal` prints its path and current size.\n\
+         {JOURNAL_KEY} = \"{journal_value}\"\n",
         value = switch(update_check),
+        journal_value = switch(journal),
+        cap = crate::journal::OUTPUT_CAP_BYTES,
+        rotate = "32 MiB",
         origin = crate::update::origin(None).release_url(crate::update::UPDATE_REPO),
     )
 }
@@ -190,6 +246,59 @@ mod tests {
         assert!(body.contains("update_check = \"on\""), "{body}");
         assert!(body.contains("NEVER INSTALLS ANYTHING"), "{body}");
         assert!(body.contains("cermet update --daily off"), "{body}");
+    }
+
+    /// The journal knob is the same shape as the check's, in the same file, and the two are
+    /// INDEPENDENT: writing one may never disturb the other's recorded value or its documentation.
+    #[test]
+    fn the_journal_knob_round_trips_without_disturbing_the_check() {
+        let dir = temp();
+        let path = dir.path().join("cermet").join("config.toml");
+
+        assert!(read_journal(&path).expect("an absent file reads as on"));
+        assert!(!path.exists(), "reading must not create the file");
+
+        write_journal(&path, false).expect("off");
+        assert!(!read_journal(&path).expect("read back"));
+        assert!(
+            read_update_check(&path).expect("read back"),
+            "the check keeps its default when only the journal was written"
+        );
+        let body = std::fs::read_to_string(&path).expect("read");
+        assert!(body.contains("journal = \"off\""), "{body}");
+        assert!(body.contains("update_check = \"on\""), "{body}");
+        assert!(
+            body.contains("~/.local/state/cermet/journal.jsonl"),
+            "a fresh file documents where the journal lands: {body}"
+        );
+        assert!(
+            body.contains("Nothing you TYPE is recorded"),
+            "and that nothing typed is recorded: {body}"
+        );
+
+        // Flipping the OTHER knob rewrites only its own assignment.
+        write_update_check(&path, false).expect("off");
+        let body = std::fs::read_to_string(&path).expect("read");
+        assert!(body.contains("journal = \"off\""), "{body}");
+        assert!(body.contains("update_check = \"off\""), "{body}");
+
+        write_journal(&path, true).expect("on");
+        assert!(read_journal(&path).expect("read back"));
+        assert!(
+            !read_update_check(&path).expect("read back"),
+            "the check stays where the operator left it"
+        );
+    }
+
+    /// A value this build does not know is refused BY NAME for the journal too, naming ITS command.
+    #[test]
+    fn a_malformed_journal_setting_names_the_journal_command() {
+        let dir = temp();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "journal = \"sometimes\"\n").expect("write");
+        let error = format!("{}", read_journal(&path).expect_err("refused"));
+        assert!(error.contains("journal"), "{error}");
+        assert!(error.contains("cermet journal on"), "{error}");
     }
 
     /// The default is RECORDED once and an existing file is never rewritten — whichever way it

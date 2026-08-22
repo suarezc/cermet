@@ -138,6 +138,58 @@ pub enum EffectFailureClass {
     Failed,
 }
 
+/// What became of the authorized EFFECT, derived at read time from the signals already recorded.
+///
+/// The receipt row's decision word says what authority ruled; this says what then happened at the
+/// effect layer. Without it an allowed request whose relay grant burned on a refused hop, one whose
+/// window lapsed having driven nothing, and one whose deploy landed all render the same word.
+///
+/// **Nothing stores this.** It is computed by the view join from the recorded observations — the
+/// session's open/close rows, the forwarded hops and their upstream statuses, the burning refusal's
+/// reason word, the terminal execution event — and from the clock at the moment of the read. A state
+/// that the recorded signals cannot distinguish has no value here: the projection leaves it `None`
+/// rather than choosing, and the row renders no suffix at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectState {
+    /// The last word recorded about the grant's effect is a success: a 2xx on the session's
+    /// effect-bearing hop, or a terminal `provider_action_succeeded` on a verb the daemon ran
+    /// itself. LAST word, because a session may attempt its effect more than once — the native
+    /// two-phase create is answered `400 missing files` before the create that lands.
+    Ok,
+    /// A refusal ENDED the session, and no effect-bearing hop is recorded as having landed. The
+    /// burning refusal's stable reason word rides beside this (`burn_reason`), so the row says which
+    /// class ended it.
+    ///
+    /// Stated that way because "the effect did not land" is more than the record supports. An effect
+    /// hop that never got a response head is spent with its outcome UNKNOWN; the native client
+    /// retries, the retry is refused as `effect_already_used`, and the session burns — a row that
+    /// then read "the effect did not land" would be telling an operator to stop reconciling exactly
+    /// where the failure class beside it says to start.
+    Burned,
+    /// A relay window that ended — its terminal record exists, or the read is past the `expires_at`
+    /// the approval set — having forwarded ZERO hops. The grant was spent minting authority nothing
+    /// ever used.
+    ExpiredUnused,
+    /// A relay window that ended after forwarding hops with NOTHING recorded saying whether its
+    /// effect landed. This is the honest gap: hops happened, the window is over, and no
+    /// effect-bearing hop ever reached a terminal verdict. It is not a claim that the effect failed
+    /// — an effect the record says failed carries its `failure_class` instead.
+    Unresolved,
+}
+
+impl EffectState {
+    /// The one token this state is spelled with — on the receipt row's suffix and on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EffectState::Ok => "ok",
+            EffectState::Burned => "burned",
+            EffectState::ExpiredUnused => "expired_unused",
+            EffectState::Unresolved => "unresolved",
+        }
+    }
+}
+
 /// The typed signal ONE seam observed about ONE failed effect. Every variant is a fact the seam
 /// holds structurally, so [`EffectFailureClass::of`] is a pure function of (seam, signal) with no
 /// text anywhere in it.
@@ -507,6 +559,17 @@ pub struct GrantView {
     /// absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_class: Option<EffectFailureClass>,
+    /// What became of the authorized effect, DERIVED at read time (see [`EffectState`]). `None`
+    /// where the recorded signals do not determine one — a window still in flight, a request decided
+    /// and never executed, a refusal that never ran anything. Same operator-view scope as
+    /// `failure_class`: filled by `history()`, absent on every agent-facing grant projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_state: Option<EffectState>,
+    /// The stable reason word of the refusal that burned the session, carried beside
+    /// `effect_state = burned` so the receipt row names the class that ended it without a second
+    /// lookup. Absent unless something burned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub burn_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
     pub resource: Value,
@@ -635,6 +698,13 @@ pub struct RequestEvidenceView {
     pub effect_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_outcome: Option<EffectOutcome>,
+    /// What became of the authorized effect, DERIVED at read time from the events and hops below
+    /// (see [`EffectState`]). It is here because the derivation is arithmetic a reader should not
+    /// have to do: "closed by `ttl` with `hops: 0`" and "closed by `ttl` after four hops and no
+    /// effect verdict" are different fates, and a window whose daemon restarted has no terminal
+    /// record at all. `None` where the recorded signals determine nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_state: Option<EffectState>,
     pub events: Vec<ExecutionEvidenceView>,
     /// The relay hops this request's grant authorized, oldest first. Empty for every
     /// non-relay verb.
@@ -801,11 +871,23 @@ pub struct RelayHopView {
     /// Why a hop was refused, or why a forwarded one failed — the broker's stable reason string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// What that refusal knew beyond its reason word, in one line: the offending field or key, the
+    /// frozen constraint as it was enforced, the value the hop offered, and — where one is
+    /// computable — the remedy. The reason word stays the machine-readable code; this is additional
+    /// to it, never a rewriting of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     /// Whether this hop is the grant's single effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_bytes: Option<u64>,
+    /// On a FORWARDED hop: the key names it carried that its matched shape does not enumerate —
+    /// query then body, names only, bounded with a `+N more` mark past the cap. An OBSERVATION, not
+    /// a verdict: the hop was authorized on its shape and its binds, and this says what else rode
+    /// along, so an operator can see whether any of it is worth pinning. Absent when there was none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undeclared_keys: Option<Vec<String>>,
     /// Whether this refusal BURNED the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub burned: Option<bool>,
@@ -823,7 +905,7 @@ pub struct CatalogListing {
 
 #[cfg(test)]
 mod tests {
-    use super::{EffectFailureClass as Class, EffectOutcome, FailureSignal as Signal};
+    use super::{EffectFailureClass as Class, EffectOutcome, EffectState, FailureSignal as Signal};
 
     /// ONE word per disposition, everywhere. `as_str` is what the broker writes into the durable
     /// terminal record and what the evidence validator reads back; `serde` is what
@@ -950,6 +1032,31 @@ mod tests {
                 serde_json::to_value(class).unwrap(),
                 serde_json::Value::String(class.as_str().to_string())
             );
+        }
+    }
+
+    /// The same rule for the effect-state vocabulary, which has the same two spellings to keep
+    /// together: `as_str` is what the receipt row's suffix prints (`→expired_unused`) and serde is
+    /// what `log <request_id>` renders. A drift between them would put two words on two surfaces
+    /// for one fact — and a reader who greps the log for what the JSON told them would find
+    /// nothing.
+    #[test]
+    fn the_effect_state_has_one_spelling() {
+        for state in [
+            EffectState::Ok,
+            EffectState::Burned,
+            EffectState::ExpiredUnused,
+            EffectState::Unresolved,
+        ] {
+            assert_eq!(
+                serde_json::to_value(state).unwrap(),
+                serde_json::Value::String(state.as_str().to_string()),
+                "{state:?}"
+            );
+            // And back, so the token a surface prints is one this build can read again.
+            let parsed: EffectState =
+                serde_json::from_value(serde_json::json!(state.as_str())).expect("it round-trips");
+            assert_eq!(parsed, state);
         }
     }
 }

@@ -192,6 +192,14 @@ impl CtlBrokerClient {
             .await
             .and_then(decode_view)
     }
+    /// Every stored authority profile (name, canonical body, rule count, updated_at). Read-only;
+    /// there is deliberately no companion write op — a profile is stored only by
+    /// [`Self::commit_sentences`], as part of the ceremony that made that body live.
+    pub async fn list_presets(&self) -> Reply {
+        self.raw(CtlRequest::ListPresets)
+            .await
+            .and_then(decode_view)
+    }
     pub async fn verify_audit(&self) -> Reply {
         self.raw(CtlRequest::VerifyAudit)
             .await
@@ -322,13 +330,21 @@ impl CtlBrokerClient {
     /// Round two: commit a staged corpus. The daemon flips the generation
     /// atomically iff the token is still live (a stale/unknown/superseded token is a daemon error —
     /// definite no-commit) and returns the `CommitOutcome` JSON (`Committed` / `AlreadyCommitted`).
+    ///
+    /// `preset` names the key the committed body is ALSO stored under. It rides on the commit so a
+    /// stored profile is always one this ceremony produced; the daemon validates the name and is
+    /// the only side that may refuse it.
     pub async fn commit_sentences(
         &self,
         staging_token: String,
+        preset: Option<String>,
     ) -> Result<SentenceCommitOutcome, Error> {
-        self.raw(CtlRequest::CommitSentences { staging_token })
-            .await
-            .and_then(decode_typed_view)
+        self.raw(CtlRequest::CommitSentences {
+            staging_token,
+            preset,
+        })
+        .await
+        .and_then(decode_typed_view)
     }
 
     /// Ingest a provider credential. The raw token is exposed ONLY to build the wire request, then

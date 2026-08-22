@@ -1,7 +1,7 @@
 //! Operator CLI argument parsing: the top-level `parse` dispatcher plus the per-command
 //! flag/positional helpers and the shared `USAGE` banner. Pure (no I/O); unit-tested via `tests.rs`.
 //!
-//! The surface is thirteen commands. Two of them are nouns — `rules` and `doc` —
+//! The surface is fifteen commands. Two of them are nouns — `rules` and `doc` —
 //! because their subcommands are the same three or five operations on one thing, and one of
 //! them, `run`, is the fusion of the old `request` + `execute`: an operator who is allowed to do
 //! a thing does not then need a second command's permission to do it. `catalog` is the one an
@@ -18,7 +18,7 @@ use cermet_ipc::wire::ArtifactRange;
 use serde_json::json;
 
 use super::{CliCommand, CliError};
-use crate::{connect, mcp, setup};
+use crate::{connect, mcp, preset, setup};
 
 const USAGE: &str = "\
 cermet — the capability broker CLI (authority changes are human-only, presence-gated)
@@ -30,18 +30,21 @@ AGENT WORK — capability requests and their receipts:
                             [--ask-only] [--retry-effect <effect_id>]
                                                    (decide AND execute; --ask-only prints the decision as JSON)
     run --resume <request_id>                      (execute a decided request; its fields stay frozen)
-    log [--since <RFC3339>] [--provider <p>] [--denied] [--hops] [--all]
+    log [--since <RFC3339>] [--provider <p>] [--denied] [--burned] [--hops] [--all]
                                                    (the receipt log: newest 100 rows unless --all)
     log <request_id>                               (one request's record, as JSON)
     artifact <handle> [--range <unit>:<start>[-<end>] | --path '$.a.b']
     audit-verify                                   (check the audit hash-chain)
     check [<provider>]                             (read-only plumbing checklist: all, or one provider)
+    journal [on|off]                               (this CLI's own record of what it printed, per run)
 
 AUTHORITY — human-only, presence-gated:
     rules                                          (numbered canonical rule list)
     rules allow \"<rule>\" [--yes] | revoke <n> [--yes] | refresh <n>
-    doc check [--fix|--init] | doc diff | doc apply [--replace-live] [--recover]
+    doc check [--fix|--init] | doc diff | doc apply [<file>] [--replace-live] [--recover]
     doc export [--replace-draft] | doc status [--json]
+    preset list | preset <name> | preset export <name> [<path>] [--force]
+                                                   (stored authority profiles, applied by name)
     owner status | owner lockdown [clear]          (root-only independent revocation root)
 
 CEREMONIES — one-time setup:
@@ -73,14 +76,21 @@ run --resume <request_id>
     request was decided.";
 
 const LOG_USAGE: &str = "\
-log [--since <RFC3339>] [--provider <name>] [--denied] [--hops] [--all]
+log [--since <RFC3339>] [--provider <name>] [--denied] [--burned] [--hops] [--all]
     The receipt log, newest first. Each row names its request id and the justification the request
     carried; pass that id to `log <request_id>` for the whole record. Without --all it renders the
     100 most recent rows and says so on a final line — the filters narrow the log FIRST, then the
     window applies.
+    A row ENDS with what became of the effect its decision authorized, where the record determines
+    one: `→ok` (the effect landed), `→burned(<reason>)` (a refusal ended the relay session),
+    `→expired_unused` (the window ended having driven nothing), `→unresolved` (it ended after hops
+    with nothing saying the effect landed). No suffix means the record does not say — a window still
+    in flight, a request decided and not executed, or an effect whose failure the row already names.
       --since <RFC3339>   only rows at or after that instant, e.g. 2026-08-03T00:00:00Z
       --provider <name>   only that provider's rows
       --denied            only the refusals
+      --burned            only the rows whose relay grant BURNED — allowed, then ended by a
+                          refused hop (on --hops, the burning hops themselves)
       --hops              the relay hop view instead of the grant receipt
       --all               every row, unwindowed
 log <request_id>
@@ -112,8 +122,32 @@ rules allow \"<rule>\" [--yes]  |  rules revoke <n> [--yes]  |  rules refresh <n
 
 const DOC_USAGE: &str = "\
 doc check [--fix|--init] | doc diff | doc status [--json]
-doc export [--replace-draft] | doc apply [--replace-live] [--recover]
-    The CERMET.md corpus flow: `doc check --fix` → `doc diff` → `doc apply`.";
+doc export [--replace-draft] | doc apply [<file>] [--replace-live] [--recover]
+    The CERMET.md corpus flow: `doc check --fix` → `doc diff` → `doc apply`.
+    `doc apply` with no file discovers this repository's CERMET.md, as it always has. Given a file
+    it applies THAT document: a CERMET.md path is the identical pinned flow, and a
+    CERMET_<name>.md path is an authority PROFILE — the same ceremony, and what it commits is also
+    stored under <name> for `cermet preset <name>` (see `cermet preset --help`).";
+
+const PRESET_USAGE: &str = "\
+preset list
+    Every stored authority profile: its name, how many rules it holds, and when it was stored.
+    The profile whose body the daemon is serving right now is marked `● live`.
+preset <name> [--recover]
+    Install that profile. A profile is a WHOLE corpus, so this REPLACES everything currently live —
+    every rule the profile does not carry is gone. The ceremony is the one `doc apply` runs: the
+    review shows the rule diff against what is live, then a terminal confirmation and the presence
+    gate, then the staged commit. There is no --yes.
+preset export <name> [<path>] [--force]
+    Write the stored body back out as `CERMET_<name>.md` (in this directory, or at <path>), which
+    `doc apply` re-ingests under the same name. Refuses to overwrite without --force.
+
+    A preset is a NAME and a body of rules — nothing else. It refers to no repository and no file
+    on this box, so `designer`, `builder` and `q3r982` are equally good names; a name may hold
+    letters, digits, `_` and `-`.
+    Profiles are written by applying a preset document: `cermet doc apply CERMET_<name>.md` runs
+    the full ceremony and stores what it commits under <name>. There is no other way to write one,
+    which is what makes every stored profile a body a human attested.";
 
 const OWNER_USAGE: &str = "owner status | owner lockdown [clear]\n\
     \x20   The root-only independent revocation root. `lockdown` engages deny-all; `lockdown clear`\n\
@@ -173,6 +207,23 @@ update --apply <sha256>  |  update --apply-deb <path> --sha256 <hex>
     The two privileged halves `update` re-execs itself as through sudo, one per channel. Each
     re-verifies the staged bytes against that digest before installing them. Not for hand use.";
 
+const JOURNAL_USAGE: &str = "\
+journal
+    What the output journal is doing: on or off, the file it writes, how big that file is now, and
+    the two bounds it enforces. Every `cermet` command appends ONE JSON line to that file: when it
+    ran, its arguments, the directory it ran in, its exit code, how long it took, and the first
+    4096 bytes of what it PRINTED. Output past that is counted in a `truncated` field, not stored —
+    long renders (`log`, `catalog`) re-read stores that already exist durably, while the output that
+    exists nowhere else (a ceremony's review text, a refusal, a status line) is short and always
+    fits. The file rotates whole at 32 MiB, keeping one previous generation as `journal.jsonl.1`.
+    Nothing you TYPE is recorded — the capture is of output only, so the no-echo token prompt in
+    `cermet connect` cannot appear in it. It stays on this machine and is sent nowhere.
+    READING it is not a cermet command: it is a plain JSONL file, and this prints its path so you
+    can `tail`, `grep` or `jq` it with your own tools. For the BROKER's record of what was decided,
+    use `cermet log` and `cermet audit-verify` — those are the receipts; this is a convenience.
+journal on|off
+    The switch, kept in your own settings file (~/.config/cermet/config.toml). Default: on.";
+
 const MCP_USAGE: &str = "\
 mcp
     Run the keyless MCP stdio server agents speak. Takes no arguments.
@@ -197,8 +248,10 @@ fn command_usage(command: &str) -> Option<&'static str> {
         "audit-verify" => AUDIT_VERIFY_USAGE,
         "check" => CHECK_USAGE,
         "catalog" => CATALOG_USAGE,
+        "journal" => JOURNAL_USAGE,
         "rules" => RULES_USAGE,
         "doc" => DOC_USAGE,
+        "preset" => PRESET_USAGE,
         "owner" => OWNER_USAGE,
         "connect" => CONNECT_USAGE,
         "setup" => SETUP_USAGE,
@@ -279,8 +332,10 @@ pub fn parse(args: &[String]) -> Result<CliCommand, CliError> {
         }
         "check" => parse_check(rest),
         "catalog" => parse_catalog(rest),
+        "journal" => parse_journal(rest),
         "rules" => parse_rules(rest),
         "doc" => parse_doc(rest),
+        "preset" => parse_preset(rest),
         "owner" => parse_owner(rest),
         "connect" => parse_connect(rest),
         "setup" => Ok(CliCommand::Setup(setup::parse_setup(rest)?)),
@@ -415,6 +470,7 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
     let mut since = None;
     let mut provider = None;
     let mut denied_only = false;
+    let mut burned_only = false;
     let mut hops = false;
     let mut all = false;
     let mut positionals: Vec<String> = Vec::new();
@@ -430,6 +486,9 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
                 return Err(CliError::Usage("log accepts --provider only once".into()));
             }
             "--denied" => denied_only = true,
+            // The same question one layer down: --denied finds what authority refused, --burned
+            // finds what it allowed and the effect layer then ended.
+            "--burned" => burned_only = true,
             // the relay hop view. Same `--since` bound; `--denied` narrows it to the
             // refusals, which is the same question one flag deeper.
             "--hops" => hops = true,
@@ -447,13 +506,20 @@ fn parse_log(args: &[String]) -> Result<CliCommand, CliError> {
             since,
             provider,
             denied_only,
+            burned_only,
             hops,
             all,
         });
     }
     // The id form is a different question — one request's evidence — so the list-narrowing flags
     // have nothing to narrow, and a second id is two questions.
-    if positionals.len() > 1 || since.is_some() || provider.is_some() || denied_only || hops || all
+    if positionals.len() > 1
+        || since.is_some()
+        || provider.is_some()
+        || denied_only
+        || burned_only
+        || hops
+        || all
     {
         return Err(CliError::Usage(format!(
             "log <request_id> renders one request's record as JSON; the list flags \
@@ -501,6 +567,23 @@ fn parse_catalog(args: &[String]) -> Result<CliCommand, CliError> {
         [] => Ok(CliCommand::Catalog { all: false }),
         ["--all"] => Ok(CliCommand::Catalog { all: true }),
         _ => Err(CliError::Usage(CATALOG_USAGE.into())),
+    }
+}
+
+/// `journal` — the status, or the switch. There is no read form: the journal is a plain file, and
+/// the status prints its path so the reader's own tools can open it.
+fn parse_journal(args: &[String]) -> Result<CliCommand, CliError> {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => Ok(CliCommand::Journal { enabled: None }),
+        [switch] => Ok(CliCommand::Journal {
+            enabled: Some(parse_switch(switch, "journal")?),
+        }),
+        _ => Err(CliError::Usage(JOURNAL_USAGE.into())),
     }
 }
 
@@ -559,22 +642,34 @@ fn parse_doc(args: &[String]) -> Result<CliCommand, CliError> {
         ("export", ["--replace-draft"]) => Ok(CliCommand::Export {
             replace_draft: true,
         }),
-        ("apply", flags) => {
+        // `doc apply` takes at most ONE positional: the document to apply. With none it discovers
+        // this repository's CERMET.md, exactly as before.
+        ("apply", arguments) => {
             let mut replace_live = false;
             let mut recover = false;
-            for flag in flags {
-                match *flag {
+            let mut file: Option<String> = None;
+            for argument in arguments {
+                match *argument {
                     "--replace-live" if !replace_live => replace_live = true,
                     "--recover" if !recover => recover = true,
-                    other => {
+                    other if other.starts_with("--") => {
                         return Err(CliError::Usage(format!(
                             "doc apply: unexpected argument {other:?}; expected only \
                              --replace-live or --recover, once each"
                         )));
                     }
+                    positional if file.is_none() => {
+                        file = Some(require_nonempty(positional, "doc apply <file>")?)
+                    }
+                    _ => {
+                        return Err(CliError::Usage(format!(
+                            "doc apply takes at most one document\n{DOC_USAGE}"
+                        )));
+                    }
                 }
             }
             Ok(CliCommand::Apply {
+                file,
                 replace_live,
                 recover,
             })
@@ -585,6 +680,95 @@ fn parse_doc(args: &[String]) -> Result<CliCommand, CliError> {
         (other, _) => Err(CliError::Usage(format!(
             "unknown doc subcommand {other:?}\n{DOC_USAGE}"
         ))),
+    }
+}
+
+/// The `preset` noun: the stored profiles — listed, installed, or written back out.
+///
+/// A BARE `preset` prints usage rather than guessing: there is no form that applies the document
+/// you are standing in, because that is already `doc apply`.
+fn parse_preset(args: &[String]) -> Result<CliCommand, CliError> {
+    let Some((sub, rest)) = args.split_first() else {
+        return Err(CliError::Usage(PRESET_USAGE.into()));
+    };
+    match sub.as_str() {
+        "list" if rest.is_empty() => return Ok(CliCommand::Preset(preset::PresetCommand::List)),
+        "list" => {
+            return Err(CliError::Usage(format!(
+                "preset list takes no arguments\n{PRESET_USAGE}"
+            )))
+        }
+        "export" => return parse_preset_export(rest),
+        flag if flag.starts_with("--") => {
+            return Err(CliError::Usage(format!(
+                "preset: expected `list`, `export`, or a profile name, got {flag:?}\n{PRESET_USAGE}"
+            )))
+        }
+        _ => {}
+    }
+    // `--recover` is `doc apply`'s, because the ceremony IS `doc apply`'s. `--replace-live` is
+    // absent: it acknowledges a pin marker naming a different live generation, and a profile —
+    // which is derived from no generation — carries no marker to acknowledge.
+    let mut recover = false;
+    for flag in rest {
+        match flag.as_str() {
+            "--recover" if !recover => recover = true,
+            other => {
+                return Err(CliError::Usage(format!(
+                    "preset: unexpected argument {other:?}; expected only --recover\n{PRESET_USAGE}"
+                )));
+            }
+        }
+    }
+    Ok(CliCommand::Preset(preset::PresetCommand::Apply {
+        name: preset_name(sub)?,
+        recover,
+    }))
+}
+
+/// `preset export <name> [<path>] [--force]`.
+fn parse_preset_export(args: &[String]) -> Result<CliCommand, CliError> {
+    let mut positionals: Vec<String> = Vec::new();
+    let mut force = false;
+    for argument in args {
+        match argument.as_str() {
+            "--force" if !force => force = true,
+            other if other.starts_with("--") => {
+                return Err(CliError::Usage(format!(
+                    "preset export: unexpected argument {other:?}\n{PRESET_USAGE}"
+                )));
+            }
+            positional => positionals.push(positional.to_string()),
+        }
+    }
+    let (name, path) = match positionals.as_slice() {
+        [name] => (preset_name(name)?, None),
+        [name, path] => (
+            preset_name(name)?,
+            Some(require_nonempty(path, "preset export <path>")?),
+        ),
+        _ => {
+            return Err(CliError::Usage(format!(
+                "preset export <name> [<path>] [--force]\n{PRESET_USAGE}"
+            )));
+        }
+    };
+    Ok(CliCommand::Preset(preset::PresetCommand::Export {
+        name,
+        path,
+        force,
+    }))
+}
+
+/// Validate a profile name at PARSE time — the same alphabet the daemon enforces. A name it would
+/// refuse then never reaches a ceremony, and the refusal never echoes the raw bytes it was given.
+fn preset_name(raw: &str) -> Result<String, CliError> {
+    let name = require_nonempty(raw, "preset <name>")?;
+    // One spelling of the rule: the refusal is the validator's own, so a name refused here reads
+    // the same as one refused at ingest or by the daemon.
+    match preset::validate_name(&name) {
+        Ok(()) => Ok(name),
+        Err(reason) => Err(CliError::Usage(format!("preset: {reason}"))),
     }
 }
 

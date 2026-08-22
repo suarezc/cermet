@@ -89,6 +89,10 @@ struct RelayHopTicket {
     method: String,
     target: String,
     effect: bool,
+    /// What this hop carried outside its matched shape's declared vocabulary: key names, query then
+    /// body, bounded and never values. An OBSERVATION on an authorized hop — it is written onto the
+    /// hop's own record and reads on nothing else.
+    undeclared: Vec<String>,
 }
 
 /// An authorized hop, credential attached, NOT yet performed.
@@ -256,14 +260,19 @@ impl RelayHopStream {
 impl RelayHopResponse {
     fn refusal(refusal: RelayRefusal) -> Self {
         // Identical in SHAPE for every class, and it is the provider-error shape the native client
-        // already knows how to print (`error.code` / `error.message` is Vercel's own). Nothing here
-        // tells a caller which handle exists or which shape was close — but it does state
+        // already knows how to print (`error.code` / `error.message` is Vercel's own). It states
         // the truth about what refused and why, because the alternative was the CLI inventing an
         // authentication failure out of a status.
+        //
+        // `detail` rides BESIDE the stable reason word, never inside it, so anything matching on
+        // `reason` keeps matching. It is folded into `message` as well, because `message` is the
+        // field the native CLI actually prints — a disclosure only a JSON reader could find would
+        // never reach the agent driving that CLI.
         let body = json!({
             "error": {
                 "code": "cermet_relay_refused",
                 "reason": refusal.reason(),
+                "detail": refusal.detail(),
                 "message": refusal.message(),
             }
         });
@@ -323,13 +332,26 @@ impl super::Broker {
         }
         // Freeze the bound fields' approved values onto the session. Only str fields are bindable, so
         // this is the whole comparable surface.
-        let mut frozen: BTreeMap<String, String> = BTreeMap::new();
+        //
+        // A BOUND field may be declared optional, and a request that omitted one froze it as
+        // ABSENCE: it enters the map as `None`, and its binds then constrain nothing per hop. The
+        // absence is read, never guessed — canonicalization refuses a resource missing a REQUIRED
+        // declared field long before this point, so a field absent here is one the template declared
+        // optional. (An ASSERTED field is still required by the template validator, so the same read
+        // can only produce `Some` for those.)
+        let mut frozen: BTreeMap<String, Option<String>> = BTreeMap::new();
+        let freeze = |field: &str| -> Result<Option<String>> {
+            match resource.scalar(field) {
+                None => Ok(None),
+                Some(_) => Ok(Some(resource.req_str(field)?.to_string())),
+            }
+        };
         for rule in &predicate {
             // An outcome assertion compares the same frozen fields the request binds, so
             // both are frozen here — the assertion may name a field no request location binds.
             for assertion in rule.asserts() {
-                let value = resource.req_str(&assertion.field)?;
-                frozen.insert(assertion.field, value.to_string());
+                let value = freeze(&assertion.field)?;
+                frozen.insert(assertion.field, value);
             }
             for bind in rule.binds() {
                 // A path bind reads what the session CAPTURES from its own effect, not
@@ -337,8 +359,8 @@ impl super::Broker {
                 if bind.captured_name().is_some() {
                     continue;
                 }
-                let value = resource.req_str(&bind.field)?;
-                frozen.insert(bind.field.clone(), value.to_string());
+                let value = freeze(&bind.field)?;
+                frozen.insert(bind.field.clone(), value);
             }
         }
         // The invocation below NAMES the frozen project. Left unnamed, the CLI guesses it
@@ -347,14 +369,16 @@ impl super::Broker {
         // deploy is ever attempted. The value is read out of `frozen`, which IS the map the per-hop
         // bind compares against, so the flag and the enforcement can never disagree; a verb whose
         // predicate binds no project has nothing enforceable to name, and fails closed here.
-        let project_arg = shell_arg(frozen.get("project").ok_or_else(|| {
-            Error::Provider(
-                "a relay verb must bind `project`: the invocation names the frozen project so the \
-                 native CLI never guesses one from the directory name"
-                    .into(),
-            )
-        })?);
-        let prod_flag = match frozen.get("target").map(String::as_str) {
+        let project_arg = shell_arg(frozen.get("project").and_then(Option::as_ref).ok_or_else(
+            || {
+                Error::Provider(
+                    "a relay verb must bind `project`: the invocation names the frozen project so \
+                     the native CLI never guesses one from the directory name"
+                        .into(),
+                )
+            },
+        )?);
+        let prod_flag = match frozen.get("target").and_then(Option::as_deref) {
             Some("production") => " --prod",
             _ => "",
         };
@@ -488,8 +512,8 @@ impl super::Broker {
             return Ok(Err(RelayHopResponse::refusal(RelayRefusal::UnknownHandle)));
         };
         let now = self.now_epoch();
-        let effect = match session.authorize(method, target, &body, now) {
-            RelayVerdict::Forward { effect } => effect,
+        let (effect, undeclared) = match session.authorize(method, target, &body, now) {
+            RelayVerdict::Forward { effect, undeclared } => (effect, undeclared),
             RelayVerdict::Refuse(refusal) => {
                 session.note_refusal(refusal.clone(), method, target);
                 self.audit_relay_refusal(Some(&session), method, target, &refusal)?;
@@ -581,6 +605,7 @@ impl super::Broker {
                     method: method.to_string(),
                     target: capped_target(target).0,
                     effect,
+                    undeclared,
                 },
             }),
             Err(error) => {
@@ -684,6 +709,14 @@ impl super::Broker {
             "effect": ticket.effect,
             "response_bytes": stream.response_bytes,
         });
+        // What the hop carried beyond the shape's declared vocabulary. Names only — a body VALUE
+        // is the agent's payload and has no business in a durable row — and ABSENT when the hop
+        // carried nothing undeclared, so its presence means something and its absence means the
+        // other thing. It decides nothing: the receipt's effect state is derived from `effect`,
+        // `upstream_status` and the refusal/burn signals, and never from this.
+        if !ticket.undeclared.is_empty() {
+            data["undeclared_keys"] = json!(ticket.undeclared);
+        }
         if let Some(reason) = stream.stopped {
             data["response_truncated"] = json!(true);
             data["truncated_by"] = json!(reason);
@@ -744,6 +777,14 @@ impl super::Broker {
                 "field": mismatch.field,
                 "frozen": mismatch.expected,
                 "observed": mismatch.observed,
+                // The same three marks a burning REFUSAL row carries. A hop that ended a session is
+                // ONE kind of thing to the operator surfaces — one filter (`cermet log --hops
+                // --burned`) and one renderer serve every such row — and this is the only one that
+                // arrives on a hop the relay authorized and forwarded. The class is read off the
+                // refusal vocabulary rather than spelled again, so it cannot drift from it.
+                "reason": RelayRefusal::OutcomeMismatch.reason(),
+                "burned": RelayRefusal::OutcomeMismatch.burns(),
+                "detail": mismatch.detail(),
                 // Said on the row itself, because the row is the artifact an operator reads months
                 // later: the effect had already landed when this was decided.
                 "detection": "the effect already landed; the session is burned, nothing is undone",
@@ -852,10 +893,17 @@ impl super::Broker {
             "status": refusal.status(),
             "burned": refusal.burns(),
         });
-        // The refused key NAMES, on the row an operator reads to decide whether to ratify
-        // them. Names only — the values stay in the agent's request, out of the log.
-        if let RelayRefusal::UndeclaredBodyKey { keys } = refusal {
-            data["undeclared_keys"] = json!(keys);
+        // WHAT the refusal knew, on the row an operator reads to decide whether to widen: the
+        // offending field or key, the constraint as enforced, and the offered value. The prose form
+        // is one line; the structured keys beside it are what a row is grepped by.
+        if let Some(detail) = refusal.detail() {
+            data["detail"] = json!(detail);
+        }
+        // The structured keys a bind refusal is grepped by, beside the prose `detail` above.
+        if let RelayRefusal::BindMismatch(mismatch) = refusal {
+            data["field"] = json!(mismatch.field);
+            data["bind_key"] = json!(mismatch.key);
+            data["bind_position"] = json!(mismatch.position.wire());
         }
         if truncated {
             data["target_truncated"] = json!(true);

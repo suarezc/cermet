@@ -7,7 +7,7 @@ mod common;
 use common::{BrokerFixture, TEST_POLICY};
 
 fn cermet() -> Command {
-    Command::new(common::cermet_binary())
+    common::cermet_command()
 }
 
 fn assert_json_failure(output: Output) {
@@ -16,9 +16,14 @@ fn assert_json_failure(output: Output) {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1, "{stdout:?}");
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "unknown", "{value}");
-    assert_eq!(value["live_state"], "unknown", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon could not be asked",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — the daemon could not be asked",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "unknown", "{value}");
 }
 
@@ -59,9 +64,14 @@ fn status_json_parse_and_endpoint_preflight_failures_emit_one_json_envelope() {
     let stdout = String::from_utf8(unreachable.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1, "{stdout:?}");
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "missing", "{value}");
-    assert_eq!(value["live_state"], "unknown", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon could not be asked",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
 }
 
 #[test]
@@ -76,6 +86,10 @@ fn status_json_deleted_cwd_failure_emits_one_json_envelope() {
         )
         .env("BROKEN_CWD", &cwd)
         .env("CERMET_BIN", common::cermet_binary())
+        // The CLI journals what it prints under the operator's own state directory; keep this
+        // spawn — which reaches the binary through `sh`, not through `cermet_command` — out of the
+        // developer's.
+        .env("XDG_STATE_HOME", parent.path().join("state"))
         .env("CERMET_CTL_SOCK", parent.path().join("missing.sock"))
         .env(
             "CERMET_DAEMON_UID",
@@ -208,6 +222,7 @@ async fn apply_runs_the_real_typed_stage_commit_and_marker_flow_over_ctl() {
         cermet_cli::reconciliation::run_apply(
             &client,
             &repo_path,
+            None,
             false,
             false,
             &cermet_cli::tty::ScriptedTerminal::new(true, "", vec![true]),

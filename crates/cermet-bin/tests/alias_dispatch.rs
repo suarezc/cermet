@@ -59,9 +59,14 @@ fn target() -> PathBuf {
     published().join("cermet")
 }
 
+/// Run a staged invocation with the operator's own state directory pointed somewhere unreachable.
+/// The CLI role journals what it prints under `$XDG_STATE_HOME` (default `$HOME/.local/state`), and
+/// a test must never append to the developer's own journal; an unwritable path simply journals
+/// nothing, which is what "best effort" means.
 fn output(command: &mut Command) -> (bool, String, String) {
     let out: Output = command
         .env("HOME", "/nonexistent-home-for-the-alias-dispatch-test")
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("the cermet binary runs");
     (
@@ -108,14 +113,8 @@ fn the_cermetd_alias_prints_the_build_version() {
 /// The build id the binary itself prints, read back from the CLI role so the test does not link the
 /// wire crate just to restate a constant.
 fn cermet_ipc_build_id() -> String {
-    let out = Command::new(TARGET)
-        .arg("--version")
-        .output()
-        .expect("cermet --version runs");
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .trim_start_matches("cermet ")
-        .to_string()
+    let (_, stdout, _) = output(Command::new(TARGET).arg("--version"));
+    stdout.trim().trim_start_matches("cermet ").to_string()
 }
 
 #[test]
@@ -165,6 +164,7 @@ fn an_unpublished_invocation_name_refuses_and_names_what_is_accepted() {
     let out = Command::new(dir.join("cermet-agent"))
         .arg("--version")
         .env("HOME", "/nonexistent-home-for-the-alias-dispatch-test")
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("run the unpublished name");
     assert_eq!(out.status.code(), Some(2), "an unknown name must refuse");
@@ -225,6 +225,7 @@ fn a_non_utf8_argument_is_refused_rather_than_panicking_or_being_mangled() {
         .arg(bad)
         .arg("log")
         .env("HOME", "/nonexistent-home-for-the-alias-dispatch-test")
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("the binary runs rather than aborting");
     assert_eq!(
