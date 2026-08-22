@@ -7700,140 +7700,50 @@ fn a_production_target_is_adjudicated_by_the_sentence_not_the_template() {
 }
 
 #[test]
-fn an_undeclared_create_body_key_never_reaches_the_credentialed_hop() {
-    // The upstream serves nothing: if any of these bodies were ever forwarded the assertion below
-    // would see the request, and the vault would have been opened to attach the credential.
-    let (base, rx, _server) = relay_upstream(vec![]);
-    for body in [
-        // Vercel's documented overrides of the fields the sentence pinned.
-        r#"{"name":"website","project":"prj_someone_else"}"#,
-        r#"{"name":"website","deploymentId":"dpl_not_ours"}"#,
-        r#"{"name":"website","customEnvironmentSlugOrId":"prod-clone"}"#,
-        // ...and a parameter Vercel might add after this predicate was ratified.
-        r#"{"name":"website","someFutureParameter":true}"#,
-    ] {
-        let broker = relay_broker(&base);
-        let (handle, _) = open_relay(&broker, "website");
-        let refused = broker
-            .relay_hop(
-                &handle,
-                "POST",
-                "/v13/deployments",
-                &[("content-type".into(), "application/json".into())],
-                body.as_bytes().to_vec(),
-            )
-            .unwrap();
-        assert_eq!(refused.status, 422, "{body}");
-        assert!(!String::from_utf8_lossy(&refused.body).contains(RELAY_TOKEN));
-        assert_eq!(
-            broker.live_relay_sessions(),
-            0,
-            "{body}: an undeclared body key burns the session"
-        );
-        let refusals = audit_events_of_type(&broker, "relay_request_refused");
-        assert_eq!(refusals[0]["reason"], "undeclared_body_key", "{body}");
-        assert_eq!(refusals[0]["burned"], true);
-        assert!(broker.verify_integrity().unwrap().verified);
-    }
-    assert!(
-        rx.try_recv().is_err(),
-        "no undeclared-key body was ever credentialed and forwarded"
-    );
-}
-
-/// A refusal that will not say WHICH key it refused makes flight-widening guesswork — the
-/// descriptor's own comment promises "one audited undeclared_body_key line naming it" and the
-/// behavior must deliver it. Names only, never values:
-/// the key name is the thing an operator needs to decide whether to ratify it; the value is the
-/// agent's payload and stays out of the log.
-#[test]
-fn undeclared_body_key_refusal_names_the_keys_in_message_and_audit() {
-    for (body, expected) in [
-        (
-            r#"{"name":"website","deploymentId":"dpl_evil"}"#,
-            vec!["deploymentId"],
-        ),
-        (
-            r#"{"name":"website","deploymentId":"dpl_evil","project":"other","redirects":[]}"#,
-            vec!["deploymentId", "project", "redirects"],
-        ),
-    ] {
-        let (base, _rx, _server) = relay_upstream(vec![]);
-        let broker = relay_broker(&base);
-        let (handle, _) = open_relay(&broker, "website");
-        let refused = broker
-            .relay_hop(
-                &handle,
-                "POST",
-                "/v13/deployments",
-                &[("content-type".into(), "application/json".into())],
-                body.as_bytes().to_vec(),
-            )
-            .unwrap();
-        assert_eq!(refused.status, 422, "{body}");
-        let rendered = String::from_utf8_lossy(&refused.body).to_string();
-        let refusals = audit_events_of_type(&broker, "relay_request_refused");
-        assert_eq!(refusals[0]["reason"], "undeclared_body_key", "{body}");
-        for key in &expected {
-            assert!(
-                rendered.contains(key),
-                "the CLI-visible refusal must name {key}: {rendered}"
-            );
-            assert!(
-                refusals[0]["undeclared_keys"]
-                    .as_array()
-                    .expect("the audit row carries the named keys")
-                    .iter()
-                    .any(|k| k.as_str() == Some(key)),
-                "the audit row must name {key}: {}",
-                refusals[0]
-            );
-        }
-        // Names only: no VALUE from the refused body may appear anywhere.
-        for value in ["dpl_evil", "other"] {
-            assert!(
-                !rendered.contains(value),
-                "value leaked to the client: {rendered}"
-            );
-            assert!(
-                !refusals[0].to_string().contains(value),
-                "value leaked to the audit row: {}",
-                refusals[0]
-            );
-        }
-        assert!(broker.verify_integrity().unwrap().verified);
-    }
-}
-
-/// `headers` joins the create-body allowlist: response-header config shapes how the
-/// DEPLOYED SITE answers, never which project/target deploys. The rest of the vercel.json family is
-/// unevidenced and still refuses — and refuses BY NAME.
-#[test]
-fn headers_is_admitted_and_the_unevidenced_family_still_refuses_by_name() {
-    let (base, rx, server) = relay_upstream(vec![(
+fn an_undeclared_create_body_key_is_forwarded_with_its_binds_still_enforced() {
+    // Two create bodies over the same shape. The first carries keys the descriptor never
+    // enumerated and correct bound values — it deploys, and the row names what rode along. The
+    // second carries the same undeclared key AND a wrong bound value — the bind refuses it, and the
+    // undeclared key neither masks that nor becomes the refusal's story.
+    let (base, rx, _server) = relay_upstream(vec![(
         200,
-        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#,
+        r#"{"id":"dpl_cfg","url":"cfg.vercel.app","name":"website","readyState":"QUEUED"}"#,
     )]);
     let broker = relay_broker(&base);
     let (handle, _) = open_relay(&broker, "website");
-    let admitted = broker
+    let body = br#"{"name":"website","files":[],"project":"prj_someone_else","redirects":[]}"#;
+    let forwarded = broker
         .relay_hop(
             &handle,
             "POST",
             "/v13/deployments",
             &[("content-type".into(), "application/json".into())],
-            br#"{"name":"website","files":[],"headers":[{"source":"/(.*)","headers":[]}]}"#
-                .to_vec(),
+            body.to_vec(),
         )
         .unwrap();
-    assert_eq!(
-        admitted.status, 200,
-        "a create body carrying `headers` deploys"
+    assert_eq!(forwarded.status, 200);
+    let hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(
+        hop.contains("prj_someone_else"),
+        "the body reaches the provider verbatim: {hop}"
     );
-    assert!(rx.try_recv().is_ok(), "the hop reached upstream");
-    drop(server);
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    let named: Vec<&str> = rows[0]["undeclared_keys"]
+        .as_array()
+        .expect("the forwarded row names what rode along")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(named, vec!["project", "redirects"]);
+    // NAMES ONLY: a body VALUE is the agent's payload and stays out of the durable row.
+    assert!(
+        !rows[0].to_string().contains("prj_someone_else"),
+        "value leaked to the audit row: {}",
+        rows[0]
+    );
 
-    let (base, rx, _server) = relay_upstream(vec![]);
+    // The bind is untouched by any of it.
+    let (base, _rx, _server) = relay_upstream(vec![]);
     let broker = relay_broker(&base);
     let (handle, _) = open_relay(&broker, "website");
     let refused = broker
@@ -7842,20 +7752,58 @@ fn headers_is_admitted_and_the_unevidenced_family_still_refuses_by_name() {
             "POST",
             "/v13/deployments",
             &[("content-type".into(), "application/json".into())],
-            br#"{"name":"website","redirects":[{"source":"/a","destination":"/b"}]}"#.to_vec(),
+            br#"{"name":"someone-elses-site","files":[],"redirects":[]}"#.to_vec(),
         )
         .unwrap();
+    assert_eq!(refused.status, 422);
+    let refusals = audit_events_of_type(&broker, "relay_request_refused");
+    assert_eq!(refusals[0]["reason"], "bind_mismatch");
+    assert_eq!(refusals[0]["burned"], true);
+    assert!(
+        !refusals[0].to_string().contains("redirects"),
+        "the bind is what refused; the undeclared key is not the story: {}",
+        refusals[0]
+    );
+    assert_eq!(broker.live_relay_sessions(), 0);
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The whole `vercel.json` family deploys. `headers` is enumerated by the descriptor, so it is part
+/// of the shape's declared vocabulary and rides silently; the rest is not enumerated, so it rides
+/// and is NAMED on the hop record. Neither is refused: holding a project's own configuration aside
+/// to get past the broker ships a differently-configured artifact, which is worse than anything the
+/// refusal bought.
+#[test]
+fn the_whole_vercel_json_family_deploys_and_only_the_unenumerated_half_is_named() {
+    let (base, rx, _server) = relay_upstream(vec![(
+        200,
+        r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#,
+    )]);
+    let broker = relay_broker(&base);
+    let (handle, _) = open_relay(&broker, "website");
+    let deployed = broker
+        .relay_hop(
+            &handle,
+            "POST",
+            "/v13/deployments",
+            &[("content-type".into(), "application/json".into())],
+            br#"{"name":"website","files":[],"headers":[],"redirects":[],"cleanUrls":true}"#
+                .to_vec(),
+        )
+        .unwrap();
+    assert_eq!(deployed.status, 200);
+    assert!(rx.try_recv().is_ok(), "the hop reached upstream");
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    let named: Vec<&str> = rows[0]["undeclared_keys"]
+        .as_array()
+        .expect("the unenumerated half is named")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert_eq!(
-        refused.status, 422,
-        "an unevidenced family member still refuses"
-    );
-    assert!(
-        String::from_utf8_lossy(&refused.body).contains("redirects"),
-        "and it refuses BY NAME"
-    );
-    assert!(
-        rx.try_recv().is_err(),
-        "nothing was credentialed and forwarded"
+        named,
+        vec!["cleanUrls", "redirects"],
+        "`headers` is declared, so it is not an observation"
     );
 }
 
@@ -8566,6 +8514,35 @@ fn a_window_that_lapsed_having_driven_nothing_reads_expired_unused() {
         Some(crate::types::EffectState::ExpiredUnused)
     );
     assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// The observation is an observation. `effect_state` is DERIVED from the effect flag, the upstream
+/// status, and the refusal/burn signals — and a hop carrying keys the shape does not enumerate must
+/// move none of that. Same flow, same window, same word, whether or not anything rode along.
+#[test]
+fn keys_a_hop_carried_undeclared_do_not_move_the_effect_state() {
+    let state_after = |body: &'static [u8]| {
+        let (base, server) = relay_chunked_upstream(vec![(
+            200,
+            r#"{"id":"dpl_ok","url":"ok.vercel.app","name":"website","readyState":"QUEUED"}"#
+                .to_string(),
+        )]);
+        let broker = relay_broker(&base);
+        let (handle, _) = open_relay(&broker, "website");
+        let created = broker
+            .relay_hop(&handle, "POST", "/v13/deployments", &[], body.to_vec())
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(created.status, 200);
+        one_relay_row(&broker).effect_state
+    };
+    let plain = state_after(br#"{"name":"website"}"#);
+    assert_eq!(plain, Some(crate::types::EffectState::Ok));
+    assert_eq!(
+        state_after(br#"{"name":"website","redirects":[],"cleanUrls":true}"#),
+        plain,
+        "an observation on the hop record is not a signal the derivation reads"
+    );
 }
 
 /// Derived from the CLOCK, not only from the close record: a daemon that restarts drops its live
@@ -10065,29 +10042,39 @@ fn a_shape_miss_and_a_key_closure_disclose_through_the_same_fields() {
     let refusals = audit_events_of_type(&broker, "relay_request_refused");
     assert_eq!(refusals[0]["detail"], detail);
 
-    // Key closure wearing the same reason word: the method and path DID match, and one unratified
-    // query key closed the shape out. The row names the key, exactly as the body-key closure does.
+    assert!(broker.verify_integrity().unwrap().verified);
+}
+
+/// A parameter the shape does not enumerate does not un-identify the effect a hop is: the method and
+/// path matched, so the hop is FORWARDED and the parameter is named on the forwarded hop's own
+/// record. An observation about an authorized hop, not a refusal — the row carries no reason word
+/// and burns nothing.
+#[test]
+fn an_undeclared_query_key_forwards_and_is_named_on_the_forwarded_row() {
+    let (base, rx, _server) = relay_upstream(vec![(200, r#"{"teams":[]}"#)]);
     let broker = relay_broker(&base);
     let (handle, _) = open_relay(&broker, "website");
-    let refused = broker
-        .relay_hop(
-            &handle,
-            "GET",
-            "/v13/deployments/dpl_x?slug=team_other",
-            &[],
-            Vec::new(),
-        )
+    let forwarded = broker
+        .relay_hop(&handle, "GET", "/v1/teams?slug=team_other", &[], Vec::new())
         .unwrap();
-    let body: Value = serde_json::from_slice(&refused.body).unwrap();
-    assert_eq!(
-        body["error"]["reason"], "no_matching_shape",
-        "the reason word does not move: the disclosure is additional to it"
+    assert_eq!(forwarded.status, 200);
+    let hop = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(
+        hop.starts_with("GET /v1/teams?slug=team_other "),
+        "the parameter reaches the provider verbatim: {hop}"
     );
-    let detail = body["error"]["detail"].as_str().expect("a detail");
-    assert!(detail.contains("`slug`"), "{detail}");
-    let refusals = audit_events_of_type(&broker, "relay_request_refused");
-    assert_eq!(refusals[0]["undeclared_keys"][0], "slug");
-    assert_eq!(refusals[0]["detail"], detail);
+    assert!(
+        audit_events_of_type(&broker, "relay_request_refused").is_empty(),
+        "an unenumerated parameter is not a refusal"
+    );
+    let rows = audit_events_of_type(&broker, "relay_request_forwarded");
+    assert_eq!(rows[0]["undeclared_keys"][0], "slug");
+    assert!(rows[0].get("reason").is_none(), "{}", rows[0]);
+    assert_eq!(
+        broker.live_relay_sessions(),
+        1,
+        "a forwarded hop is not a probe, so nothing burns"
+    );
     assert!(broker.verify_integrity().unwrap().verified);
 }
 

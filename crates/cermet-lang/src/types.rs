@@ -882,6 +882,12 @@ pub struct RelayHopView {
     pub effect: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_bytes: Option<u64>,
+    /// On a FORWARDED hop: the key names it carried that its matched shape does not enumerate —
+    /// query then body, names only, bounded with a `+N more` mark past the cap. An OBSERVATION, not
+    /// a verdict: the hop was authorized on its shape and its binds, and this says what else rode
+    /// along, so an operator can see whether any of it is worth pinning. Absent when there was none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undeclared_keys: Option<Vec<String>>,
     /// Whether this refusal BURNED the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub burned: Option<bool>,

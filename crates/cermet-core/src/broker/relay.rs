@@ -89,6 +89,10 @@ struct RelayHopTicket {
     method: String,
     target: String,
     effect: bool,
+    /// What this hop carried outside its matched shape's declared vocabulary: key names, query then
+    /// body, bounded and never values. An OBSERVATION on an authorized hop — it is written onto the
+    /// hop's own record and reads on nothing else.
+    undeclared: Vec<String>,
 }
 
 /// An authorized hop, credential attached, NOT yet performed.
@@ -508,8 +512,8 @@ impl super::Broker {
             return Ok(Err(RelayHopResponse::refusal(RelayRefusal::UnknownHandle)));
         };
         let now = self.now_epoch();
-        let effect = match session.authorize(method, target, &body, now) {
-            RelayVerdict::Forward { effect } => effect,
+        let (effect, undeclared) = match session.authorize(method, target, &body, now) {
+            RelayVerdict::Forward { effect, undeclared } => (effect, undeclared),
             RelayVerdict::Refuse(refusal) => {
                 session.note_refusal(refusal.clone(), method, target);
                 self.audit_relay_refusal(Some(&session), method, target, &refusal)?;
@@ -601,6 +605,7 @@ impl super::Broker {
                     method: method.to_string(),
                     target: capped_target(target).0,
                     effect,
+                    undeclared,
                 },
             }),
             Err(error) => {
@@ -704,6 +709,14 @@ impl super::Broker {
             "effect": ticket.effect,
             "response_bytes": stream.response_bytes,
         });
+        // What the hop carried beyond the shape's declared vocabulary. Names only — a body VALUE
+        // is the agent's payload and has no business in a durable row — and ABSENT when the hop
+        // carried nothing undeclared, so its presence means something and its absence means the
+        // other thing. It decides nothing: the receipt's effect state is derived from `effect`,
+        // `upstream_status` and the refusal/burn signals, and never from this.
+        if !ticket.undeclared.is_empty() {
+            data["undeclared_keys"] = json!(ticket.undeclared);
+        }
         if let Some(reason) = stream.stopped {
             data["response_truncated"] = json!(true);
             data["truncated_by"] = json!(reason);
@@ -886,22 +899,11 @@ impl super::Broker {
         if let Some(detail) = refusal.detail() {
             data["detail"] = json!(detail);
         }
-        match refusal {
-            // The refused key NAMES. Names only — the body VALUES stay in the agent's request,
-            // out of the log: the name is what an operator needs in order to decide whether to
-            // ratify the key.
-            RelayRefusal::UndeclaredBodyKey { keys } => data["undeclared_keys"] = json!(keys),
-            RelayRefusal::NoMatchingShape(miss) => {
-                if !miss.undeclared_query_keys.is_empty() {
-                    data["undeclared_keys"] = json!(miss.undeclared_query_keys);
-                }
-            }
-            RelayRefusal::BindMismatch(mismatch) => {
-                data["field"] = json!(mismatch.field);
-                data["bind_key"] = json!(mismatch.key);
-                data["bind_position"] = json!(mismatch.position.wire());
-            }
-            _ => {}
+        // The structured keys a bind refusal is grepped by, beside the prose `detail` above.
+        if let RelayRefusal::BindMismatch(mismatch) = refusal {
+            data["field"] = json!(mismatch.field);
+            data["bind_key"] = json!(mismatch.key);
+            data["bind_position"] = json!(mismatch.position.wire());
         }
         if truncated {
             data["target_truncated"] = json!(true);

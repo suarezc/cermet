@@ -251,6 +251,7 @@ fn derived_fields() -> BTreeSet<String> {
         detail: Some("the approval froze `team`".into()),
         effect: Some(true),
         response_bytes: Some(1),
+        undeclared_keys: Some(vec!["redirects".into()]),
         burned: Some(true),
         closed: Some("burned".into()),
     };

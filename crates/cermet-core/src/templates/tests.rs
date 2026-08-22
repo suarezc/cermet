@@ -2260,11 +2260,11 @@ fn relay_grammar_accepts_a_query_value_bind_on_any_method() {
     );
 }
 
-/// The ratification obligation, enforced on the SHIPPED verb: admitting a query
-/// key to a relay allowlist means classifying the authority of its VALUE. `teamId` names the scope a
-/// request lands in, so a shape admitting the key either BINDS it to the frozen `team` or is one of
-/// the shapes whose values are ratified AUTHORITY-FREE in the document — the obligation's two
-/// branches, and no third state where a key rides free unclassified.
+/// The ratification obligation, enforced on the SHIPPED verb: a key that carries authority is BOUND,
+/// not merely declared. `teamId` names the scope a request lands in, so a shape declaring the key
+/// either binds it to the frozen `team` or is one of the shapes whose values are ratified
+/// AUTHORITY-FREE in the document — the obligation's two branches, and no third state where a key
+/// this shape knows about goes unclassified.
 ///
 /// The authority-free set is spelled out HERE, exhaustively, so it stays a decision rather than a
 /// drift: adding an unbound `teamId` shape fails this test until someone widens this list on
@@ -2568,15 +2568,15 @@ fn relay_grammar_rejects_a_predicate_that_is_not_a_closed_bounded_surface() {
             "not a supported request location",
         ),
         (
-            // The two dimensions must agree. A value bind on a key the shape's own
-            // allowlist never admits is dead enforcement — the hop refuses at key closure — and
-            // reads as protection that is not there.
-            "a query bind must name a key the shape admits",
+            // A shape's declared vocabulary must contain everything it pins, or the shape claims
+            // not to know about a key it enforces — and the hop record would then report a PINNED
+            // key as one the shape does not enumerate.
+            "a query bind must name a key the shape declares",
             RELAY_DOC.replace(
                 "      body.target: \"target|omit:preview\"",
                 "      body.target: \"target|omit:preview\"\n      query.teamId: project",
             ),
-            "allowlist does not admit",
+            "vocabulary does not declare",
         ),
         (
             "a query bind names a key outside the identifier alphabet",
@@ -2597,12 +2597,12 @@ fn relay_grammar_rejects_a_predicate_that_is_not_a_closed_bounded_surface() {
             "the only supported bind transform",
         ),
         (
-            "a rule that inspects the body must close it",
+            "a rule that pins a body key must declare the shape's body vocabulary",
             RELAY_DOC.replace("    body_keys: [files]\n", ""),
-            "declares no `body_keys` allowlist",
+            "declares no `body_keys` vocabulary",
         ),
         (
-            "a bodyless method has no body to allowlist",
+            "a bodyless method has no body vocabulary to declare",
             RELAY_DOC.replace(
                 "  - { method: GET, path: /v13/deployments/* }",
                 "  - { method: GET, path: /v13/deployments/*, body_keys: [files] }",

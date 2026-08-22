@@ -258,6 +258,13 @@ pub fn render_hop_log(rows: &[RelayHopView]) -> String {
             if row.effect == Some(true) {
                 line.push_str(" [the grant's single effect]");
             }
+            // What a forwarded hop carried beyond its shape's declared vocabulary. It reads as the
+            // OBSERVATION it is — no refusal grammar — and the list is names only, already bounded
+            // by the broker that wrote it.
+            if let Some(keys) = row.undeclared_keys.as_ref().filter(|keys| !keys.is_empty()) {
+                let names: Vec<String> = keys.iter().map(|key| one_line(key)).collect();
+                line.push_str(&format!(" — also carried {}", names.join(", ")));
+            }
             // Last, and after the burn/effect marks: the reason WORD stays where a reader's eye
             // and a `grep` both already find it, and the detail — which is a sentence, not a
             // token — follows the short columns rather than pushing them off the line.
@@ -1120,9 +1127,34 @@ mod hop_tests {
             detail: None,
             effect: None,
             response_bytes: None,
+            undeclared_keys: None,
             burned: None,
             closed: None,
         }
+    }
+
+    /// A forwarded hop that carried keys its shape does not enumerate says so on its own line, in
+    /// the register of an observation. It is not a refusal and must not read as one: the hop was
+    /// authorized, went upstream, and answered.
+    #[test]
+    fn a_forwarded_hop_names_what_it_carried_beyond_the_declared_vocabulary() {
+        let mut forwarded = hop("relay_request_forwarded", "2026-08-01T10:00:01Z");
+        forwarded.method = Some("POST".into());
+        forwarded.target = Some("/v13/deployments".into());
+        forwarded.upstream_status = Some(200);
+        forwarded.effect = Some(true);
+        forwarded.undeclared_keys = Some(vec!["redirects".into(), "+3 more".into()]);
+
+        let json = serde_json::to_string(&vec![forwarded]).unwrap();
+        let out = run_log_hops(&json, &LogFilter::default()).unwrap().text;
+        assert!(
+            out.contains("[the grant's single effect] — also carried redirects, +3 more"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("refused") && !out.contains("burned"),
+            "an observation must not read as a refusal: {out}"
+        );
     }
 
     /// Without this view the operator cannot see WHY a relay session burned without copying
