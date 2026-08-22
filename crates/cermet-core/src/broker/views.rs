@@ -758,6 +758,9 @@ fn relay_hop_view(event: crate::audit::RelayAuditEvent) -> crate::types::RelayHo
                 .filter(|error| !error.is_empty())
                 .map(str::to_string)
         }),
+        // What the refusal disclosed beside its reason word, when the class had something further
+        // to say. Absent otherwise, exactly like every other field read by name here.
+        detail: text("detail"),
         effect: data.get("effect").and_then(Value::as_bool),
         response_bytes: data.get("response_bytes").and_then(Value::as_u64),
         burned: data.get("burned").and_then(Value::as_bool),

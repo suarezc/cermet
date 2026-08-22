@@ -268,6 +268,22 @@ sentence-authority change — the revocation root and the live authority both ou
 opened. It closes with a receipt DERIVED from the responses the relay itself forwarded — never from
 anything the agent claimed.
 
+**A refusal says what it refused.** At the moment it refuses, the relay already holds the frozen
+field map, the offending key and the shape inventory, so the refusal carries them: the field, the
+constraint *as enforced* (an `omit:` transform reads as "must be absent", not as the frozen
+literal), the value the hop offered, and a remedy where one is computable. Nothing it names is new:
+every value is descriptor text from the template document the installer publishes world-readable in
+the shared catalog directory, a field this caller's own approval froze, a value off the hop this
+caller just wrote, or a value this caller's own session already received as a capture off its own
+effect's response — and a captured bind says so rather than claiming an approval froze it, because a
+capture is the effect's consequence and no sentence can pin it in advance. Borrowed text is bounded
+and stripped of terminal-affecting characters at one choke point, since the detail reaches the
+operator's terminal through the native client's own error printing. The stable reason word is
+unchanged — it is the machine-readable code, and the disclosure is a separate field beside it. It is
+uniform across every class that knows something, because a layer that stays silent while its
+neighbour names its field teaches requesters that silence means "that part was fine". The grammar
+and the per-class contents are `docs/FIELDS.md` §8.6.
+
 **The two dimensions of a closed wire position.** An allowlist admits KEYS; authority
 lives in their VALUES, so both are enforced and neither substitutes for the other. Key closure
 refuses a parameter nobody ratified (`no_matching_shape`); a value bind pins an admitted key that

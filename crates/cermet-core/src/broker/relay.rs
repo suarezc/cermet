@@ -256,14 +256,19 @@ impl RelayHopStream {
 impl RelayHopResponse {
     fn refusal(refusal: RelayRefusal) -> Self {
         // Identical in SHAPE for every class, and it is the provider-error shape the native client
-        // already knows how to print (`error.code` / `error.message` is Vercel's own). Nothing here
-        // tells a caller which handle exists or which shape was close — but it does state
+        // already knows how to print (`error.code` / `error.message` is Vercel's own). It states
         // the truth about what refused and why, because the alternative was the CLI inventing an
         // authentication failure out of a status.
+        //
+        // `detail` rides BESIDE the stable reason word, never inside it, so anything matching on
+        // `reason` keeps matching. It is folded into `message` as well, because `message` is the
+        // field the native CLI actually prints — a disclosure only a JSON reader could find would
+        // never reach the agent driving that CLI.
         let body = json!({
             "error": {
                 "code": "cermet_relay_refused",
                 "reason": refusal.reason(),
+                "detail": refusal.detail(),
                 "message": refusal.message(),
             }
         });
@@ -867,10 +872,28 @@ impl super::Broker {
             "status": refusal.status(),
             "burned": refusal.burns(),
         });
-        // The refused key NAMES, on the row an operator reads to decide whether to ratify
-        // them. Names only — the values stay in the agent's request, out of the log.
-        if let RelayRefusal::UndeclaredBodyKey { keys } = refusal {
-            data["undeclared_keys"] = json!(keys);
+        // WHAT the refusal knew, on the row an operator reads to decide whether to widen: the
+        // offending field or key, the constraint as enforced, and the offered value. The prose form
+        // is one line; the structured keys beside it are what a row is grepped by.
+        if let Some(detail) = refusal.detail() {
+            data["detail"] = json!(detail);
+        }
+        match refusal {
+            // The refused key NAMES. Names only — the body VALUES stay in the agent's request,
+            // out of the log: the name is what an operator needs in order to decide whether to
+            // ratify the key.
+            RelayRefusal::UndeclaredBodyKey { keys } => data["undeclared_keys"] = json!(keys),
+            RelayRefusal::NoMatchingShape(miss) => {
+                if !miss.undeclared_query_keys.is_empty() {
+                    data["undeclared_keys"] = json!(miss.undeclared_query_keys);
+                }
+            }
+            RelayRefusal::BindMismatch(mismatch) => {
+                data["field"] = json!(mismatch.field);
+                data["bind_key"] = json!(mismatch.key);
+                data["bind_position"] = json!(mismatch.position.wire());
+            }
+            _ => {}
         }
         if truncated {
             data["target_truncated"] = json!(true);

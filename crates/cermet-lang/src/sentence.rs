@@ -310,12 +310,17 @@ pub struct ProjectedRule {
     pub original_indices: Vec<usize>,
 }
 
-/// An inert, shell-safe suggestion for a human: the one command that would admit this request,
-/// either by widening an existing allow rule or by writing the first rule for a verb no rule
-/// mentions.
+/// An inert, shell-safe suggestion for a human: what would admit this request — by widening an
+/// existing allow rule, by writing the first rule for a verb no rule mentions, or by naming a field
+/// the request left out and the standing rule pins.
+///
+/// It is TEXT, and not always a command. A denial whose whole story is "the rule pins `team` and
+/// your request omitted it" has no rule change worth proposing: the pin is the operator's, and the
+/// fix belongs in the request. Printing a `cermet rules allow` line there would point at a surface
+/// that cannot answer — and, worse, the line that would "work" is the one with the pin deleted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WidenHint {
-    pub command: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -885,7 +890,8 @@ impl<'a> SentenceEvaluator<'a> {
                 let effective = self.project_rule(rule, provider, action)?;
                 let widened_effective =
                     widen_rule_for_request(&effective.rule, resource, contract)?;
-                let mut projected = widened_effective.conjuncts.into_iter().peekable();
+                let omitted_pins = widened_effective.omitted_pins;
+                let mut projected = widened_effective.rule.conjuncts.into_iter().peekable();
                 let mut conjuncts = Vec::with_capacity(rule.conjuncts.len());
                 for (original_idx, original) in rule.conjuncts.iter().enumerate() {
                     if effective
@@ -912,12 +918,58 @@ impl<'a> SentenceEvaluator<'a> {
                 {
                     return None;
                 }
-                Some((idx, reconstructed))
+                let unchanged = reconstructed == *rule;
+                Some((idx, reconstructed, omitted_pins, unchanged))
             })
             .next()?;
-        let printed = print_rule(&widened.1);
+        let (_, reconstructed, omitted_pins, unchanged) = widened;
+        let omitted = named_fields(&omitted_pins);
+        // The rule already says everything it is going to say: the request omitted a field this
+        // rule pins, and every other conjunct matched. There is no widening to propose — the only
+        // rule text that would admit the request as written is this one with the pin DELETED, which
+        // is a scope change no denial gets to suggest on a requester's behalf. So the hint addresses
+        // the request instead.
+        if unchanged {
+            return Some(WidenHint {
+                text: format!(
+                    "the standing rule `{}` pins {omitted}, and this request named {}; name {} in \
+                     the request — no rule change admits it while that pin stands",
+                    print_rule(&reconstructed),
+                    if omitted_pins.len() == 1 {
+                        "no such field"
+                    } else {
+                        "no such fields"
+                    },
+                    if omitted_pins.len() == 1 {
+                        "it"
+                    } else {
+                        "them"
+                    },
+                ),
+            });
+        }
+        let command = allow_command(&print_rule(&reconstructed));
+        if omitted_pins.is_empty() {
+            return Some(WidenHint { text: command });
+        }
+        // A widening that still carries a pin the request never spoke to is not a rule the request
+        // would then pass, and saying so is the difference between a remedy and a dead end.
+        //
+        // The clause goes BEFORE the command, never after it. Everything downstream of `to allow: `
+        // is read as the command itself — the MCP bridge strips that marker and labels the rest an
+        // "Advisory widen command", and an operator pastes what follows it — so a sentence trailing
+        // the closing quote turns a runnable line into a broken one. Leading prose costs nothing:
+        // the bridge simply renders the whole thing as a hint, which is what it is.
         Some(WidenHint {
-            command: allow_command(&printed),
+            text: format!(
+                "this request also omitted {omitted}, which the rule pins and this suggestion \
+                 keeps, so name {} in the request too — {command}",
+                if omitted_pins.len() == 1 {
+                    "it"
+                } else {
+                    "them"
+                },
+            ),
         })
     }
 
@@ -982,9 +1034,18 @@ impl<'a> SentenceEvaluator<'a> {
             return None;
         }
         Some(WidenHint {
-            command: allow_command(&print_rule(&rule)),
+            text: allow_command(&print_rule(&rule)),
         })
     }
+}
+
+/// Field names as a denial spells a list of them: backticked, comma-joined, in rule order.
+fn named_fields(fields: &[String]) -> String {
+    fields
+        .iter()
+        .map(|field| format!("`{field}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The one shell-safe rendering of a suggested allow rule, shared by both suggestion paths.
@@ -1374,12 +1435,30 @@ pub fn conjuncts_match_resource(
     evaluate_conjuncts(0, conjuncts, &resource).is_ok()
 }
 
+/// One computed widening: the rule, and which of its pins the request never spoke to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Widening {
+    /// The widened rule. Every conjunct over a field this request OMITTED is carried into it
+    /// VERBATIM — value and all.
+    pub rule: Rule,
+    /// Those fields, in rule order. Non-empty means the rule alone does not admit the request: it
+    /// still pins something the request never named, and the request is what has to change.
+    pub omitted_pins: Vec<String>,
+}
+
 /// Widen one allow rule while proving both old-authority containment and admission of this request.
+///
+/// A conjunct over a field the request OMITTED is not a conjunct that failed — it is one the request
+/// never spoke to, and dropping it is not widening but DELETION of a pin the operator wrote. The
+/// dropped-pin form of this suggestion was a scope escape with a paste in the middle: a request that
+/// simply left `team` out earned a suggestion whose text was the same rule with the team pin gone,
+/// and any requester could manufacture that by omitting the field. So the pin is carried through and
+/// [`Widening::omitted_pins`] names it; the caller says so in words.
 pub fn widen_rule_for_request(
     old: &Rule,
     resource: &CanonicalResource,
     contract: &ActionContract,
-) -> Option<Rule> {
+) -> Option<Widening> {
     if validate_rule_structure(old).is_err() {
         return None;
     }
@@ -1401,11 +1480,15 @@ pub fn widen_rule_for_request(
         return None;
     }
     let mut conjuncts = Vec::with_capacity(old.conjuncts.len());
+    let mut omitted_pins = Vec::new();
     let mut changed = false;
     for mut pred in old.conjuncts.clone() {
         let field = pred_field(&pred).to_string();
         let Some(value) = resource.scalar(&field) else {
-            changed = true;
+            // The request never named this field. Carry the conjunct — whatever its shape:
+            // equality, in-set, or a comparison — exactly as the operator wrote it.
+            omitted_pins.push(field);
+            conjuncts.push(pred);
             continue;
         };
         match &mut pred {
@@ -1457,12 +1540,27 @@ pub fn widen_rule_for_request(
         conjuncts,
         aggregate: old.aggregate.clone(),
     };
-    if !implies(old, &widened, contract) || !changed {
+    // Nothing to say: neither a conjunct relaxed nor a pin the request left unspoken.
+    if !implies(old, &widened, contract) || (!changed && omitted_pins.is_empty()) {
         return None;
     }
-    (widened.effect == RuleEffect::Allow
-        && conjuncts_match_resource(&widened.conjuncts, resource, contract))
-    .then_some(widened)
+    if widened.effect != RuleEffect::Allow {
+        return None;
+    }
+    // The admission proof runs over the conjuncts the request can actually be judged against. A
+    // carried pin is excluded by construction — the request omitted its field, so it can neither
+    // pass nor fail it — and that residue is exactly what `omitted_pins` reports instead of hiding
+    // by deleting the conjunct.
+    let judged: Vec<Pred> = widened
+        .conjuncts
+        .iter()
+        .filter(|pred| !omitted_pins.iter().any(|field| field == pred_field(pred)))
+        .cloned()
+        .collect();
+    conjuncts_match_resource(&judged, resource, contract).then_some(Widening {
+        rule: widened,
+        omitted_pins,
+    })
 }
 
 /// The sentence literal denoting one exact frozen request value. There is one representation per
@@ -3543,7 +3641,7 @@ mod temporal_gate_tests {
         let stateless = parse_rules("allow stripe.refund where amount <= 5000\n").unwrap();
         let widened = widen_rule_for_request(&stateless.rules[0], &over_bound, &AMOUNT_CONTRACT)
             .expect("a stateless bound is still widenable");
-        let printed = print_rule(&widened);
+        let printed = print_rule(&widened.rule);
         assert!(!printed.contains("budget"), "{printed}");
         assert!(!printed.contains("rate"), "{printed}");
         assert!(!printed.contains(" per "), "{printed}");

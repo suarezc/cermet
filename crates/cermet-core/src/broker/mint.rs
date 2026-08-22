@@ -2457,7 +2457,7 @@ impl Broker {
                                 &req.action,
                                 &resource,
                             )
-                            .map(|hint| hint.command),
+                            .map(|hint| hint.text),
                         CapabilityDecisionSource::SentenceRefusal { .. } => None,
                     }
                 };
