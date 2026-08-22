@@ -355,12 +355,28 @@ dimensions: reading a 4xx body, a nested response path, an array-valued capture,
 request HEADER, and set membership. The reasoning and what reopens it live in the ratified
 `vercel.deploy` document beside the shape.
 
-**Why the body key set is closed.** Checking only the keys a rule binds is not a closed
-surface. Vercel's create-deployment body documents `project` ("when defined, this parameter overrides
-name"), `customEnvironmentSlugOrId` (overrides the target environment), and `deploymentId` (redeploy an
-arbitrary existing deployment) — each one overrides a field the sentence pinned, while the bound
-`body.name` still matches. The allowlist also makes a parameter the provider adds LATER fail closed,
-which is the same posture as CLI drift: it breaks the deploy, it never widens the grant.
+**What the body key set is for.** `body_keys` is the VOCABULARY a shape declares it knows about:
+the top-level keys a sentence or a request may pin, and the baseline against which a hop's record
+reports what else it carried. It constrains nothing by itself. The enforcement is the BIND — `bind:
+body.name: project` is checked on every hop that carries the key, whatever else the body holds
+beside it.
+
+A top-level key outside the declaration is forwarded and NAMED on the forwarded hop's record
+(`undeclared_keys`, `docs/FIELDS.md` §1.7): an observation, not a verdict. That is the whole answer
+to a body key nobody enumerated — including the ones Vercel documents as steering a create.
+`project` ("when defined, this parameter overrides name"), `customEnvironmentSlugOrId` (moves the
+deploy to another environment), `deploymentId` (redeploy an existing deployment) and `alias` (assign
+a domain) all ride through, and what stands against them is what the approval froze: the binds on
+every hop, and the outcome assertion on the create's own response, which is DETECTION — the
+deployment exists by the time the response is read. The `vercel.deploy` document names each of those
+positions, its exposure, and what would reopen it, at the shape's own stanza.
+
+The reason the broker does not refuse them is that a create body is the native tool's payload.
+Refusing on key membership made the broker a content firewall over data that decides nothing about
+which effect happens, and the workaround it forced — driving a deploy with the project's own
+`vercel.json` configuration held aside — ships a differently-configured artifact. A parameter the
+provider adds LATER is the same story: it forwards, and it shows up by name on the record, which is
+where the evidence to widen a declaration (or to add a bind) arrives.
 
 The predicate grammar this mode enforces — admitted shapes, `bind`, `body_keys`, `capture`, `assert`,
 `caps`, `consumes` — is `docs/LANGUAGE.md` §15b.

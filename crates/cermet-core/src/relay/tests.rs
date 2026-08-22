@@ -648,8 +648,9 @@ fn the_observed_key_list_is_bounded_and_says_when_it_was_cut() {
     assert_eq!(observed[MAX_NAMED_UNDECLARED_KEYS], "+4 more");
 }
 
-/// The other half of the closed body allowlist: the declared payload the CLI actually sends still
-/// passes, and the upload path — a non-JSON body with no binds and no `body_keys` — is untouched.
+/// The declared vocabulary's own half: the payload the CLI actually sends carries nothing outside
+/// it, so the hop forwards observing nothing — and the upload path, a non-JSON body with no binds
+/// and no `body_keys`, is never parsed at all.
 #[test]
 fn the_declared_create_body_keys_pass_and_the_upload_path_is_unaffected() {
     let mut s = session("website");

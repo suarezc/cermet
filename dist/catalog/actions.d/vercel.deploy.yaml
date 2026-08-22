@@ -77,17 +77,47 @@
 #      approval refuses as `bind_mismatch`, before the credential is attached, and burns. A bind
 #      whose field froze as ABSENCE — the optional `team`, when the request named no scope —
 #      constrains nothing, and the hop record's own target is then the account of that position.
-# Ratifying a shape therefore means classifying the AUTHORITY OF EVERY VALUE it can carry: either it
-# is bound to a frozen field, or it is declared authority-free right here in this document, with the
-# reason (docs/provider_design_principles.md). Exactly one position is ratified authority-free: the
-# read-only team-context shape's own team id (at its stanza) — every effect-bearing hop's scope stays
-# bound to whatever the approval froze.
+# THE CONTRACT, stated plainly, because it is narrower than a reader might assume: the BOUND
+# positions are constrained, and every other key a shape can carry is FORWARDED and named on the
+# hop's record as an observation. Ratifying a shape means deciding, for each position whose value
+# could steer an effect, whether it is worth binding — and where it is not bound, saying so here with
+# its exposure and what would reopen it. A position that is neither bound nor a declared
+# authority-free read is one the record reports and nothing refuses
+# (docs/provider_design_principles.md). One position IS ratified authority-free on its own merits:
+# the read-only team-context shape's own team id (at its stanza). Every effect-bearing hop's SCOPE
+# stays bound to whatever the approval froze, via `query.teamId`.
 #
-# NOTE (accepted, not code): `slug` is Vercel's OTHER spelling of the account scope, and no shape
+# The unbound steering positions, each named with what it exposes and what reopens it. All four are
+# reachable today (T1: injected "also alias it / also send it to the other environment"; T2: a stale
+# value the CLI carries forward), and none is refused:
+#
+# NOTE (accepted, not code) — `slug` (query): Vercel's OTHER spelling of the account scope. No shape
 # enumerates it, so a hop carrying it is forwarded and the key is named on the record. It is not
 # bound because a slug is not the id the frozen `team` holds, so there is nothing to compare it
 # against. What reopens it: a canonicalization that resolves a slug to the same id the sentence
 # froze, at which point `query.slug` becomes bindable on every effect-bearing shape.
+#
+# NOTE (accepted, not code) — `alias` (create body): assigns the deployment a DOMAIN the sentence
+# never named. It is ASSERT-INVISIBLE — the outcome assertion reads the response's `name` and
+# `target` and nothing else — so the sole record of an aliased deploy is the key name on the
+# forwarded hop's row. What reopens it: a `domain`-class field on the verb, which the sentence could
+# then pin and a `body.alias` bind enforce.
+#
+# NOTE (accepted, not code) — `customEnvironmentSlugOrId` (create body): moves the deploy into
+# another environment while `body.target` still carries — and satisfies — the frozen target, so the
+# bind holds and the deploy lands somewhere the approval did not describe. Assert-invisible the same
+# way: the response's `target` reads as the frozen one. Sole record is the key name on the forwarded
+# row. What reopens it: an `environment`-class field on the verb, pinnable by the sentence and
+# bindable at this key.
+#
+# NOTE (accepted, not code) — `project` and `deploymentId` (create body): each redirects the create
+# to another project, `project` by overriding `name` and `deploymentId` by redeploying an existing
+# deployment. Unlike the two above, these are NOT invisible: the outcome assertion compares the
+# landed response's `name` to the frozen `project`, so a cross-project redirect is DETECTED — one
+# high-severity mismatch row carrying frozen-vs-observed, and the session burns. That is detection
+# and not prevention, and every line about it has to say so: the deployment already exists by the
+# time the response is read. What reopens it: a bind at `body.project` (and `body.deploymentId`
+# bound to absence) if evidence ever shows an honest CLI sending them.
 #
 # The two dimensions above are REQUEST-side, and a session has two more positions that carry
 # authority:

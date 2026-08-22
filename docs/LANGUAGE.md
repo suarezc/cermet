@@ -1065,7 +1065,7 @@ A hop whose method and path match no shape, or that contradicts a bind, is refus
 credential is attached. What that refusal then costs
 — the session burn, the other close causes, and the receipt each close carries — is grant-kernel
 enforcement, not language: `docs/REFERENCE.md` → Grant Kernel → *Relay enforcement (validated per
-hop)*, which also carries the rationale for the closed body-key set.
+hop)*, which also carries what the declared key sets are for and what happens to a key outside them.
 
 ### `fixed` — the template pins a field's only legal value
 

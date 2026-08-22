@@ -2473,8 +2473,9 @@ impl ActionTemplate {
                     rule.method, rule.path
                 ));
             }
-            // A rule that inspects the body must close it. Two ratified keys plus an open
-            // remainder is not a closed surface — Vercel's `project` alone voids the identity pin.
+            // A rule that PINS a body key must declare the vocabulary it is pinning within:
+            // without it, the record has no baseline for saying which keys a hop carried beyond
+            // what the shape knows about.
             match &rule.body_keys {
                 Some(_) if matches!(rule.method.as_str(), "GET" | "DELETE") => {
                     return Err(format!(

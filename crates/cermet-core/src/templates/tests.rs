@@ -2187,7 +2187,7 @@ fn relay_template_loads_and_declares_a_relay_shape_and_receipt_contract() {
 
     let predicate = template.relay_predicate().expect("a relay predicate");
     assert_eq!(predicate.len(), 3);
-    // The binding rule closes its body; the opaque upload rule declares no body check.
+    // The binding rule declares its body vocabulary; the opaque upload rule declares none.
     assert_eq!(predicate[0].body_keys(), Some(&["files".to_string()][..]));
     assert_eq!(
         predicate.iter().filter(|r| r.body_keys().is_none()).count(),
