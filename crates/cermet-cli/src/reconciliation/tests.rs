@@ -577,6 +577,81 @@ fn the_lockdown_line_appears_only_while_the_latch_is_engaged() {
     );
 }
 
+/// A stale pin is the ONE nonzero state the two digest lines cannot show: the body is already
+/// live, so both prefixes agree and the surface would read as full agreement while exiting 1 (and
+/// `doc diff` would add `rules: unchanged`). The cue line is what closes that hole — and it appears
+/// in that state ONLY, so it never becomes noise the operator learns to skip.
+#[test]
+fn a_stale_pin_is_the_one_state_that_earns_a_third_line() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let other = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    // Body == live, pin names a different corpus.
+    write_document(repo.path(), &marker_for(other), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    // The two digests agree — which is exactly why the third line has to exist.
+    assert_eq!(
+        value_of(&lines, "active_profile")
+            .split_whitespace()
+            .next_back(),
+        value_of(&lines, "directory_file")
+            .split_whitespace()
+            .next_back()
+    );
+    let pin = value_of(&lines, "pin");
+    assert!(pin.starts_with("stale — "), "{pin}");
+    assert!(pin.contains("cermet doc apply"), "{pin}");
+    assert_eq!(
+        run_status(
+            &FakeClient::new(vec![Ok(served_as("designer", body))]),
+            repo.path(),
+            false
+        )
+        .exit_code,
+        1
+    );
+
+    // `doc diff` carries the same block, and it is the surface that would otherwise say only
+    // `rules: unchanged` about a document that needs an apply.
+    let diff = run_diff(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        repo.path(),
+    );
+    assert!(diff.text.contains("\npin: stale — "), "{}", diff.text);
+    assert!(diff.text.contains("rules: unchanged"), "{}", diff.text);
+
+    // Every other state leaves it off: aligned, an unapplied edit, an unexported live change, and
+    // a directory with no document at all.
+    let aligned = repository();
+    write_document(aligned.path(), &marker_for(body), body.as_bytes(), "prose");
+    let unapplied = repository();
+    write_document(
+        unapplied.path(),
+        &marker_for(body),
+        other.as_bytes(),
+        "prose",
+    );
+    let unexported = repository();
+    write_document(
+        unexported.path(),
+        &marker_for(body),
+        body.as_bytes(),
+        "prose",
+    );
+    let empty = repository();
+    for (start, status) in [
+        (aligned.path(), served_as("designer", body)),
+        (unapplied.path(), served_as("designer", body)),
+        (unexported.path(), served_as("designer", other)),
+        (empty.path(), served_as("designer", body)),
+    ] {
+        let text = status_lines(Ok(status), start).join("\n");
+        assert!(!text.contains("pin:"), "{start:?}: {text}");
+    }
+}
+
 /// The `--json` form answers the same two questions, so a scripted caller and a human read one
 /// vocabulary. An unreachable daemon says exactly that.
 #[test]
@@ -605,6 +680,29 @@ fn the_json_form_carries_the_same_two_answers() {
     assert_eq!(
         value_of(&unavailable, "active_profile"),
         "none — the daemon could not be asked"
+    );
+
+    // The cue rides the JSON form too, and only in its own state.
+    assert!(value.get("pin").is_none(), "{value}");
+    let stale = repository();
+    write_document(
+        stale.path(),
+        &marker_for("allow stripe.refund where amount <= 200\n"),
+        body.as_bytes(),
+        "prose",
+    );
+    let stale_json = run_status(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        stale.path(),
+        true,
+    );
+    let stale_value: serde_json::Value = serde_json::from_str(&stale_json.text).unwrap();
+    assert!(
+        stale_value["pin"]
+            .as_str()
+            .expect("a stale pin is named")
+            .starts_with("stale — "),
+        "{stale_value}"
     );
 
     let failure = status_json_failure();
@@ -656,6 +754,44 @@ fn status_composes_typed_candidate_marker_and_live_dimensions() {
         Err("transport canary".into()),
         "dataplane_unknown",
         2,
+    );
+}
+
+/// The interference witness is about the RECORD, not about the name a read-time join happened to
+/// put beside it. A profile name that appears (a parallel apply storing this same body under a key)
+/// or disappears (a profile read that failed this time) moves nothing the document is compared
+/// against, so the observation still answers instead of refusing.
+#[test]
+fn a_profile_name_that_moves_under_a_steady_corpus_is_not_interference() {
+    let live = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(live), live.as_bytes(), "prose");
+
+    // Baseline unnamed, observation named — and the reverse. Both are the same served corpus.
+    for (baseline, observed) in [
+        (served(live), served_as("designer", live)),
+        (served_as("designer", live), served(live)),
+    ] {
+        assert_eq!(
+            observe_mutation_document_sync(
+                &FakeClient::new(vec![Ok(observed)]),
+                repo.path(),
+                Some(&baseline),
+            ),
+            CorpusDocumentSync::State("aligned")
+        );
+    }
+
+    // A corpus that actually moved is still interference.
+    assert_eq!(
+        observe_mutation_document_sync(
+            &FakeClient::new(vec![Ok(served(
+                "allow stripe.refund where amount <= 100\n"
+            ))]),
+            repo.path(),
+            Some(&served(live)),
+        ),
+        CorpusDocumentSync::Required
     );
 }
 

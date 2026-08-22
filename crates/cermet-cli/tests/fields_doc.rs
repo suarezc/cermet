@@ -43,6 +43,7 @@ const LINE_SURFACE_FIELDS: &[(&str, &[&str])] = &[
         &[
             "active_profile",
             "directory_file",
+            "pin",
             "state",
             "candidate",
             "live",

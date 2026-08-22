@@ -315,12 +315,14 @@ anywhere else and it exits `2`, saying so:
 
 ```
 init: repository unavailable
-active_profile: none — no corpus has been applied
+active_profile: (unnamed) 4b8004bd4e13
 directory_file: none — no CERMET.md found from this directory
 ```
 
-(The EXIT CODE is what to branch on: `0` aligned, `1` drift, `2` unusable.) It also needs the file
-to exist first:
+The corpus the `rules allow` above made live is still being served, and says so from any directory
+on the box — `(unnamed)` because no stored profile holds that body. What is missing is a document
+HERE. (The EXIT CODE is what to branch on: `0` aligned, `1` drift, `2` unusable.) It also needs the
+file to exist first:
 
 ```bash
 cermet doc check --init   # seeds CERMET.md from the LIVE corpus, with its pin

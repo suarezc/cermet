@@ -37,6 +37,11 @@ const DOCUMENT_NAME: &str = "CERMET.md";
 
 const LOCKDOWN_ENGAGED: &str = "engaged";
 
+/// The cue for a document whose body is already live under a pin naming an older corpus. Both
+/// digest lines agree in that state, so the condition has no other way to show.
+const PIN_STALE: &str = "stale — this file's body is already live; its pin names an older corpus, \
+                         and cermet doc apply repairs the pin without changing a rule";
+
 /// Just the key from a stored-profile row — all the post-commit verification read needs.
 #[derive(serde::Deserialize)]
 struct StoredPresetName {
@@ -207,6 +212,9 @@ struct ObservedState {
 struct StatusView<'a> {
     active_profile: &'a str,
     directory_file: &'a str,
+    /// Present only in the one state the two digest lines cannot show — see [`PIN_STALE`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<&'a str>,
     lockdown: &'a str,
 }
 
@@ -460,7 +468,14 @@ pub fn observe_mutation_document(
         ) => final_error == initial,
         _ => false,
     };
-    if &current_status != status || !root_stable || !repository_stable {
+    // The interference witness names its fields rather than comparing whole statuses: the RECORD
+    // (its corpus and the latch) is what a document's alignment is computed against. The profile
+    // name riding alongside is a display join derived at read — it can move while the corpus does
+    // not (another apply storing a byte-identical body under a name, or a profile read that failed
+    // this time), and treating that as interference would refuse an answer the evidence supports.
+    let record_stable =
+        current_status.sentence == status.sentence && current_status.lockdown == status.lockdown;
+    if !record_stable || !root_stable || !repository_stable {
         return CorpusDocumentObservation {
             sync: CorpusDocumentSync::Required,
             status: Some(current_status),
@@ -1995,7 +2010,7 @@ fn document_matches_final_state(
 
 fn render_observed(observed: &ObservedState, as_json: bool) -> ReconciliationOutput {
     render_status(
-        drift_exit(&observed.drift),
+        &observed.drift,
         &observed.active_profile,
         &observed.directory_file,
         observed.lockdown,
@@ -2008,7 +2023,7 @@ pub fn status_json_failure() -> ReconciliationOutput {
     // digest can be known, and saying so is the whole content of the answer.
     let unasked = format!("{ABSENT} — the daemon could not be asked");
     render_status(
-        drift_exit(&DriftState::DataPlaneUnknown),
+        &DriftState::DataPlaneUnknown,
         &unasked,
         &unasked,
         "unknown",
@@ -2017,15 +2032,20 @@ pub fn status_json_failure() -> ReconciliationOutput {
 }
 
 fn render_status(
-    exit_code: u8,
+    drift: &DriftState,
     active_profile: &str,
     directory_file: &str,
     lockdown: &str,
     as_json: bool,
 ) -> ReconciliationOutput {
+    // The ONE state the two digest lines cannot show. A stale pin means the body IS live — so both
+    // prefixes match and the surface reads as full agreement — while the exit is 1 and `doc diff`
+    // says `rules: unchanged`. Without this line the operator has a nonzero exit and no cue.
+    let pin = matches!(drift, DriftState::MarkerStale).then_some(PIN_STALE);
     let view = StatusView {
         active_profile,
         directory_file,
+        pin,
         lockdown,
     };
     let text = if as_json {
@@ -2033,6 +2053,9 @@ fn render_status(
     } else {
         let mut text =
             format!("active_profile: {active_profile}\ndirectory_file: {directory_file}");
+        if let Some(pin) = pin {
+            text.push_str(&format!("\npin: {pin}"));
+        }
         // An engaged lockdown means the corpus named above is not authorizing anything. Printing
         // only the two lines while that is true would report a state the box is not in; a clear
         // latch is the ordinary case and says nothing.
@@ -2043,7 +2066,10 @@ fn render_status(
         }
         text
     };
-    ReconciliationOutput { text, exit_code }
+    ReconciliationOutput {
+        text,
+        exit_code: drift_exit(drift),
+    }
 }
 
 fn operation_failure(message: &str, observed: &ObservedState) -> ReconciliationOutput {

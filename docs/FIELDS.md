@@ -638,8 +638,9 @@ directory_file: CERMET.md 4b8004bd4e13
 
 | field | meaning |
 |---|---|
-| `active_profile` | The DAEMON's live corpus — one global answer, the same from every directory on the box. The name is the stored profile holding exactly that body, joined at read time (`(unnamed)` when no stored profile does), followed by the corpus digest. When nothing is being served it reads `none` and says why: no corpus has been applied, a stored corpus is not being served, the record is unreadable, or the daemon could not be asked. |
+| `active_profile` | The DAEMON's live corpus — one global answer, the same from every directory on the box. The name is the FIRST stored profile whose body is exactly that corpus, joined at read time (`(unnamed)` when no stored profile matches), followed by the corpus digest. When nothing is being served it reads `none` and says why: no corpus has been applied, a stored corpus is not being served, the record is unreadable, or the daemon could not be asked. |
 | `directory_file` | The `CERMET.md` reachable from this directory, and the digest of the body it would commit. With no such file it reads `none — no CERMET.md found from this directory`, which is an absence, not a fault. A file that exists but yields no candidate says so and points at `cermet doc check`. |
+| `pin` | Printed ONLY when the document's body is already live under a pin naming an older corpus (the `marker_stale` drift state, §4.2). That is the one nonzero state the two digest lines cannot show — the body matches, so both prefixes agree and the surface would otherwise read as full agreement while exiting `1`, and `doc diff` would add only `rules: unchanged`. The line names the condition and the remedy: `pin: stale — this file's body is already live; its pin names an older corpus, and cermet doc apply repairs the pin without changing a rule`. |
 | `lockdown` | The owner-lockdown latch: `clear`, `engaged`, or `unknown`. The TEXT form prints this line only while the latch is ENGAGED, because an engaged latch means the corpus named above is authorizing nothing — reporting the two lines alone would describe a box you are not on. `--json` always carries it. Only `cermet owner lockdown` sets it. |
 
 Both digests are truncated to the same 12 hex characters on purpose: equal prefixes mean this
@@ -995,7 +996,7 @@ designer  6      2026-08-18T17:03:10Z
 | `PRESET` | The stored name. Every printed name is sanitized on the way out — anything outside letters, digits, `_`, and `-` becomes `?`, over-long names are truncated, and an empty one renders `(empty)`. Stored names are already validated; the sanitizer is applied unconditionally so that stays true for names a caller merely typed. |
 | `RULES` | How many rules that stored corpus holds. |
 | `UPDATED` | When the row was last written, RFC3339, set daemon-side at write time. |
-| `● live` | Marks the row whose stored body IS the corpus the daemon is serving right now — the same read-time join `doc status` names on its `active_profile` line. No row carries it when the live corpus is not one of these bodies. Nothing records it: a profile is live exactly while its body is being served, so applying another profile moves the mark with no write to this table. |
+| `● live` | Marks the FIRST stored profile whose body matches the corpus the daemon is serving right now — the same read-time join `doc status` names on its `active_profile` line, so two profiles storing identical bodies put the mark on one of them, not both. No row carries it when the live corpus is not one of these bodies. Nothing records it: a profile is live exactly while its body is being served, so applying another profile moves the mark with no write to this table. |
 
 An empty store says so and names the one way to write one:
 
