@@ -147,7 +147,7 @@ tar -xzf cermet_0.1.0_darwin_arm64.tar.gz
 ./cermet setup                                  # asks for administrator access itself
 ```
 
-Uninstalling is documented step-by-step in the [quickstart](docs/QUICKSTART.md#11-uninstall); `cermet uninstall` ships in 0.1.1.
+Uninstalling is documented step-by-step in the [quickstart](docs/QUICKSTART.md#11-uninstall).
 
 **Containers.** cermetd runs under the init system — systemd on Linux, launchd on macOS —
 because the init system is what delivers the sealed vault key to the daemon and supervises
