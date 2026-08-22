@@ -272,6 +272,7 @@ upstream answered.
 | `target` | The request line's path and query, exactly as the native client wrote it — the string the predicate was compared against. |
 | `upstream_status` | What the upstream answered on a forwarded hop. |
 | `response_bytes` | How many bytes came back on a forwarded hop. |
+| `undeclared_keys` | On a forwarded hop: the key names it carried — query first, then body — that its matched shape does not enumerate. An **observation**, not a verdict: the hop was authorized on its method and path and on every bind the shape declares, and this says what else rode along, so a widening decision is made on evidence. Names only, never values; capped, with a `+N more` mark when the hop carried more names than the cap. Absent when it carried none. |
 | `reason` | Why a hop was refused, or why a forwarded one failed — the broker's stable reason word (see §8 for the full set). |
 | `detail` | What that refusal knew beyond its reason word, in one line: the offending field or key, the frozen constraint *as it was enforced*, the value the hop offered, and — where one is computable — the remedy. Absent on the classes whose reason word is the whole fact. The reason word does not move: `detail` is additional to it, never a rewriting of it, so anything matching on `reason` keeps matching. See §8.6. |
 | `effect` | Whether this hop is the grant's single effect. A relay session authorizes exactly one effect-bearing shape; every other hop is read traffic. |
@@ -281,7 +282,9 @@ upstream answered.
 In the `--hops` list rendering, `event_type` is printed as a word — `OPENED`, `HOP`, `REFUSED`,
 `FAILED`, `MISMATCH`, `CLOSED` — and an event type the renderer does not know is printed verbatim
 rather than guessed at. `burned` renders as the suffix `(burned the session)`; `effect` renders as
-`[the grant's single effect]`. `detail` renders last, after those marks: the reason word keeps its
+`[the grant's single effect]`; `undeclared_keys` renders after those marks as `— also carried
+<names>`, in the register of an observation rather than a refusal. `detail` renders last, after all
+of them: the reason word keeps its
 short column where a reader and a `grep` both already find it, and the sentence follows.
 
 A `MISMATCH` row carries the same three marks a burning `REFUSED` row does — `reason`
@@ -1476,9 +1479,8 @@ the session.
 | `unknown_handle` | 409 | no | No live session for this handle: unknown, already closed, or burned. There is nothing to burn. |
 | `session_expired` | 410 | no | The session's declared TTL lapsed. |
 | `malformed_request` | 400 | yes | The request path is not something the relay will forward at all. |
-| `no_matching_shape` | 422 | yes | The request matched no enumerated predicate shape — its method, path, or a query key the rule does not declare. |
-| `bind_mismatch` | 422 | yes | The shape matched, and a bound frozen field disagreed with the request — or the shape declares a closed body surface and the body is not a JSON object at all. |
-| `undeclared_body_key` | 422 | yes | The body carried a top-level key the rule does not declare. The refusal names the offending keys — names only, capped, never values — because a refusal that will not say which key it refused makes widening guesswork. |
+| `no_matching_shape` | 422 | yes | The request's method and path matched no enumerated predicate shape. |
+| `bind_mismatch` | 422 | yes | The shape matched, and a bound frozen field disagreed with the request — or the shape pins top-level body keys and the body is not a JSON object at all, so no bind can be evaluated. |
 | `effect_already_used` | 409 | yes | The single effect this grant authorizes has already passed. |
 | `cap_exceeded_uses` | 422 | yes | The shape's declared per-session use budget has no room left. |
 | `cap_exceeded_bytes` | 422 | yes | The shape's declared per-session byte budget has no room left. |
@@ -1489,13 +1491,24 @@ Burning is the rule that a session being *probed* is done: a hop that misses the
 contradicts a frozen field ends the session, and every later hop renders as an unknown handle. A
 lapsed TTL, an unknown handle, and an oversized body burn nothing.
 
+**A key is never a refusal.** A shape's declared `query_keys`/`body_keys` are the VOCABULARY a
+sentence or a request may pin; where a key is pinned, the bind decides every hop that carries it.
+A key the descriptor never enumerated is the native tool's own business — the project's own
+configuration folded into a create body, a parameter the provider added after the document was
+written — so the hop is forwarded and the key is named on its record (`undeclared_keys`, §1.7).
+Refusing those made the broker a content firewall over payloads that decide nothing about which
+effect happens, and the workaround it forced — deploying with the project's own configuration held
+aside — ships a differently-configured artifact. What still refuses is unchanged: the method+path
+shape (it identifies WHICH effect a hop is), every bind, every outcome assertion, the caps, and the
+one-effect rule.
+
 No relay refusal ever answers 401 or 403. Both are lies about what happened — the identity is fine,
 the capability is spent or the request is outside it — and native CLIs turn them into "log in again",
 which sends an agent re-authenticating forever.
 
 #### What a refusal discloses
 
-At the moment it refuses, the relay already holds the frozen field map, the offending key, and the
+At the moment it refuses, the relay already holds the frozen field map, the offending bind, and the
 shape inventory. Disclosure is saying what it already holds: no new authority, no new state. Every
 value a refusal names is one of four things:
 
@@ -1531,8 +1544,7 @@ a native CLI surfaces.
 |---|---|
 | `bind_mismatch`, frozen field | The frozen FIELD, the wire position and key it is bound at (`teamId` query parameter, `target` body key), the constraint AS ENFORCED, and what the hop offered. The constraint is stated as enforced, never as the raw frozen value: an `omit:` transform binds a frozen value to the key's ABSENCE, so it reads "must be absent", not "must carry `preview`" — a refusal reporting the literal there would send the requester straight back into the same refusal. What arrived is stated as itself: absent, a value, a bare `?key` with no `=`, a key repeated (ambiguous upstream), or a non-string. The remedy names the re-request shape with the key set to the enforced value. |
 | `bind_mismatch`, captured bind | A path wildcard is bound to a `captured.<name>` — what *this session's own effect* returned — which is a different provenance and says so: a capture is the approved effect's consequence and is deliberately not something an approval can pin in advance, so the detail never claims the grant froze it. It carries no re-request remedy either: a fresh grant has captured nothing, so that hop lands on the nothing-captured arm below and refuses with the opposite message. What it says instead is to drive the native client at the deployment this session created. When nothing is captured yet, it says that the session's own effect has not landed and offers no remedy at all. |
-| `no_matching_shape` | The method and path attempted, the admitted shapes as `METHOD /path` patterns, and the next step: re-send an admitted shape, or ratify this one in the verb's predicate (shapes are enumerated by the ratified template, not by any sentence rule, so widening them is a template edit). When the method and path DID match a shape and only key closure refused, it names the offending query key(s) and that one shape instead — the inventory is noise once the shape is known — with both remedies, since either party may be the one to act. |
-| `undeclared_body_key` | The offending key names, and the same two remedies. Names only, capped, never values. |
+| `no_matching_shape` | The method and path attempted, the admitted shapes as `METHOD /path` patterns, and the next step: re-send an admitted shape, or ratify this one in the verb's predicate (shapes are enumerated by the ratified template, not by any sentence rule, so widening them is a template edit). |
 | `cap_exceeded_uses`, `cap_exceeded_bytes` | Which `caps:` dimension ran out, and that raising it is a template edit. |
 | everything else | Nothing. Their reason word IS the whole fact, and a detail there would be invented rather than disclosed. |
 

@@ -11,11 +11,20 @@
 //!
 //! Adversaries:
 //! - **T1** third-party content steering a cooperative model into "also deploy prod / pull the env":
-//!   every hop must match one enumerated `(method, path, query_keys)` shape AND agree with every
-//!   frozen field the shape binds. A miss refuses BEFORE the credential is attached and BURNS the
+//!   every hop must match one enumerated `(method, path)` shape AND agree with every frozen field
+//!   that shape binds. A miss refuses BEFORE the credential is attached and BURNS the
 //!   session — a session being probed is done. That extends to the session's own DATAFLOW:
 //!   a wildcard path segment is pinned to what this session's approved effect actually produced, so
 //!   "while you're in there, read the other deployment" is outside the grant too.
+//!
+//! DESCRIPTORS BIND; THEY DO NOT BLOCK. A shape's declared `query_keys`/`body_keys` are the
+//! VOCABULARY a sentence or a request may pin, and where a key is pinned the bind decides every hop
+//! that carries it. A key the descriptor never enumerated is the native tool's own business —
+//! project configuration the CLI folds into its create body, a parameter the provider added after
+//! the document was written — so it is FORWARDED, and named (names only) on the hop's record. A
+//! broker that refused those was acting as a content firewall over payloads that decide nothing
+//! about which effect happens, and the workarounds it forced were worse than the risk: deploying
+//! with the project's own configuration held aside ships a differently-configured artifact.
 //! - **T2** model accident (`--prod`, a fat-fingered project): identical mechanism, same refusal.
 //!   One dimension none of the per-hop checks cover is VOLUME. A shape a session may
 //!   repeat (the upload) declares a `caps:` budget, so an accident loop, or a T1 "while you're there,
@@ -110,10 +119,10 @@ pub fn mint_handle() -> String {
     format!("{HANDLE_PREFIX}{random}")
 }
 
-/// Bounds on the NAMES a key-closure refusal reports. The body is already
-/// size-capped, but a body assembled from injected content (T1) could still carry hundreds of junk
-/// keys or one enormous name; the audit row and the client message are bounded here for the same
-/// reason `capped_target` bounds the path. Both caps are generous next to any real provider payload.
+/// Bounds on the NAMES a forwarded hop's record reports. The body is already size-capped, but a
+/// body assembled from injected content (T1) could still carry hundreds of junk keys or one
+/// enormous name; the audit row is bounded here for the same reason `capped_target` bounds the
+/// path. Both caps are generous next to any real provider payload.
 const MAX_NAMED_UNDECLARED_KEYS: usize = 8;
 const MAX_UNDECLARED_KEY_NAME_BYTES: usize = 64;
 
@@ -176,13 +185,42 @@ fn capped_value(value: &str) -> String {
     capped(value, MAX_OFFERED_VALUE_BYTES)
 }
 
-/// A list of names as a refusal spells one: backticked, comma-joined, in the order they arrived.
-fn named(names: &[String]) -> String {
-    names
-        .iter()
-        .map(|name| format!("`{name}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// The names one hop carried outside its shape's declared vocabulary, accumulated as they are seen.
+///
+/// It is an OBSERVATION, not a verdict: a descriptor's declared keys are the vocabulary a sentence
+/// may PIN, and where a key is pinned the bind decides the hop. Everything else in a body or a query
+/// belongs to the native tool driving the session, so it is forwarded — and named here, so an
+/// operator reading the hop record can see what rode along and decide whether any of it is worth
+/// pinning next time.
+///
+/// NAMES ONLY, never values: the name is what a widening decision reads; the value is the agent's
+/// payload and has no business in a durable row. Every name goes through the same
+/// [`capped_key_name`] choke point every borrowed string here does, and the list itself is bounded —
+/// past [`MAX_NAMED_UNDECLARED_KEYS`] it carries a `+N more` mark instead, because a reader who
+/// cannot tell a complete list from a truncated one cannot use it for anything.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct UndeclaredKeys {
+    named: Vec<String>,
+    beyond: usize,
+}
+
+impl UndeclaredKeys {
+    fn note(&mut self, key: &str) {
+        if self.named.len() < MAX_NAMED_UNDECLARED_KEYS {
+            self.named.push(capped_key_name(key));
+        } else {
+            self.beyond += 1;
+        }
+    }
+
+    /// The list as a hop record carries it. EMPTY when the hop carried nothing undeclared, which is
+    /// how the record leaves the field out entirely — absence is load-bearing.
+    fn into_names(mut self) -> Vec<String> {
+        if self.beyond > 0 {
+            self.named.push(format!("+{} more", self.beyond));
+        }
+        self.named
+    }
 }
 
 /// Where on the wire a bind reads the value it pins. It is part of what a refusal
@@ -370,7 +408,8 @@ impl RelayBindMismatch {
 }
 
 /// Everything a `no_matching_shape` already knows: what the hop attempted, and what the session's
-/// frozen predicate admits instead.
+/// frozen predicate admits instead. A shape is matched on METHOD and PATH alone — that pair is what
+/// identifies WHICH effect a hop is — so this refusal means the verb has no such effect at all.
 ///
 /// The admitted shapes are DESCRIPTOR TEXT — the ratified verb's own `method`/`path` patterns, read
 /// out of a document the installer publishes WORLD-READABLE under the shared catalog directory
@@ -384,34 +423,16 @@ pub struct RelayShapeMiss {
     pub method: String,
     /// The path it asked for, bounded.
     pub path: String,
-    /// The query keys this hop carried that the shape sharing its method and path does not declare.
-    /// Non-empty EXACTLY when key closure is what refused it — the method and path did match — and
-    /// empty when no shape has this method and path at all.
-    pub undeclared_query_keys: Vec<String>,
-    /// The admitted shapes worth naming, as `METHOD /path` patterns: the ONE this hop's method and
-    /// path matched when key closure is the miss, and the whole inventory when nothing matched.
-    /// Once the shape is known, the inventory is noise around the one fact that matters.
+    /// The whole admitted inventory, as `METHOD /path` patterns — this refusal is reached only when
+    /// nothing the verb admits shares this hop's method and path, so the inventory IS the answer.
     pub admitted: Vec<String>,
 }
 
 impl RelayShapeMiss {
     fn detail(&self) -> String {
-        if !self.undeclared_query_keys.is_empty() {
-            let one = self.undeclared_query_keys.len() == 1;
-            return format!(
-                "the shape {} admits this hop's method and path, but the approved verb does not \
-                 declare the query {} it carried ({}); re-send it without {}, or ratify {} in the \
-                 verb's predicate",
-                self.admitted.join(", "),
-                if one { "parameter" } else { "parameters" },
-                named(&self.undeclared_query_keys),
-                if one { "it" } else { "them" },
-                if one { "it" } else { "them" },
-            );
-        }
         // ...and the next step, which the old wordless message had and this must not lose. It is
         // the verb's PREDICATE that enumerates shapes, not any sentence rule, so the widening it
-        // points at is the same template edit the key-closure arm names.
+        // points at is a template edit.
         format!(
             "nothing the approved verb admits matches `{} {}`; it admits {}; re-send one of those, \
              or ratify this shape in the verb's predicate if it belongs to the verb",
@@ -451,28 +472,20 @@ pub enum RelayRefusal {
     Expired,
     /// The request path itself is not something the relay will forward at all.
     MalformedRequest,
-    /// The request matched no enumerated predicate shape (method, path, or an undeclared query key).
+    /// The request's method and path matched no enumerated predicate shape.
     ///
     /// It carries WHAT was attempted and WHAT is admitted, because "the approved sentence does not
-    /// authorize this request" is true of every miss and tells a requester nothing about which of
-    /// the three dimensions refused it.
+    /// authorize this request" is true of every miss and tells a requester nothing about what the
+    /// verb would have accepted instead.
     NoMatchingShape(RelayShapeMiss),
     /// The shape matched but a bound frozen field disagreed with the request. It carries the field,
     /// the constraint as enforced, and the offered value — everything the engine held when it
     /// refused, and none of it new.
     BindMismatch(RelayBindMismatch),
-    /// The shape declares a closed body surface and this hop's body is not a JSON object at all, so
-    /// no bind can be evaluated. Audits as `bind_mismatch`: same class, same status, same burn.
+    /// The shape's binds read top-level body keys and this hop's body is not a JSON object at all,
+    /// so no bind can be evaluated. A bind that cannot be evaluated cannot hold, so this is the bind
+    /// failing: it audits as `bind_mismatch`, same class, same status, same burn.
     BodyNotAnObject,
-    /// The shape matched but the body carried a top-level key the rule does not declare.
-    /// A provider body parameter nobody ratified is authority nobody reviewed — Vercel's `project`,
-    /// `deploymentId`, and `customEnvironmentSlugOrId` each override a field the sentence pinned.
-    ///
-    /// It carries the offending key NAMES — all of them, capped — because a refusal that will not
-    /// say which key it refused makes widening guesswork instead of evidence. NAMES ONLY, never
-    /// values: the name is what an operator needs in order to decide whether to ratify the key; the
-    /// value is the agent's payload and has no business in a log or in a client-visible message.
-    UndeclaredBodyKey { keys: Vec<String> },
     /// The single effect this grant authorizes has already passed.
     EffectAlreadyUsed,
     /// The hop is inside the sentence, but the shape's declared per-session budget has no
@@ -524,7 +537,6 @@ impl RelayRefusal {
             RelayRefusal::NoMatchingShape(_)
             | RelayRefusal::BindMismatch(_)
             | RelayRefusal::BodyNotAnObject
-            | RelayRefusal::UndeclaredBodyKey { .. }
             | RelayRefusal::CapExceeded { .. }
             | RelayRefusal::OutcomeMismatch => 422,
         }
@@ -572,8 +584,8 @@ impl RelayRefusal {
             }
             RelayRefusal::BodyNotAnObject => {
                 "cermet: this request contradicts a field the approval froze — the approved verb \
-                 declares a closed body surface for this shape, so its body must be a JSON object, \
-                 and this one is not — see `cermet log --hops`"
+                 pins top-level body keys on this shape, so its body must be a JSON object, and \
+                 this one is not — see `cermet log --hops`"
             }
             // Never rendered to a live hop (the session is already closed when this is
             // recorded), but it is what the receipt and the audit row NAME, so it says the true
@@ -593,15 +605,6 @@ impl RelayRefusal {
                      for this request shape — see `cermet log --hops`, and raise the shape's `caps:` \
                      if a real deploy needs more",
                     cap.declared()
-                )
-            }
-            // Name the keys here too. This message is what the native CLI prints, so
-            // naming them is what makes widening evidence-driven without a capture harness.
-            RelayRefusal::UndeclaredBodyKey { .. } => {
-                return format!(
-                    "cermet: this hop is outside the approved verb's declared request surface — {} \
-                     — see `cermet log --hops`",
-                    self.detail().unwrap_or_default()
                 )
             }
             RelayRefusal::MalformedRequest => {
@@ -626,7 +629,6 @@ impl RelayRefusal {
             // Two variants, ONE reason: a body that is not a JSON object is the same class of
             // defect as a bound key that disagrees — the shape's declared body surface refused it.
             RelayRefusal::BindMismatch(_) | RelayRefusal::BodyNotAnObject => "bind_mismatch",
-            RelayRefusal::UndeclaredBodyKey { .. } => "undeclared_body_key",
             RelayRefusal::EffectAlreadyUsed => "effect_already_used",
             RelayRefusal::BodyTooLarge => "body_too_large",
             RelayRefusal::OutcomeMismatch => "outcome_mismatch",
@@ -654,18 +656,10 @@ impl RelayRefusal {
             RelayRefusal::NoMatchingShape(miss) => Some(miss.detail()),
             RelayRefusal::BindMismatch(mismatch) => Some(mismatch.detail()),
             RelayRefusal::BodyNotAnObject => Some(
-                "the approved verb declares a closed body surface for this shape, so its body must \
-                 be a JSON object, and this one is not"
+                "the approved verb pins top-level body keys on this shape, so its body must be a \
+                 JSON object, and this one is not"
                     .to_string(),
             ),
-            RelayRefusal::UndeclaredBodyKey { keys } => Some(format!(
-                "the approved verb does not declare the body {} it carried ({}); re-send it \
-                 without {}, or ratify {} in the verb's predicate",
-                if keys.len() == 1 { "key" } else { "keys" },
-                named(keys),
-                if keys.len() == 1 { "it" } else { "them" },
-                if keys.len() == 1 { "it" } else { "them" },
-            )),
             RelayRefusal::CapExceeded { cap } => Some(format!(
                 "this session has spent the `{}` budget the approved verb declares for this request \
                  shape; raise the shape's `caps:` if a real run needs more",
@@ -690,7 +684,6 @@ impl RelayRefusal {
             RelayRefusal::NoMatchingShape(_)
                 | RelayRefusal::BindMismatch(_)
                 | RelayRefusal::BodyNotAnObject
-                | RelayRefusal::UndeclaredBodyKey { .. }
                 | RelayRefusal::EffectAlreadyUsed
                 | RelayRefusal::MalformedRequest
                 | RelayRefusal::OutcomeMismatch
@@ -705,9 +698,15 @@ impl RelayRefusal {
 /// The verdict on one hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayVerdict {
-    /// Authorized: forward it, and whether this hop consumed THE single effect.
+    /// Authorized: forward it, whether this hop consumed THE single effect, and what it carried
+    /// outside the shape's declared vocabulary.
     Forward {
         effect: bool,
+        /// Key names — query then body — the matched shape does not enumerate, bounded and capped
+        /// (see [`UndeclaredKeys`]). EMPTY for a hop that carried none, which is what keeps the
+        /// hop record's own field absent in that case. It is an observation ON a forwarded hop and
+        /// decides nothing: no refusal reads it, and the receipt's effect state does not either.
+        undeclared: Vec<String>,
     },
     Refuse(RelayRefusal),
 }
@@ -933,15 +932,16 @@ impl RelaySession {
         // The matched shape is held by INDEX, not by reference: the budget charge at the end of this
         // function needs `&mut self`, and the index names the same shape for the session's whole life
         // (the validator refuses a duplicate `(method, path)`).
-        let Some(index) = self.predicate.iter().position(|rule| {
-            rule.method == method
-                && predicate_path_matches(&rule.path, path)
-                && query
-                    .iter()
-                    .all(|(key, _)| rule.query_keys.iter().any(|allowed| allowed == key))
-        }) else {
+        // METHOD and PATH are what identify WHICH effect a hop is, and they are the whole match. A
+        // parameter the shape does not enumerate does not un-identify it: at most one shape can
+        // share a `(method, path)` (the template validator refuses a duplicate), so this is exact.
+        let Some(index) = self
+            .predicate
+            .iter()
+            .position(|rule| rule.method == method && predicate_path_matches(&rule.path, path))
+        else {
             return RelayVerdict::Refuse(RelayRefusal::NoMatchingShape(
-                self.shape_miss(method, path, &query),
+                self.shape_miss(method, path),
             ));
         };
         let rule = &self.predicate[index];
@@ -949,9 +949,19 @@ impl RelaySession {
             return RelayVerdict::Refuse(RelayRefusal::EffectAlreadyUsed);
         }
         let binds = rule.binds();
+        // What rode along outside the shape's declared vocabulary — surfaced on the forwarded hop's
+        // record, never a verdict. A bound query key is always listed in its rule's own
+        // `query_keys` (the template validator requires it), so this filter alone never mistakes a
+        // pinned key for an unenumerated one.
+        let mut undeclared = UndeclaredKeys::default();
+        for (key, _) in &query {
+            if !rule.query_keys.iter().any(|declared| declared == key) {
+                undeclared.note(key);
+            }
+        }
         // The query binds first — they read the target, so they apply on every method,
-        // including the bodyless reads a session's own polling does. Key closure above decided
-        // WHICH parameters may appear; this decides what their values are allowed to say.
+        // including the bodyless reads a session's own polling does. The shape's declaration says
+        // WHICH parameters it knows about; the bind decides what a pinned one is allowed to say.
         for bind in &binds {
             if let Some(key) = bind.query_key() {
                 if let Some(mismatch) = self.query_bind_mismatch(bind, key, &query) {
@@ -970,38 +980,37 @@ impl RelaySession {
                 return RelayVerdict::Refuse(RelayRefusal::BindMismatch(mismatch));
             }
         }
-        // A rule declares a body check by declaring `body_keys` (required alongside any bind); a rule
-        // with neither — an opaque upload — never has its body parsed at all.
-        if let Some(allowed) = rule.body_keys() {
-            let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(body) else {
-                // A shape whose body must be checked but is not a JSON object cannot pass.
-                return RelayVerdict::Refuse(RelayRefusal::BodyNotAnObject);
-            };
-            // The body key set is CLOSED, exactly like `query_keys`. Checking only the bound
-            // keys let every other documented parameter ride through credentialed — and Vercel
-            // documents three that override a frozen field (`project` overrides `name`,
-            // `customEnvironmentSlugOrId` overrides the target environment, `deploymentId` redeploys
-            // an arbitrary existing deployment). A parameter the provider adds LATER now fails closed
-            // too: drift breaks the deploy, it never widens the grant.
-            // Collect EVERY undeclared key, not just the first — an operator deciding
-            // whether to ratify one needs the whole set, and a second refusal costs another grant.
-            let undeclared: Vec<String> = object
-                .keys()
-                .filter(|key| {
-                    !(allowed.iter().any(|declared| &declared == key)
-                        || binds.iter().any(|bind| bind.body_key() == Some(key)))
-                })
-                .take(MAX_NAMED_UNDECLARED_KEYS)
-                .map(|key| capped_key_name(key))
-                .collect();
-            if !undeclared.is_empty() {
-                return RelayVerdict::Refuse(RelayRefusal::UndeclaredBodyKey { keys: undeclared });
-            }
-            for bind in &binds {
-                let Some(key) = bind.body_key() else { continue };
-                if let Some(mismatch) = self.body_bind_mismatch(bind, key, &object) {
-                    return RelayVerdict::Refuse(RelayRefusal::BindMismatch(mismatch));
+        // A rule declares a body vocabulary with `body_keys` (required alongside any body bind); a
+        // rule with neither — an opaque upload — never has its body parsed at all.
+        if let Some(declared) = rule.body_keys() {
+            match serde_json::from_slice::<Value>(body) {
+                Ok(Value::Object(object)) => {
+                    // The declared keys are the vocabulary this shape knows about; the binds beneath
+                    // them are what the approval froze. Anything else is the native tool's payload —
+                    // the project's own `vercel.json` configuration arrives here — so it forwards,
+                    // named on the hop record. A bound key is admitted implicitly (the validator
+                    // refuses listing it), so it is excluded here too.
+                    for key in object.keys() {
+                        if !(declared.iter().any(|name| name == key)
+                            || binds.iter().any(|bind| bind.body_key() == Some(key)))
+                        {
+                            undeclared.note(key);
+                        }
+                    }
+                    for bind in &binds {
+                        let Some(key) = bind.body_key() else { continue };
+                        if let Some(mismatch) = self.body_bind_mismatch(bind, key, &object) {
+                            return RelayVerdict::Refuse(RelayRefusal::BindMismatch(mismatch));
+                        }
+                    }
                 }
+                // A body the shape's binds must READ, that cannot be read: no bind can hold, so the
+                // bind is what refuses. With nothing pinned in the body there is nothing to
+                // evaluate and nothing to refuse — the bytes are the native tool's business.
+                _ if binds.iter().any(|bind| bind.body_key().is_some()) => {
+                    return RelayVerdict::Refuse(RelayRefusal::BodyNotAnObject)
+                }
+                _ => {}
             }
         }
         // The budget is the LAST check, and the only one about VOLUME rather than
@@ -1015,43 +1024,23 @@ impl RelaySession {
             }
             spent.charge(body.len());
         }
-        RelayVerdict::Forward { effect }
+        RelayVerdict::Forward {
+            effect,
+            undeclared: undeclared.into_names(),
+        }
     }
 
-    /// What the session's frozen predicate admits, and which dimension of it this hop missed. It
-    /// reads only the frozen predicate and the request — the same two things the match above read.
-    fn shape_miss(&self, method: &str, path: &str, query: &[QueryPair]) -> RelayShapeMiss {
-        // At most one shape can share a (method, path): the template validator refuses a duplicate.
-        // So a shape found here means the method and path DID match and only key closure refused.
-        let undeclared: Vec<String> = self
-            .predicate
-            .iter()
-            .find(|rule| rule.method == method && predicate_path_matches(&rule.path, path))
-            .map(|rule| {
-                query
-                    .iter()
-                    .filter(|(key, _)| !rule.query_keys.iter().any(|allowed| allowed == key))
-                    .map(|(key, _)| capped_key_name(key))
-                    .take(MAX_NAMED_UNDECLARED_KEYS)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let shape = |rule: &PredicateRule| format!("`{} {}`", rule.method, rule.path);
+    /// What the session's frozen predicate admits, for a hop whose method and path match none of it.
+    /// It reads only the frozen predicate and the request — the same two things the match above read.
+    fn shape_miss(&self, method: &str, path: &str) -> RelayShapeMiss {
         RelayShapeMiss {
             method: method.to_string(),
             path: capped_value(path),
-            admitted: if undeclared.is_empty() {
-                self.predicate.iter().map(shape).collect()
-            } else {
-                self.predicate
-                    .iter()
-                    .filter(|rule| {
-                        rule.method == method && predicate_path_matches(&rule.path, path)
-                    })
-                    .map(shape)
-                    .collect()
-            },
-            undeclared_query_keys: undeclared,
+            admitted: self
+                .predicate
+                .iter()
+                .map(|rule| format!("`{} {}`", rule.method, rule.path))
+                .collect(),
         }
     }
 
@@ -1121,8 +1110,8 @@ impl RelaySession {
         key: &str,
         query: &[QueryPair],
     ) -> Option<RelayBindMismatch> {
-        // Froze as ABSENCE: the key rides free, repeats and all. Key closure still applies —
-        // an unratified parameter never reaches this check.
+        // Froze as ABSENCE: the key rides free, repeats and all. It is the BIND that constrains a
+        // position, so a bind reading an absent field constrains nothing at all.
         let bound = self.bound(bind)?;
         let mut present = query.iter().filter(|(name, _)| *name == key);
         let first = present.next();
@@ -1417,9 +1406,9 @@ fn bounded(value: &str) -> String {
 
 /// The query parameters a target carries, as `(name, raw value)`. The VALUES are read
 /// too — a query value can carry as much authority as a body key's (Vercel's `teamId` IS the account
-/// scope), so the shape's key allowlist decides which parameters may appear and the shape's binds
-/// decide what the ratified ones are allowed to say. A bare `?key` with no `=` yields `None`, which
-/// no frozen value equals.
+/// scope) — because the VALUE is what a bind pins. The names are read alongside them so a hop's
+/// record can say which parameters rode along outside the shape's declared vocabulary. A bare `?key`
+/// with no `=` yields `None`, which no frozen value equals.
 fn query_pairs(query: Option<&str>) -> Vec<QueryPair<'_>> {
     query
         .unwrap_or("")

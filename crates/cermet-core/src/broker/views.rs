@@ -858,6 +858,18 @@ fn relay_hop_view(event: crate::audit::RelayAuditEvent) -> crate::types::RelayHo
         detail: text("detail"),
         effect: data.get("effect").and_then(Value::as_bool),
         response_bytes: data.get("response_bytes").and_then(Value::as_u64),
+        // What a FORWARDED hop carried outside its shape's declared vocabulary — an observation the
+        // broker wrote, read by name like everything else here, so a row that never carried it
+        // simply leaves it absent.
+        undeclared_keys: data
+            .get("undeclared_keys")
+            .and_then(Value::as_array)
+            .map(|keys| {
+                keys.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            }),
         burned: data.get("burned").and_then(Value::as_bool),
         closed: text("closed"),
     }

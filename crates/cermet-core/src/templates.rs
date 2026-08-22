@@ -40,10 +40,10 @@ const MAX_STRING_CHARS: usize = 256 * 1024;
 // ---- Relay-predicate caps (a predicate is human-reviewed; keep it small) ----
 /// Sized to admit the unlinked CLI's `GET /v1/teams` opening hop. This is a
 /// keep-it-readable bound on a HUMAN-reviewed document, not a trust boundary — every rule it admits
-/// is still a closed method+path+query+body allowlist.
+/// still matches on method+path and enforces every bind it declares.
 const MAX_PREDICATE_RULES: usize = 9;
 const MAX_PREDICATE_QUERY_KEYS: usize = 16;
-/// Cap on one rule's `body_keys` allowlist. Wider than the query cap because a real create
+/// Cap on one rule's declared `body_keys`. Wider than the query cap because a real create
 /// payload is wide (Vercel's create-deployment body has ~15 legitimate top-level fields), and still a
 /// list a human reads in one screen.
 const MAX_PREDICATE_BODY_KEYS: usize = 32;
@@ -302,16 +302,15 @@ pub struct TemplateField {
 /// enforceable surface of a relay grant — a hop matching no rule is refused and burns the grant.
 ///
 /// `path` is a `/`-rooted literal path in which a `*` segment matches exactly one path segment
-/// (`/v13/deployments/*`, `/v2/deployments/*/events`). `query_keys` is the closed allowlist of query
-/// parameter names the hop may carry — absent means NO query string is admitted, so a scope-redirecting
-/// parameter (Vercel's `teamId`/`slug`) can never ride along unless a human ratified it here (an
-/// injected "deploy to the other team" is refused the same as a legitimate one). `body_keys` is the
-/// same closed allowlist for TOP-LEVEL body keys, and it is REQUIRED on any rule that binds: checking
-/// two keys while waving the rest of the body through is how
-/// `project`/`deploymentId`/`customEnvironmentSlugOrId` would each have overridden a frozen field.
-/// `bind` maps a request location to a FROZEN field name: the relay reads that location out of the
-/// hop and refuses unless it equals the approved value — whether the mismatch came from an injected
-/// `target: production` or a fat-fingered `--prod`. `once` marks THE single effect —
+/// (`/v13/deployments/*`, `/v2/deployments/*/events`); method and path together are the whole shape
+/// match. `query_keys` and `body_keys` are the shape's declared VOCABULARY — the parameter names and
+/// TOP-LEVEL body keys it knows about, and therefore the ones a sentence may pin. They gate nothing
+/// on their own: a key outside them is forwarded and NAMED on the hop's own record.
+/// `bind` is the enforcement. It maps a request location to a FROZEN field name: the relay reads
+/// that location out of the hop and refuses unless it equals the approved value — whether the
+/// mismatch came from an injected `target: production` or a fat-fingered `--prod`. So a value that
+/// carries authority (Vercel's `teamId` names the account scope a deploy lands in) is BOUND, which
+/// is what a hop is judged on. `once` marks THE single effect —
 /// exactly one rule per relay verb carries it, and it may pass at most once per grant.
 ///
 /// A bind value is `<field>` or `<field>|omit:<literal>` — the SAME `omit:` spelling the constructed
@@ -332,10 +331,11 @@ pub struct PredicateRule {
     pub(crate) path: String,
     #[serde(default)]
     pub(crate) query_keys: Vec<String>,
-    /// The closed allowlist of TOP-LEVEL body keys this shape admits, beyond the ones it
-    /// binds (a bound key is admitted implicitly). REQUIRED on any rule that binds — otherwise the
-    /// rule would check two keys and wave the rest of the body through. Absent means no body check at
-    /// all, which is only legal for a rule with no binds (an opaque upload).
+    /// The TOP-LEVEL body keys this shape declares it knows about, beyond the ones it binds (a
+    /// bound key is implicit). REQUIRED on any rule that binds a body key — the declaration is what
+    /// makes the record able to say which keys a hop carried BEYOND the shape's own vocabulary.
+    /// Absent means the body is never parsed at all, which is only legal for a rule with no body
+    /// binds (an opaque upload).
     #[serde(default)]
     pub(crate) body_keys: Option<Vec<String>>,
     #[serde(default)]
@@ -376,8 +376,8 @@ pub struct RelayCaps {
 }
 
 /// The request position a bind reads. Both carry authority: a body key names WHAT is deployed, a
-/// query key names WHERE it lands (Vercel's `teamId` is the account scope, and the
-/// matcher used to check only that the key was in the allowlist).
+/// query key names WHERE it lands (Vercel's `teamId` is the account scope, and the matcher used to
+/// check only that the key was declared — membership was never an answer to a wrong value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindLocation {
     /// A top-level JSON body key.
@@ -493,8 +493,8 @@ fn parse_bind_value(value: &str) -> Result<(String, Option<String>), String> {
 }
 
 impl PredicateRule {
-    /// The closed top-level body-key allowlist, or `None` for a rule that declares no body
-    /// check at all (legal only with no binds — an opaque upload body).
+    /// The declared top-level body vocabulary, or `None` for a rule that declares none at all
+    /// (legal only with no body binds — an opaque upload body).
     pub fn body_keys(&self) -> Option<&[String]> {
         self.body_keys.as_deref()
     }
@@ -2473,8 +2473,9 @@ impl ActionTemplate {
                     rule.method, rule.path
                 ));
             }
-            // A rule that inspects the body must close it. Two ratified keys plus an open
-            // remainder is not a closed surface — Vercel's `project` alone voids the identity pin.
+            // A rule that PINS a body key must declare the vocabulary it is pinning within:
+            // without it, the record has no baseline for saying which keys a hop carried beyond
+            // what the shape knows about.
             match &rule.body_keys {
                 Some(_) if matches!(rule.method.as_str(), "GET" | "DELETE") => {
                     return Err(format!(
@@ -2485,8 +2486,8 @@ impl ActionTemplate {
                 None if binds_a_body_key => {
                     return Err(format!(
                         "{ctx}: predicate rule `{} {}` binds a body key but declares no `body_keys` \
-                         allowlist; a rule that inspects the body must close it (declare \
-                         `body_keys: []` to admit only the bound keys)",
+                         vocabulary; a rule that pins a body key must declare what the shape knows \
+                         about (`body_keys: []` for a shape whose vocabulary is only what it binds)",
                         rule.method, rule.path
                     ));
                 }
@@ -2632,9 +2633,9 @@ impl ActionTemplate {
                             ));
                         }
                     }
-                    // The two query dimensions must agree. A value bind on a key the
-                    // shape's own allowlist never admits is dead enforcement — the hop already
-                    // refuses at key closure — and it reads as protection that is not there.
+                    // A shape's declared vocabulary must contain everything it pins. Otherwise the
+                    // shape claims not to know about a key it enforces, and the hop record would
+                    // report that PINNED key as one the shape does not enumerate.
                     BindLocation::Query(key) => {
                         if !is_response_key(key) {
                             return Err(format!(
@@ -2645,8 +2646,8 @@ impl ActionTemplate {
                         if !rule.query_keys.iter().any(|allowed| allowed == key) {
                             return Err(format!(
                                 "{ctx}: predicate rule `{} {}` binds query key `{key}`, which its \
-                                 `query_keys` allowlist does not admit — a value bind on a key that \
-                                 can never arrive enforces nothing",
+                                 `query_keys` vocabulary does not declare — a shape must know about \
+                                 every key it pins",
                                 rule.method, rule.path
                             ));
                         }
