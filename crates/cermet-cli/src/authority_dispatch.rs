@@ -91,7 +91,12 @@ pub fn dispatch_authority_command(
             let client = reconciliation()?;
             match command {
                 crate::preset::PresetCommand::List => {
-                    crate::preset::run_preset_list(&client).into()
+                    // The live profile is the daemon's own read-time join — asked for here, so an
+                    // unreachable daemon costs the listing its marker, never the listing.
+                    let live = reconciliation::ReconciliationClient::authority_status(&client)
+                        .ok()
+                        .and_then(|status| status.profile);
+                    crate::preset::run_preset_list(&client, live.as_deref()).into()
                 }
                 crate::preset::PresetCommand::Apply { name, recover } => {
                     crate::preset::run_preset_apply(

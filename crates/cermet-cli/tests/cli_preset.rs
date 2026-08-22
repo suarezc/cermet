@@ -14,7 +14,7 @@ use std::sync::Arc;
 use cermet_cli::preset::{
     run_preset_apply, run_preset_export, run_preset_list, ExportTarget, PresetCommand,
 };
-use cermet_cli::reconciliation::{run_apply, CtlReconciliationClient};
+use cermet_cli::reconciliation::{run_apply, CtlReconciliationClient, ReconciliationClient};
 use cermet_cli::tty::ScriptedTerminal;
 use cermet_cli::{parse, CliCommand, CliError};
 use cermet_ctl_client::broker_client::CtlBrokerClient;
@@ -211,23 +211,92 @@ async fn a_plain_document_path_stores_no_preset_and_keeps_the_pinned_flow() {
 
 // ---- list ---------------------------------------------------------------------------------------
 
+/// The listing with the daemon's own live join, as the CLI assembles it.
+async fn listed(client: &CtlBrokerClient) -> String {
+    blocking(client, |ctl| {
+        let live = ctl
+            .authority_status()
+            .ok()
+            .and_then(|status| status.profile);
+        run_preset_list(&ctl, live.as_deref())
+    })
+    .await
+    .text
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn preset_list_renders_the_stored_keys_with_their_rule_count() {
     let (fx, _state) = fixture();
     ingest(&fx.client, "designer", DESIGNER).await;
     ingest(&fx.client, "builder", BUILDER).await;
 
-    let output = blocking(&fx.client, |ctl| run_preset_list(&ctl)).await;
+    let text = listed(&fx.client).await;
+    assert!(text.contains("designer"), "{text}");
+    assert!(text.contains("builder"), "{text}");
+    assert!(text.contains("PRESET"), "{text}");
+}
+
+/// The live row is marked, and the mark MOVES when a different profile is applied — it is a
+/// comparison against the served corpus, not a column anything wrote down.
+#[tokio::test(flavor = "multi_thread")]
+async fn preset_list_marks_the_profile_the_daemon_is_serving() {
+    let (fx, _state) = fixture();
+    ingest(&fx.client, "designer", DESIGNER).await;
+    ingest(&fx.client, "builder", BUILDER).await;
+
+    let text = listed(&fx.client).await;
+    assert_eq!(text.matches("● live").count(), 1, "{text}");
+    let marked = text
+        .lines()
+        .find(|line| line.contains("● live"))
+        .expect("a marked row");
+    assert!(marked.starts_with("builder"), "{text}");
+
+    // Applying the other profile moves the mark; nothing was stored to make that happen.
+    ingest(&fx.client, "designer", DESIGNER).await;
+    let text = listed(&fx.client).await;
+    assert_eq!(text.matches("● live").count(), 1, "{text}");
+    assert!(
+        text.lines()
+            .find(|line| line.contains("● live"))
+            .expect("a marked row")
+            .starts_with("designer"),
+        "{text}"
+    );
+}
+
+/// A corpus that no stored profile holds leaves every row unmarked.
+#[tokio::test(flavor = "multi_thread")]
+async fn preset_list_marks_nothing_when_the_live_corpus_is_not_a_stored_profile() {
+    let (fx, _state) = fixture();
+    ingest(&fx.client, "designer", DESIGNER).await;
+
+    // Apply an unstored body through the pinned document flow: it becomes live under no key.
+    let dir = tempfile::tempdir().unwrap();
+    let path = document_at(dir.path(), "CERMET.md", BUILDER);
+    let output = blocking(&fx.client, move |ctl| {
+        run_apply(
+            &ctl,
+            &path,
+            Some(&path),
+            true,
+            false,
+            &ScriptedTerminal::new(true, "", vec![true]),
+            &FixedPresence(PresenceOutcome::Confirmed),
+        )
+    })
+    .await;
     assert_eq!(output.exit_code, 0, "{}", output.text);
-    assert!(output.text.contains("designer"), "{}", output.text);
-    assert!(output.text.contains("builder"), "{}", output.text);
-    assert!(output.text.contains("PRESET"), "{}", output.text);
+
+    let text = listed(&fx.client).await;
+    assert!(text.contains("designer"), "{text}");
+    assert!(!text.contains("● live"), "{text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn preset_list_says_so_when_nothing_is_stored() {
     let (fx, _state) = fixture();
-    let output = blocking(&fx.client, |ctl| run_preset_list(&ctl)).await;
+    let output = blocking(&fx.client, |ctl| run_preset_list(&ctl, None)).await;
     assert_eq!(output.exit_code, 0, "{}", output.text);
     assert!(output.text.contains("doc apply"), "{}", output.text);
 }

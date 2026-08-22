@@ -311,15 +311,16 @@ Two prerequisites nobody tells you: you must be in the `cermet-approvers` group 
 echo confirm needs a **TTY**. `--yes` skips only that CLI-side echo — never the presence gate.
 
 **The durable way — CERMET.md in your repo.** The document flow needs a **git repository**. Run it
-anywhere else and it exits `2`, saying so on two lines:
+anywhere else and it exits `2`, saying so:
 
 ```
 init: repository unavailable
-state: repo_invalid
+active_profile: none — no corpus has been applied
+directory_file: none — no CERMET.md found from this directory
 ```
 
-(`state` is the field to branch on — there is no field literally named `repository`.) It also needs
-the file to exist first:
+(The EXIT CODE is what to branch on: `0` aligned, `1` drift, `2` unusable.) It also needs the file
+to exist first:
 
 ```bash
 cermet doc check --init   # seeds CERMET.md from the LIVE corpus, with its pin
@@ -328,10 +329,18 @@ cermet doc diff           # what your document says vs what is served (exits 1 w
 cermet doc apply          # presence-gated; makes it live and re-pins the hash
 ```
 
-`doc check --init` prints `state: aligned`. After an edit, `doc diff` and `doc status` both
-report `state: unapplied_document` with the candidate / marker / live digests, and `doc diff`
-then shows the change itself — a minimal unified diff in the direction apply moves, so adding
-one sentence is one `+` line:
+`doc check --init` prints `state: aligned`. `doc status` afterwards answers two questions — what
+the daemon is serving, and what is in this directory — and both digests are truncated to the same
+width, so equal prefixes mean the file IS what is live:
+
+```
+active_profile: (unnamed) 4b8004bd4e13
+directory_file: CERMET.md 4b8004bd4e13
+```
+
+After an edit the prefixes differ and both `doc status` and `doc diff` exit `1`; `doc diff` then
+shows the change itself — a minimal unified diff in the direction apply moves, so adding one
+sentence is one `+` line:
 
 ```
 --- live
@@ -368,7 +377,7 @@ is a body a human read and attested, exactly like the live corpus.
 Then switch between them by name:
 
 ```bash
-cermet preset list                    # every stored profile: name, rules, when it was stored
+cermet preset list                    # every stored profile; the served one is marked ● live
 cermet preset designer                # install that profile
 cermet preset export designer         # write it back out as CERMET_designer.md
 ```

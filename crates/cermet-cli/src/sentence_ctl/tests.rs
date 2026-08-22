@@ -121,7 +121,11 @@ impl StagedSentenceClient for BackendClient {
                 }
             }
         };
-        let status = SentenceAuthorityStatus { sentence, lockdown };
+        let status = SentenceAuthorityStatus {
+            sentence,
+            lockdown,
+            profile: None,
+        };
         if let Some(token) = self.0.pending_commit.lock().unwrap().take() {
             *self.0.live.lock().unwrap() = Some(token);
         }
@@ -854,6 +858,7 @@ fn document_observer_winner_replaces_the_earlier_success_and_lockdown_receipt() 
         status: SentenceAuthorityStatus {
             sentence: SentenceSnapshot::Absent,
             lockdown: LockdownSnapshot::Engaged,
+            profile: None,
         },
     }));
 

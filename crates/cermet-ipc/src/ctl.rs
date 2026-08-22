@@ -52,6 +52,13 @@ pub enum LockdownSnapshot {
 pub struct SentenceAuthorityStatus {
     pub sentence: SentenceSnapshot,
     pub lockdown: LockdownSnapshot,
+    /// The stored profile whose body IS the served corpus, joined at READ against the profile
+    /// table. `None` when nothing is served or no stored body matches — the join stores nothing,
+    /// so a corpus that is edited away from the profile it came from stops being named by it.
+    ///
+    /// It rides on this read rather than on a second one so the name and the digest a caller
+    /// renders side by side come from one observation of the daemon.
+    pub profile: Option<String>,
 }
 
 /// The typed inert result of staging one exact canonical sentence corpus.

@@ -272,6 +272,7 @@ fn absent() -> SentenceAuthorityStatus {
     SentenceAuthorityStatus {
         sentence: SentenceSnapshot::Absent,
         lockdown: LockdownSnapshot::Clear,
+        profile: None,
     }
 }
 
@@ -288,7 +289,22 @@ fn served(text: &str) -> SentenceAuthorityStatus {
             rule_count: rules.rules.len(),
         },
         lockdown: LockdownSnapshot::Clear,
+        profile: None,
     }
+}
+
+/// The same served corpus, with the daemon's read-time join naming the stored profile it is.
+fn served_as(profile: &str, text: &str) -> SentenceAuthorityStatus {
+    SentenceAuthorityStatus {
+        profile: Some(profile.into()),
+        ..served(text)
+    }
+}
+
+/// The leading hex the status lines print for a corpus body.
+fn short_of(text: &str) -> String {
+    let rules = parse_rules(text).unwrap();
+    authority_digest_for(rules.version, &canonical_rule_bytes(&rules))[..12].to_string()
 }
 
 fn unserved(text: &str) -> SentenceAuthorityStatus {
@@ -312,6 +328,7 @@ fn unserved(text: &str) -> SentenceAuthorityStatus {
             rule_count,
         },
         lockdown: LockdownSnapshot::Engaged,
+        profile: None,
     }
 }
 
@@ -322,6 +339,7 @@ fn corrupt() -> SentenceAuthorityStatus {
             reason: "content-free".into(),
         },
         lockdown: LockdownSnapshot::Engaged,
+        profile: None,
     }
 }
 
@@ -351,6 +369,10 @@ fn marker_for(body: &str) -> AuthorityMarker {
     AuthorityMarker::from_digest(analysis.digest)
 }
 
+/// Drive `doc status` over one document/live pair and pin the drift verdict.
+///
+/// The verdict is no longer a printed row — the EXIT CODE is what a caller branches on — so it is
+/// held against the classifier the same run uses, and the printed shape is checked separately.
 fn assert_composed_status(
     body: &str,
     marker: AuthorityMarker,
@@ -362,15 +384,240 @@ fn assert_composed_status(
     write_document(repo.path(), &marker, body.as_bytes(), "ordinary prose");
     let text = run_status(&FakeClient::new(vec![status.clone()]), repo.path(), false);
     assert_eq!(text.exit_code, exit, "{}", text.text);
-    assert!(
-        text.text.starts_with(&format!("state: {expected}\n")),
-        "{}",
-        text.text
-    );
-    let json = run_status(&FakeClient::new(vec![status]), repo.path(), true);
+    let json = run_status(&FakeClient::new(vec![status.clone()]), repo.path(), true);
     assert_eq!(json.exit_code, exit, "{}", json.text);
+
+    let document = observe_document(&FakeClient::new(vec![status.clone()]), repo.path());
+    let observed = compose_state(&document, status.as_ref().ok());
+    assert_eq!(drift_name(&observed.drift), expected);
+}
+
+/// The rendered lines of one `doc status`, keyed by their field.
+fn status_lines(status: Result<SentenceAuthorityStatus, String>, start: &Path) -> Vec<String> {
+    run_status(&FakeClient::new(vec![status]), start, false)
+        .text
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn value_of<'a>(lines: &'a [String], field: &str) -> &'a str {
+    lines
+        .iter()
+        .find_map(|line| line.strip_prefix(&format!("{field}: ")))
+        .unwrap_or_else(|| panic!("no `{field}` line in {lines:?}"))
+}
+
+/// The whole shape of the surface: the DAEMON's corpus, then THIS directory's file, and nothing
+/// else. The two subjects are independent — one is global to the box, one is where you stand — so
+/// they are reported as two lines rather than blended into one verdict.
+#[test]
+fn status_reports_the_live_corpus_and_this_directorys_file_as_two_lines() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("designer {}", short_of(body))
+    );
+    assert_eq!(
+        value_of(&lines, "directory_file"),
+        format!("CERMET.md {}", short_of(body))
+    );
+
+    // The two truncations are the same width on purpose: equal prefixes, by eye, mean this file is
+    // what is live.
+    let live = value_of(&lines, "active_profile")
+        .split_whitespace()
+        .last()
+        .unwrap();
+    let file = value_of(&lines, "directory_file")
+        .split_whitespace()
+        .last()
+        .unwrap();
+    assert_eq!(live, file);
+    assert_eq!(live.len(), 12);
+
+    // None of the retired internal parameters survive.
+    for retired in [
+        "state:",
+        "document:",
+        "candidate:",
+        "marker:",
+        "live:",
+        "live_state:",
+        "canonical:",
+    ] {
+        assert!(
+            !lines.join("\n").contains(retired),
+            "{retired} in {lines:?}"
+        );
+    }
+}
+
+/// A document that is not what is live gets a visibly different prefix — the whole point of
+/// printing both at one width.
+#[test]
+fn a_directory_file_that_differs_from_live_shows_a_different_prefix() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let live = "allow stripe.refund where amount <= 200\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served_as("designer", live)), repo.path());
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("designer {}", short_of(live))
+    );
+    assert_eq!(
+        value_of(&lines, "directory_file"),
+        format!("CERMET.md {}", short_of(body))
+    );
+    assert_ne!(short_of(live), short_of(body));
+}
+
+/// The daemon's answer does not depend on where the caller stands: the same live corpus is named
+/// the same way from a repository, from an empty repository, and from no repository at all.
+#[test]
+fn the_active_profile_is_the_daemons_and_does_not_move_with_the_directory() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let expected = format!("designer {}", short_of(body));
+
+    let with_document = repository();
+    write_document(
+        with_document.path(),
+        &marker_for(body),
+        body.as_bytes(),
+        "prose",
+    );
+    let empty = repository();
+    let outside = tempfile::tempdir().unwrap();
+
+    for start in [with_document.path(), empty.path(), outside.path()] {
+        let lines = status_lines(Ok(served_as("designer", body)), start);
+        assert_eq!(value_of(&lines, "active_profile"), expected, "{start:?}");
+    }
+}
+
+/// A live corpus no stored profile holds is named plainly rather than left blank or given a
+/// borrowed name.
+#[test]
+fn a_live_corpus_no_profile_holds_is_marked_unnamed() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let lines = status_lines(Ok(served(body)), repo.path());
+    assert_eq!(
+        value_of(&lines, "active_profile"),
+        format!("(unnamed) {}", short_of(body))
+    );
+}
+
+/// No file here is an ABSENCE — a fact about the directory — and never a failure word. The words
+/// this test refuses are the ones that read as a broken daemon.
+#[test]
+fn a_directory_with_no_document_states_the_absence_in_plain_language() {
+    let empty = repository();
+    let outside = tempfile::tempdir().unwrap();
+
+    for start in [empty.path(), outside.path()] {
+        let lines = status_lines(Ok(absent()), start);
+        assert_eq!(
+            value_of(&lines, "directory_file"),
+            "none — no CERMET.md found from this directory",
+            "{start:?}"
+        );
+        let text = lines.join("\n");
+        for failure_word in ["invalid", "unknown", "repo_invalid", "error"] {
+            assert!(!text.contains(failure_word), "{failure_word} in {text}");
+        }
+    }
+}
+
+/// A file that exists and cannot be prepared says so plainly and names the command that explains
+/// it, rather than printing a classification only the source explains.
+#[test]
+fn a_document_that_does_not_parse_says_so_and_points_at_doc_check() {
+    let repo = repository();
+    std::fs::write(repo.path().join("CERMET.md"), b"not a managed document").unwrap();
+    let lines = status_lines(Ok(absent()), repo.path());
+    let value = value_of(&lines, "directory_file");
+    assert!(
+        value.starts_with("CERMET.md — it could not be read as a managed document"),
+        "{value}"
+    );
+    assert!(value.contains("cermet doc check"), "{value}");
+}
+
+/// An engaged latch means the corpus named above is authorizing nothing. Printing the two lines
+/// alone while that is true would describe a box the operator is not on.
+#[test]
+fn the_lockdown_line_appears_only_while_the_latch_is_engaged() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let clear = status_lines(Ok(served_as("designer", body)), repo.path());
+    assert_eq!(clear.len(), 2, "{clear:?}");
+    assert!(!clear.join("\n").contains("lockdown"), "{clear:?}");
+
+    let engaged = SentenceAuthorityStatus {
+        lockdown: LockdownSnapshot::Engaged,
+        ..served_as("designer", body)
+    };
+    let latched = status_lines(Ok(engaged), repo.path());
+    assert_eq!(latched.len(), 3, "{latched:?}");
+    assert!(
+        latched[2].starts_with("lockdown: engaged — "),
+        "{latched:?}"
+    );
+}
+
+/// The `--json` form answers the same two questions, so a scripted caller and a human read one
+/// vocabulary. An unreachable daemon says exactly that.
+#[test]
+fn the_json_form_carries_the_same_two_answers() {
+    let body = "allow stripe.refund where amount <= 100\n";
+    let repo = repository();
+    write_document(repo.path(), &marker_for(body), body.as_bytes(), "prose");
+
+    let json = run_status(
+        &FakeClient::new(vec![Ok(served_as("designer", body))]),
+        repo.path(),
+        true,
+    );
     let value: serde_json::Value = serde_json::from_str(&json.text).unwrap();
-    assert_eq!(value["state"], expected, "{value}");
+    assert_eq!(
+        value["active_profile"],
+        format!("designer {}", short_of(body))
+    );
+    assert_eq!(
+        value["directory_file"],
+        format!("CERMET.md {}", short_of(body))
+    );
+    assert_eq!(value["lockdown"], "clear");
+
+    let unavailable = status_lines(Err("transport canary".into()), repo.path());
+    assert_eq!(
+        value_of(&unavailable, "active_profile"),
+        "none — the daemon could not be asked"
+    );
+
+    let failure = status_json_failure();
+    let value: serde_json::Value = serde_json::from_str(&failure.text).unwrap();
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(
+        value["directory_file"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(failure.exit_code, 2);
 }
 
 #[test]
@@ -395,19 +642,11 @@ fn status_composes_typed_candidate_marker_and_live_dimensions() {
     let missing = repository();
     let missing_output = run_status(&FakeClient::new(vec![Ok(absent())]), missing.path(), true);
     assert_eq!(missing_output.exit_code, 1);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&missing_output.text).unwrap()["state"],
-        "repo_missing"
-    );
 
     let invalid = repository();
     std::fs::write(invalid.path().join("CERMET.md"), b"not a managed document").unwrap();
     let invalid_output = run_status(&FakeClient::new(vec![Ok(absent())]), invalid.path(), true);
     assert_eq!(invalid_output.exit_code, 2);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&invalid_output.text).unwrap()["state"],
-        "repo_invalid"
-    );
 
     assert_composed_status(a, marker_for(a), Ok(unserved(a)), "dataplane_unserved", 2);
     assert_composed_status(a, marker_for(a), Ok(corrupt()), "dataplane_corrupt", 2);
@@ -766,8 +1005,12 @@ fn init_existing_document_observes_live_after_document_preparation() {
 
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(output.text.contains("already exists"), "{}", output.text);
+    // The report names the corpus observed AFTER the document was prepared, not the one read
+    // before it.
     assert!(
-        output.text.contains("state: unexported_live"),
+        output
+            .text
+            .contains(&format!("active_profile: (unnamed) {}", short_of(second))),
         "{}",
         output.text
     );
@@ -970,7 +1213,9 @@ fn status_and_diff_recheck_the_file_after_their_last_daemon_call() {
 
         assert_eq!(output.exit_code, 2, "{}", output.text);
         assert!(
-            output.text.contains("state: repo_invalid"),
+            output
+                .text
+                .contains("CERMET.md — it could not be read as a managed document"),
             "{}",
             output.text
         );
@@ -1030,10 +1275,18 @@ fn comments_only_source_is_draft_not_aligned_no_authority() {
 
     let output = run_status(&client, repo.path(), true);
 
+    // A comments-only body is a DRAFT: it has a candidate digest of its own, and the daemon is
+    // serving nothing.
     assert_eq!(output.exit_code, 1, "{}", output.text);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "unapplied_document", "{value}");
-    assert_eq!(value["canonical"], false, "{value}");
+    assert_eq!(value["active_profile"], "none — no corpus has been applied");
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md "),
+        "{value}"
+    );
 }
 
 #[test]
@@ -1227,8 +1480,14 @@ fn status_json_remains_json_when_repository_discovery_fails() {
     );
     assert_eq!(output.exit_code, 2);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown");
-    assert_eq!(value["document"], "invalid");
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
+    assert_eq!(
+        value["directory_file"],
+        "none — no CERMET.md found from this directory"
+    );
 }
 
 #[test]
@@ -1240,8 +1499,10 @@ fn status_unknown_is_stable_and_never_echoes_transport_or_prose() {
     let output = run_status(&client, repo.path(), true);
     assert_eq!(output.exit_code, 2);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown");
-    assert_eq!(value["document"], "valid");
+    assert_eq!(
+        value["active_profile"],
+        "none — the daemon could not be asked"
+    );
     assert!(!output.text.contains(CANARY));
     assert!(!output.text.contains("SECRET_TRANSPORT_DETAIL"));
     assert_eq!(client.inputs(), vec![String::new()]);
@@ -1252,9 +1513,14 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
     let missing = repository();
     let output = run_status(&FakeClient::new(vec![Ok(corrupt())]), missing.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "missing", "{value}");
-    assert_eq!(value["live_state"], "corrupt", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let invalid = repository();
@@ -1267,8 +1533,17 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
         true,
     );
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unserved", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — a stored corpus is not being served",
+        "{value}"
+    );
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md — it could not be read"),
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let outside = tempfile::tempdir().unwrap();
@@ -1278,18 +1553,30 @@ fn repository_and_daemon_dimensions_are_observed_independently() {
         true,
     );
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 
     let diff = run_diff(&FakeClient::new(vec![Ok(corrupt())]), missing.path());
     assert_eq!(diff.exit_code, 2, "{}", diff.text);
     assert!(
-        diff.text.contains("state: dataplane_corrupt"),
+        diff.text
+            .contains("active_profile: none — the daemon's corpus record is unreadable"),
         "{}",
         diff.text
     );
-    assert!(diff.text.contains("document: missing"), "{}", diff.text);
+    assert!(
+        diff.text
+            .contains("directory_file: none — no CERMET.md found from this directory"),
+        "{}",
+        diff.text
+    );
     assert!(diff.text.contains("lockdown: engaged"), "{}", diff.text);
 }
 
@@ -1331,9 +1618,16 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     );
     let output = run_status(&unavailable, repo.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "unavailable", "{value}");
-    assert_eq!(value["live_state"], "served", "{value}");
+    assert_eq!(output.exit_code, 2, "{value}");
+    assert_eq!(
+        value["directory_file"], "CERMET.md — the daemon could not be asked to prepare it",
+        "{value}"
+    );
+    assert_eq!(
+        value["active_profile"],
+        format!("(unnamed) {}", short_of(body)),
+        "{value}"
+    );
 
     let semantic = FakeClient::with_prepare_failures(
         vec![Ok(served(body))],
@@ -1341,22 +1635,28 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     );
     let output = run_status(&semantic, repo.path(), true);
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "repo_invalid", "{value}");
-    assert_eq!(value["document"], "invalid", "{value}");
+    assert_eq!(output.exit_code, 2, "{value}");
+    assert!(
+        value["directory_file"]
+            .as_str()
+            .unwrap()
+            .starts_with("CERMET.md — it could not be read"),
+        "{value}"
+    );
 
     let live_prepare_unavailable = FakeClient::with_prepare_failures(
         vec![Ok(served(body))],
         vec![None, Some(PreparationFailure::Unavailable)],
     );
     let output = run_diff(&live_prepare_unavailable, repo.path());
+    // A transport failure may not be dressed up as a durable claim about the record: the corpus
+    // the daemon reported is still what is named, and nothing says it stopped being served.
     assert_eq!(output.exit_code, 2, "{}", output.text);
+    assert!(!output.text.contains("not being served"), "{}", output.text);
     assert!(
-        output.text.contains("state: dataplane_unknown"),
-        "{}",
-        output.text
-    );
-    assert!(
-        !output.text.contains("state: dataplane_unserved"),
+        output
+            .text
+            .contains(&format!("active_profile: (unnamed) {}", short_of(body))),
         "{}",
         output.text
     );
@@ -1371,7 +1671,9 @@ fn transport_unavailability_never_becomes_semantic_invalid_or_unserved() {
     let output = run_diff(&live_prepare_invalid, repo.path());
     assert_eq!(output.exit_code, 2, "{}", output.text);
     assert!(
-        output.text.contains("state: dataplane_unserved"),
+        output
+            .text
+            .contains("active_profile: none — a stored corpus is not being served"),
         "{}",
         output.text
     );
@@ -1390,9 +1692,14 @@ fn known_daemon_corruption_dominates_prepare_transport_failure_without_masking_d
     let output = run_status(&client, repo.path(), true);
 
     let value: serde_json::Value = serde_json::from_str(&output.text).unwrap();
-    assert_eq!(value["state"], "dataplane_corrupt", "{value}");
-    assert_eq!(value["document"], "unavailable", "{value}");
-    assert_eq!(value["live_state"], "corrupt", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon's corpus record is unreadable",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "CERMET.md — the daemon could not be asked to prepare it",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "engaged", "{value}");
 }
 

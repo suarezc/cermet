@@ -20,6 +20,23 @@ use crate::sentence_custody::{CorpusDocumentObservation, CorpusDocumentSync};
 
 const TERMINAL_RECONCILIATION_ROUNDS: usize = 3;
 
+/// How much of a canonical digest the status lines show. Long enough that two unrelated corpora do
+/// not collide by accident, short enough that a human compares the two prefixes at a glance.
+const DIGEST_PREFIX: usize = 12;
+
+/// How the status lines say "there is nothing here". Every use is followed by a plain-language
+/// reason: an absence is a fact about the box, not a failure of the command reporting it.
+const ABSENT: &str = "none";
+
+/// What a live corpus is called when no stored profile holds that exact body — it was applied from
+/// a document, or edited away from the profile it came from.
+const UNNAMED_PROFILE: &str = "(unnamed)";
+
+/// The one document name the repository flow reads and writes.
+const DOCUMENT_NAME: &str = "CERMET.md";
+
+const LOCKDOWN_ENGAGED: &str = "engaged";
+
 /// Just the key from a stored-profile row — all the post-commit verification read needs.
 #[derive(serde::Deserialize)]
 struct StoredPresetName {
@@ -161,6 +178,10 @@ struct PreparedDocument {
 }
 
 enum DocumentView {
+    /// No document location was reachable at all: no repository root above this directory, or a
+    /// root that could not be opened safely. Held apart from [`DocumentView::Invalid`] because it
+    /// is an ABSENCE — there is no file here — and reads as one on the status surface.
+    NoRepository,
     Missing,
     Invalid(String),
     ProviderDisabled,
@@ -168,26 +189,24 @@ enum DocumentView {
     Prepared(Box<PreparedDocument>),
 }
 
+/// The two subjects `doc status` reports, already rendered, plus the drift verdict the exit code
+/// carries.
+///
+/// They are deliberately separate: [`Self::active_profile`] is the DAEMON's live corpus — one
+/// global answer, the same from any directory on the box — and [`Self::directory_file`] is the
+/// `CERMET.md` reachable from where the command ran. Reporting them as one blended verdict is what
+/// made the same daemon look like it gave different answers depending on the caller's cwd.
 struct ObservedState {
     drift: DriftState,
-    document: &'static str,
-    candidate: Option<String>,
-    marker: Option<String>,
-    live: Option<String>,
-    live_state: &'static str,
-    canonical: Option<bool>,
+    active_profile: String,
+    directory_file: String,
     lockdown: &'static str,
 }
 
 #[derive(Serialize)]
 struct StatusView<'a> {
-    state: &'a str,
-    document: &'a str,
-    candidate: Option<&'a str>,
-    marker: Option<&'a str>,
-    live: Option<&'a str>,
-    live_state: &'a str,
-    canonical: Option<bool>,
+    active_profile: &'a str,
+    directory_file: &'a str,
     lockdown: &'a str,
 }
 
@@ -196,10 +215,7 @@ pub fn run_init(client: &dyn ReconciliationClient, start: &Path) -> Reconciliati
         Ok(store) => store,
         Err(_) => {
             let status = client.authority_status().ok();
-            let observed = compose_state(
-                &DocumentView::Invalid("repository unavailable".into()),
-                status.as_ref(),
-            );
+            let observed = compose_state(&DocumentView::NoRepository, status.as_ref());
             return operation_failure("init: repository unavailable", &observed);
         }
     };
@@ -243,8 +259,7 @@ pub fn run_init(client: &dyn ReconciliationClient, start: &Path) -> Reconciliati
                 Ok(_) => {}
                 Err(PreparationFailure::Invalid(_)) => {
                     observed.drift = DriftState::DataPlaneUnserved;
-                    observed.live = None;
-                    observed.live_state = "unserved";
+                    observed.active_profile = unserved_profile();
                     return operation_failure("init: served snapshot is not preparable", &observed);
                 }
                 Err(PreparationFailure::ProviderDisabled) => return provider_disabled(),
@@ -318,6 +333,8 @@ pub fn run_check(
         }
         DocumentView::ProviderDisabled => return provider_disabled(),
         DocumentView::Unavailable => return malformed("check: dataplane unavailable"),
+        // `prepare_document` is reached only through an opened store, so there is a repository.
+        DocumentView::NoRepository => return malformed("repository: unavailable"),
     };
     let digest = display_digest(&prepared.prepared.canonical_digest);
     if !fix {
@@ -473,8 +490,7 @@ pub fn run_diff(client: &dyn ReconciliationClient, start: &Path) -> Reconciliati
             Ok(prepared) => Some(prepared),
             Err(PreparationFailure::Invalid(_)) => {
                 observed.drift = DriftState::DataPlaneUnserved;
-                observed.live = None;
-                observed.live_state = "unserved";
+                observed.active_profile = unserved_profile();
                 None
             }
             Err(PreparationFailure::ProviderDisabled) => return provider_disabled(),
@@ -518,10 +534,7 @@ pub fn run_export(
         Ok(store) => store,
         Err(_) => {
             let authority = client.authority_status().ok();
-            let observed = compose_state(
-                &DocumentView::Invalid("repository unavailable".into()),
-                authority.as_ref(),
-            );
+            let observed = compose_state(&DocumentView::NoRepository, authority.as_ref());
             return operation_failure("export: repository unavailable", &observed);
         }
     };
@@ -550,6 +563,10 @@ pub fn run_export(
         DocumentView::Unavailable => {
             return operation_failure("export: dataplane unavailable", &observed);
         }
+        // `prepare_document` is reached only through an opened store, so there is a repository.
+        DocumentView::NoRepository => {
+            return operation_failure("export: repository unavailable", &observed);
+        }
     };
     let (live_marker, live_text, exported_live) = match &authority.sentence {
         SentenceSnapshot::Absent => (AuthorityMarker::none(), String::new(), "none".to_string()),
@@ -562,8 +579,7 @@ pub fn run_export(
                 Ok(_) => {}
                 Err(PreparationFailure::Invalid(_)) => {
                     observed.drift = DriftState::DataPlaneUnserved;
-                    observed.live = None;
-                    observed.live_state = "unserved";
+                    observed.active_profile = unserved_profile();
                     return operation_failure(
                         "export: served snapshot is not preparable",
                         &observed,
@@ -792,6 +808,8 @@ pub fn run_apply(
         }
         DocumentView::ProviderDisabled => return provider_disabled(),
         DocumentView::Unavailable => return malformed("apply: dataplane unavailable"),
+        // `prepare_document` is reached only through an opened store, so there is a repository.
+        DocumentView::NoRepository => return malformed("apply: repository unavailable"),
     };
     if !document.canonical {
         return malformed(
@@ -1290,7 +1308,7 @@ pub fn run_body_apply(
 fn live_fields(status: Option<&SentenceAuthorityStatus>) -> (&'static str, &'static str) {
     match status {
         Some(status) => (
-            data_plane_fields(&status.sentence).1,
+            data_plane_name(&status.sentence),
             lockdown_name(status.lockdown),
         ),
         None => ("unknown", "unknown"),
@@ -1722,7 +1740,7 @@ fn prepare_document(client: &dyn ReconciliationClient, store: &DocumentStore) ->
 fn observe_document(client: &dyn ReconciliationClient, start: &Path) -> DocumentView {
     match DocumentStore::discover(start) {
         Ok(store) => prepare_document(client, &store),
-        Err(_) => DocumentView::Invalid("repository unavailable".into()),
+        Err(_) => DocumentView::NoRepository,
     }
 }
 
@@ -1810,62 +1828,44 @@ fn validate_served(
     Ok(prepared)
 }
 
-fn repository_fields(
-    document: &DocumentView,
-) -> (
-    RepositoryState,
-    &'static str,
-    Option<String>,
-    Option<String>,
-    Option<bool>,
-) {
+fn repository_state(document: &DocumentView) -> RepositoryState {
     match document {
-        DocumentView::Missing => (RepositoryState::Missing, "missing", None, None, None),
-        DocumentView::Invalid(_) => (RepositoryState::Invalid, "invalid", None, None, None),
-        DocumentView::ProviderDisabled => (
-            RepositoryState::Invalid,
-            "provider_disabled",
-            None,
-            None,
-            None,
-        ),
-        DocumentView::Unavailable => (RepositoryState::Unknown, "unavailable", None, None, None),
-        DocumentView::Prepared(document) => {
-            let candidate = digest_from_hex(&document.prepared.canonical_digest)
-                .expect("daemon prepared a valid digest");
-            let candidate_text = candidate.as_str().to_string();
-            let marker = document.marker.as_str().to_string();
-            (
-                RepositoryState::Valid {
-                    candidate,
-                    source_is_empty: document.source_is_empty,
-                    marker: document.marker.clone(),
-                },
-                "valid",
-                Some(candidate_text),
-                Some(marker),
-                Some(document.canonical),
-            )
+        DocumentView::Missing => RepositoryState::Missing,
+        DocumentView::Invalid(_) | DocumentView::NoRepository | DocumentView::ProviderDisabled => {
+            RepositoryState::Invalid
         }
+        DocumentView::Unavailable => RepositoryState::Unknown,
+        DocumentView::Prepared(document) => RepositoryState::Valid {
+            candidate: digest_from_hex(&document.prepared.canonical_digest)
+                .expect("daemon prepared a valid digest"),
+            source_is_empty: document.source_is_empty,
+            marker: document.marker.clone(),
+        },
     }
 }
 
-fn data_plane_fields(
-    snapshot: &SentenceSnapshot,
-) -> (DataPlaneState, &'static str, Option<String>) {
+/// The record's own state, as the body-apply receipts name it.
+fn data_plane_name(snapshot: &SentenceSnapshot) -> &'static str {
+    match data_plane_state(snapshot) {
+        DataPlaneState::Absent => "absent",
+        DataPlaneState::Served(_) => "served",
+        DataPlaneState::Unserved => "unserved",
+        DataPlaneState::Corrupt => "corrupt",
+        DataPlaneState::Unknown => "unknown",
+    }
+}
+
+fn data_plane_state(snapshot: &SentenceSnapshot) -> DataPlaneState {
     match snapshot {
-        SentenceSnapshot::Absent => (DataPlaneState::Absent, "absent", Some("none".into())),
+        SentenceSnapshot::Absent => DataPlaneState::Absent,
         SentenceSnapshot::Served {
             authority_digest, ..
         } => match digest_from_hex(authority_digest) {
-            Some(digest) => {
-                let display = digest.as_str().to_string();
-                (DataPlaneState::Served(digest), "served", Some(display))
-            }
-            None => (DataPlaneState::Corrupt, "corrupt", None),
+            Some(digest) => DataPlaneState::Served(digest),
+            None => DataPlaneState::Corrupt,
         },
-        SentenceSnapshot::Unserved { .. } => (DataPlaneState::Unserved, "unserved", None),
-        SentenceSnapshot::Corrupt { .. } => (DataPlaneState::Corrupt, "corrupt", None),
+        SentenceSnapshot::Unserved { .. } => DataPlaneState::Unserved,
+        SentenceSnapshot::Corrupt { .. } => DataPlaneState::Corrupt,
     }
 }
 
@@ -1873,29 +1873,92 @@ fn compose_state(
     document: &DocumentView,
     authority: Option<&SentenceAuthorityStatus>,
 ) -> ObservedState {
-    let (repository, document_name, candidate, marker, canonical) = repository_fields(document);
-    let (live, live_state, live_display, lockdown) = match authority {
-        Some(authority) => {
-            let (live, live_state, live_display) = data_plane_fields(&authority.sentence);
-            (
-                live,
-                live_state,
-                live_display,
-                lockdown_name(authority.lockdown),
-            )
-        }
-        None => (DataPlaneState::Unknown, "unknown", None, "unknown"),
+    let repository = repository_state(document);
+    let (live, lockdown) = match authority {
+        Some(authority) => (
+            data_plane_state(&authority.sentence),
+            lockdown_name(authority.lockdown),
+        ),
+        None => (DataPlaneState::Unknown, "unknown"),
     };
     ObservedState {
         drift: classify_drift(&repository, &live),
-        document: document_name,
-        candidate,
-        marker,
-        live: live_display,
-        live_state,
-        canonical,
+        active_profile: render_active_profile(authority),
+        directory_file: render_directory_file(document),
         lockdown,
     }
+}
+
+/// The DAEMON's live corpus, named by the stored profile it is — a global answer, independent of
+/// where the command ran.
+///
+/// Nothing is "active" unless the daemon is actually serving it, so every other record state is an
+/// absence with its own reason rather than a digest nobody is enforcing.
+fn render_active_profile(authority: Option<&SentenceAuthorityStatus>) -> String {
+    let Some(authority) = authority else {
+        return format!("{ABSENT} — the daemon could not be asked");
+    };
+    match &authority.sentence {
+        SentenceSnapshot::Served {
+            authority_digest, ..
+        } => match short_digest(authority_digest) {
+            Some(digest) => {
+                let name = authority
+                    .profile
+                    .as_deref()
+                    .map(crate::preset::sanitized_name)
+                    .unwrap_or_else(|| UNNAMED_PROFILE.to_string());
+                format!("{name} {digest}")
+            }
+            None => format!("{ABSENT} — the daemon's corpus record is unreadable"),
+        },
+        SentenceSnapshot::Absent => format!("{ABSENT} — no corpus has been applied"),
+        SentenceSnapshot::Unserved { .. } => unserved_profile(),
+        SentenceSnapshot::Corrupt { .. } => {
+            format!("{ABSENT} — the daemon's corpus record is unreadable")
+        }
+    }
+}
+
+/// What the active line says when a record exists and nothing is enforcing it — the crash-recovery
+/// boundary, and the verdict a served snapshot that fails its own re-preparation falls back to.
+fn unserved_profile() -> String {
+    format!("{ABSENT} — a stored corpus is not being served")
+}
+
+/// The `CERMET.md` reachable from the directory the command ran in, digested as the body it would
+/// commit — so an equal prefix on the two lines means this file is what is live.
+fn render_directory_file(document: &DocumentView) -> String {
+    match document {
+        DocumentView::Prepared(document) => {
+            match short_digest(&document.prepared.canonical_digest) {
+                Some(digest) => format!("{DOCUMENT_NAME} {digest}"),
+                None => format!("{DOCUMENT_NAME} — the daemon returned an unreadable digest"),
+            }
+        }
+        DocumentView::Missing | DocumentView::NoRepository => {
+            format!("{ABSENT} — no {DOCUMENT_NAME} found from this directory")
+        }
+        // One line for every way a present file fails to yield a candidate — unparseable, unsafely
+        // readable, or rewritten mid-read. `doc check` is the surface that says which.
+        DocumentView::Invalid(_) => format!(
+            "{DOCUMENT_NAME} — it could not be read as a managed document; run cermet doc check for detail"
+        ),
+        DocumentView::ProviderDisabled => {
+            format!("{DOCUMENT_NAME} — the daemon cannot prepare it")
+        }
+        DocumentView::Unavailable => {
+            format!("{DOCUMENT_NAME} — the daemon could not be asked to prepare it")
+        }
+    }
+}
+
+/// The leading hex of a canonical digest, validated before it is cut.
+///
+/// Both lines truncate to the same width on purpose: a human compares two prefixes by eye, and
+/// prefixes of different lengths cannot be compared at all.
+fn short_digest(hex: &str) -> Option<String> {
+    digest_from_hex(hex).map(|_| hex[..DIGEST_PREFIX].to_string())
 }
 
 fn compose_final_state(
@@ -1923,78 +1986,64 @@ fn document_matches_final_state(
                 if current.exact_state_matches(&prepared.read)
         ),
         DocumentView::Missing => matches!(final_state, FinalDestinationState::Missing),
-        DocumentView::Invalid(_) | DocumentView::ProviderDisabled | DocumentView::Unavailable => {
-            true
-        }
+        DocumentView::Invalid(_)
+        | DocumentView::NoRepository
+        | DocumentView::ProviderDisabled
+        | DocumentView::Unavailable => true,
     }
 }
 
 fn render_observed(observed: &ObservedState, as_json: bool) -> ReconciliationOutput {
     render_status(
-        observed.drift.clone(),
-        observed.document,
-        observed.candidate.as_deref(),
-        observed.marker.as_deref(),
-        observed.live.as_deref(),
-        observed.live_state,
-        observed.canonical,
+        drift_exit(&observed.drift),
+        &observed.active_profile,
+        &observed.directory_file,
         observed.lockdown,
         as_json,
     )
 }
 
 pub fn status_json_failure() -> ReconciliationOutput {
+    // Nothing was read: without the daemon neither the live corpus nor this directory's candidate
+    // digest can be known, and saying so is the whole content of the answer.
+    let unasked = format!("{ABSENT} — the daemon could not be asked");
     render_status(
-        DriftState::DataPlaneUnknown,
-        "unknown",
-        None,
-        None,
-        None,
-        "unknown",
-        None,
+        drift_exit(&DriftState::DataPlaneUnknown),
+        &unasked,
+        &unasked,
         "unknown",
         true,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_status(
-    drift: DriftState,
-    document: &str,
-    candidate: Option<&str>,
-    marker: Option<&str>,
-    live: Option<&str>,
-    live_state: &str,
-    canonical: Option<bool>,
+    exit_code: u8,
+    active_profile: &str,
+    directory_file: &str,
     lockdown: &str,
     as_json: bool,
 ) -> ReconciliationOutput {
-    let state = drift_name(&drift);
     let view = StatusView {
-        state,
-        document,
-        candidate,
-        marker,
-        live,
-        live_state,
-        canonical,
+        active_profile,
+        directory_file,
         lockdown,
     };
     let text = if as_json {
         serde_json::to_string(&view).expect("status view serializes")
     } else {
-        format!(
-            "state: {state}\ndocument: {document}\ncandidate: {}\nmarker: {}\nlive: {}\nlive_state: {live_state}\ncanonical: {}\nlockdown: {lockdown}",
-            candidate.unwrap_or("unknown"),
-            marker.unwrap_or("unknown"),
-            live.unwrap_or("unknown"),
-            canonical.map(yes_no).unwrap_or("unknown"),
-        )
+        let mut text =
+            format!("active_profile: {active_profile}\ndirectory_file: {directory_file}");
+        // An engaged lockdown means the corpus named above is not authorizing anything. Printing
+        // only the two lines while that is true would report a state the box is not in; a clear
+        // latch is the ordinary case and says nothing.
+        if lockdown == LOCKDOWN_ENGAGED {
+            text.push_str(&format!(
+                "\nlockdown: {LOCKDOWN_ENGAGED} — no capability executes until the owner clears it"
+            ));
+        }
+        text
     };
-    ReconciliationOutput {
-        text,
-        exit_code: drift_exit(&drift),
-    }
+    ReconciliationOutput { text, exit_code }
 }
 
 fn operation_failure(message: &str, observed: &ObservedState) -> ReconciliationOutput {
@@ -2038,7 +2087,7 @@ fn display_digest(hex: &str) -> String {
 fn lockdown_name(lockdown: LockdownSnapshot) -> &'static str {
     match lockdown {
         LockdownSnapshot::Clear => "clear",
-        LockdownSnapshot::Engaged => "engaged",
+        LockdownSnapshot::Engaged => LOCKDOWN_ENGAGED,
     }
 }
 

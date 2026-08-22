@@ -356,6 +356,35 @@ fn authority(
     .expect("authority command")
 }
 
+/// The truncated digest one `doc` report prints for the DAEMON's live corpus, and the one it
+/// prints for this directory's file. Both lines truncate to the same width, so comparing them is
+/// how the surface says "the file is / is not what is live".
+fn line_value<'a>(text: &'a str, field: &str) -> &'a str {
+    text.lines()
+        .find_map(|line| line.strip_prefix(&format!("{field}: ")))
+        .unwrap_or_else(|| panic!("no `{field}` line in:\n{text}"))
+}
+
+/// The digest a status line ends with. A line reporting an absence carries no digest and is a test
+/// failure here — these callers are comparing two present corpora.
+fn digest_of(text: &str, field: &str) -> String {
+    let value = line_value(text, field);
+    assert!(!value.contains('—'), "no digest on `{field}`: {value}");
+    value
+        .split_whitespace()
+        .next_back()
+        .expect("a digest")
+        .to_string()
+}
+
+fn live_prefix(text: &str) -> String {
+    digest_of(text, "active_profile")
+}
+
+fn file_prefix(text: &str) -> String {
+    digest_of(text, "directory_file")
+}
+
 fn hint_rule(outcome: &Value) -> String {
     let hint = outcome["hint"]
         .as_str()
@@ -503,7 +532,13 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     // 4. Incremental authority is unexported and init's bytes are untouched.
     let unexported = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(unexported.exit_code, 1, "{}", unexported.text);
-    assert!(unexported.text.contains("state: unexported_live"));
+    // The two lines disagree: the daemon moved ahead of the file it was seeded from.
+    assert_ne!(
+        live_prefix(&unexported.text),
+        file_prefix(&unexported.text),
+        "{}",
+        unexported.text
+    );
     assert_eq!(std::fs::read(&document_path).unwrap(), initialized_bytes);
 
     // 5. Export is non-authorizing and emits one complete canonical document.
@@ -529,7 +564,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     let mut agent = AgentSession::connect(&daemon.agent_socket);
     let restarted = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(restarted.exit_code, 0, "{}", restarted.text);
-    assert!(restarted.text.contains("state: aligned"));
+    assert_eq!(
+        live_prefix(&restarted.text),
+        file_prefix(&restarted.text),
+        "{}",
+        restarted.text
+    );
 
     // 7. The credentialed vendored execution succeeds; the disabled local request is a definite
     // persisted denial and cannot produce an executable handle.
@@ -611,7 +651,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     rewrite_body(&document_path, &draft);
     let unapplied = authority(&daemon, repo.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(unapplied.exit_code, 1, "{}", unapplied.text);
-    assert!(unapplied.text.contains("state: unapplied_document"));
+    assert_ne!(
+        live_prefix(&unapplied.text),
+        file_prefix(&unapplied.text),
+        "{}",
+        unapplied.text
+    );
     assert_eq!(
         agent.request(
             "stripe",
@@ -636,7 +681,12 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     assert_eq!(fixed.exit_code, 0, "{}", fixed.text);
     let diffed = authority(&daemon, repo.path(), presence.clone(), &["doc", "diff"]);
     assert_eq!(diffed.exit_code, 1, "{}", diffed.text);
-    assert!(diffed.text.contains("state: unapplied_document"));
+    assert_ne!(
+        live_prefix(&diffed.text),
+        file_prefix(&diffed.text),
+        "{}",
+        diffed.text
+    );
     assert_eq!(presence.count(), before_apply_presence);
     let applied = authority(&daemon, repo.path(), presence.clone(), &["doc", "apply"]);
     assert_eq!(applied.exit_code, 0, "{}", applied.text);
@@ -673,14 +723,24 @@ fn hermetic_document_authority_lifecycle_covers_all_twelve_states() {
     std::fs::write(stale.path().join("CERMET.md"), pre_revoke_document).unwrap();
     let stale_status = authority(&daemon, stale.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(stale_status.exit_code, 1, "{}", stale_status.text);
-    assert!(stale_status.text.contains("state: unexported_live"));
+    assert_ne!(
+        live_prefix(&stale_status.text),
+        file_prefix(&stale_status.text),
+        "{}",
+        stale_status.text
+    );
     let divergent = format!(
         "allow stripe.refund where charge = \"ch_gamma\" and amount <= 5000\n{stripe_beta}\n"
     );
     rewrite_body(&stale.path().join("CERMET.md"), &divergent);
     let diverged = authority(&daemon, stale.path(), presence.clone(), &["doc", "status"]);
     assert_eq!(diverged.exit_code, 1, "{}", diverged.text);
-    assert!(diverged.text.contains("state: diverged"));
+    assert_ne!(
+        live_prefix(&diverged.text),
+        file_prefix(&diverged.text),
+        "{}",
+        diverged.text
+    );
     let refused = authority(&daemon, stale.path(), presence.clone(), &["doc", "apply"]);
     assert_eq!(refused.exit_code, 1, "{}", refused.text);
     assert!(refused.text.contains("rerun with --replace-live"));

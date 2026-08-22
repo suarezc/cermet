@@ -16,9 +16,14 @@ fn assert_json_failure(output: Output) {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1, "{stdout:?}");
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "unknown", "{value}");
-    assert_eq!(value["live_state"], "unknown", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon could not be asked",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — the daemon could not be asked",
+        "{value}"
+    );
     assert_eq!(value["lockdown"], "unknown", "{value}");
 }
 
@@ -59,9 +64,14 @@ fn status_json_parse_and_endpoint_preflight_failures_emit_one_json_envelope() {
     let stdout = String::from_utf8(unreachable.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1, "{stdout:?}");
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(value["state"], "dataplane_unknown", "{value}");
-    assert_eq!(value["document"], "missing", "{value}");
-    assert_eq!(value["live_state"], "unknown", "{value}");
+    assert_eq!(
+        value["active_profile"], "none — the daemon could not be asked",
+        "{value}"
+    );
+    assert_eq!(
+        value["directory_file"], "none — no CERMET.md found from this directory",
+        "{value}"
+    );
 }
 
 #[test]

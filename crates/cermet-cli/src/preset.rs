@@ -141,7 +141,11 @@ pub fn sanitized_name(name: &str) -> String {
 }
 
 /// `cermet preset list`.
-pub fn run_preset_list(store: &dyn PresetStore) -> ReconciliationOutput {
+///
+/// `live` is the profile the daemon reports its served corpus IS — the same read-time join
+/// `doc status` renders, carried here so the listing can mark that row. Nothing about "current" is
+/// stored: a profile is live exactly while the daemon is serving that body.
+pub fn run_preset_list(store: &dyn PresetStore, live: Option<&str>) -> ReconciliationOutput {
     let rows = match store.presets() {
         Ok(rows) => rows,
         Err(reason) => {
@@ -159,7 +163,7 @@ pub fn run_preset_list(store: &dyn PresetStore) -> ReconciliationOutput {
         };
     }
     ReconciliationOutput {
-        text: render_rows(&rows),
+        text: render_rows(&rows, live),
         exit_code: 0,
     }
 }
@@ -277,15 +281,24 @@ fn refused(text: String) -> ReconciliationOutput {
     ReconciliationOutput { text, exit_code: 2 }
 }
 
-/// The list, in aligned plain columns.
-fn render_rows(rows: &[StoredPresetRow]) -> String {
+/// The marker on the row the daemon is serving right now.
+const LIVE_MARKER: &str = "● live";
+
+/// The list, in aligned plain columns, with the served row marked.
+fn render_rows(rows: &[StoredPresetRow], live: Option<&str>) -> String {
     let cells: Vec<[String; 3]> = rows
         .iter()
         .map(|row| {
             [
                 sanitized_name(&row.name),
                 row.rule_count.to_string(),
-                crate::reconciliation::safe_one_line(&row.updated_at),
+                match live {
+                    Some(live) if live == row.name => format!(
+                        "{}  {LIVE_MARKER}",
+                        crate::reconciliation::safe_one_line(&row.updated_at)
+                    ),
+                    _ => crate::reconciliation::safe_one_line(&row.updated_at),
+                },
             ]
         })
         .collect();
@@ -425,7 +438,7 @@ mod tests {
         let hostile = Rows(vec![row("de\u{1b}[2Jsigner", "allow stripe.get_charge\n")]);
         let listed = resolve(&hostile, "absent").expect_err("unknown");
         assert!(!listed.text.contains('\u{1b}'), "{}", listed.text);
-        assert!(!render_rows(&hostile.0).contains('\u{1b}'));
+        assert!(!render_rows(&hostile.0, None).contains('\u{1b}'));
     }
 
     #[test]
@@ -452,7 +465,7 @@ mod tests {
             row("designer", "allow stripe.get_charge\n"),
             row("b", "a\nb\n"),
         ];
-        let text = render_rows(&rows);
+        let text = render_rows(&rows, None);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "{text}");
         assert!(lines[0].starts_with("PRESET"), "{text}");
@@ -461,9 +474,39 @@ mod tests {
             assert!(line.len() > column, "{text}");
         }
 
-        let empty = run_preset_list(&Rows(Vec::new()));
+        let empty = run_preset_list(&Rows(Vec::new()), None);
         assert_eq!(empty.exit_code, 0);
         assert!(empty.text.contains("doc apply"), "{}", empty.text);
+    }
+
+    /// The listing marks the profile the daemon is serving RIGHT NOW, and marks nothing when the
+    /// live corpus is not one of these bodies. The mark is derived from the daemon's read-time
+    /// join — no row of this table records it.
+    #[test]
+    fn the_listing_marks_the_row_the_daemon_is_serving() {
+        let rows = Rows(vec![
+            row("designer", "allow stripe.get_charge\n"),
+            row("builder", "allow stripe.refund where amount <= 5000\n"),
+        ]);
+
+        let marked = run_preset_list(&rows, Some("builder"));
+        let lines: Vec<&str> = marked.text.lines().collect();
+        assert!(!lines[1].contains(LIVE_MARKER), "{}", marked.text);
+        assert!(lines[2].contains(LIVE_MARKER), "{}", marked.text);
+        assert_eq!(
+            marked.text.matches(LIVE_MARKER).count(),
+            1,
+            "{}",
+            marked.text
+        );
+
+        // Nothing stored is live: no row is marked.
+        let unmarked = run_preset_list(&rows, None);
+        assert!(!unmarked.text.contains(LIVE_MARKER), "{}", unmarked.text);
+
+        // A live name that is not stored marks nothing either.
+        let absent = run_preset_list(&rows, Some("designer-2"));
+        assert!(!absent.text.contains(LIVE_MARKER), "{}", absent.text);
     }
 
     /// The exported document must be one `doc apply` accepts back: the round trip is the whole
