@@ -458,7 +458,7 @@ Default zoom:
 |---|---|
 | `http_api_call` | The daemon constructs and sends an outbound HTTP request itself, with the credential attached inside the trusted runtime. |
 | `http_inline_upload` | The same execution, where a declared `free_payload` field's bytes are embedded directly in the outbound body. |
-| `git_push` | Not reached through a request at all. The verb is exercised by running native `git push` / `git fetch` against a broker-wired remote; the daemon carries the stream to a pinned upstream. Every entry with this shape prints the wiring command beside it: `git remote set-url origin cermet::github/<owner>/<repo>`. |
+| `git_push` | Not reached through a request at all. The verb is exercised by running native `git push` / `git fetch` against a broker-wired remote; the daemon carries the stream to a pinned upstream. Branch pushes, tag pushes, and fetches all carry this shape — which ref namespace a verb moves is its own vocabulary, not a second shape. Every entry with this shape prints the wiring command beside it: `git remote set-url origin cermet::github/<owner>/<repo>`. |
 | `relay` | The verb mints a scoped session and credentials a native CLI's *own* outbound requests through a loopback relay. No provider call happens at request or execute time — the effect is the session (§1.3). |
 
 A verb whose shape the daemon did not report renders as `shape:unknown` in the default zoom, and
