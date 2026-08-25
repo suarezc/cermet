@@ -1,5 +1,0 @@
-# Provider descriptor for vercel: Bearer auth, no extra headers.
-name: vercel
-egress:
-  - https://api.vercel.com
-auth: bearer

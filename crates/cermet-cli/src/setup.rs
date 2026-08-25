@@ -201,8 +201,8 @@ const AGENT_RUNTIME_DIR: &str = "/var/cermetd-agents";
 const DAEMON_LOG_FILE: &str = "/var/log/cermetd.log";
 /// How long setup keeps watching a freshly bootstrapped daemon that shows NO failure evidence.
 /// Failure itself is not on a timer — the poll refuses the instant launchd reports an exit — so
-/// this cap only bounds the remaining case: a first boot that is merely slow (vault mint, catalog
-/// seed, a loaded machine). It errs long on purpose, and capping out is not a failure verdict —
+/// this cap only bounds the remaining case: a first boot that is merely slow (vault mint, a loaded
+/// machine). It errs long on purpose, and capping out is not a failure verdict —
 /// the report it earns says nothing has failed and a re-run is safe.
 #[cfg(any(target_os = "macos", test))]
 const SERVING_TIMEOUT_SECS: u64 = 60;
@@ -278,72 +278,6 @@ const EMBEDDED_PAYLOAD: &[EmbeddedAsset] = &[
     embedded_asset!("macos/dev.cermet.cermetd.plist"),
     embedded_asset!("macos/dev.cermet.update-check.plist"),
     embedded_asset!("macos/config.toml"),
-    embedded_asset!("catalog/actions.d/github.create_pull_request_review.yaml"),
-    embedded_asset!("catalog/actions.d/github.comment_thread.yaml"),
-    embedded_asset!("catalog/actions.d/github.create_branch.yaml"),
-    embedded_asset!("catalog/actions.d/github.create_pull_request.yaml"),
-    embedded_asset!("catalog/actions.d/github.dispatch_workflow.yaml"),
-    embedded_asset!("catalog/actions.d/github.create_issue.yaml"),
-    embedded_asset!("catalog/actions.d/github.fetch.yaml"),
-    embedded_asset!("catalog/actions.d/github.push.yaml"),
-    embedded_asset!("catalog/actions.d/github.push_tag.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_blob.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_commit.yaml"),
-    embedded_asset!("catalog/actions.d/github.merge_pull_request.yaml"),
-    embedded_asset!("catalog/actions.d/github.update_pull_request.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_pull_request.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_ref.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_repo.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_secret_scanning_alerts_open.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_job_log.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_releases.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_workflow_runs.yaml"),
-    embedded_asset!("catalog/actions.d/github.publish_release.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_thread.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_tree.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_workflow_run.yaml"),
-    embedded_asset!("catalog/actions.d/github.read_workflow_run_jobs.yaml"),
-    embedded_asset!("catalog/actions.d/github.request_deployment.yaml"),
-    embedded_asset!("catalog/actions.d/github.request_workflow_cancel.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.archive_price.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.archive_product.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.cancel_payment_intent.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.cancel_subscription.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.cancel_subscription_at_period_end.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.capture_payment_intent.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.confirm_payment_intent.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.create_payment_intent_off_session.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.create_standard_payout.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.credit_balance.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_charge.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_dispute_summary.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_invoice.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_payment_intent.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_price.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_product.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.get_subscription.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.issue_credit_note_adjustment_no_email.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.list_active_prices.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.list_charges.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.list_invoices_for_customer.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.list_refunds.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.lookup_customer.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.mark_invoice_uncollectible.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.pause_subscription.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.refund.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.refund_charge_bounded.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.resume_subscription_collection.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.retry_invoice_payment.yaml"),
-    // The first relay verb ships in the installed catalog too.
-    embedded_asset!("catalog/actions.d/vercel.deploy.yaml"),
-    embedded_asset!("catalog/actions.d/vercel.list_projects.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.search_customers.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.stage_dispute_evidence.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.submit_dispute_evidence.yaml"),
-    embedded_asset!("catalog/actions.d/stripe.update_webhook_endpoint_fixed_bundle.yaml"),
-    embedded_asset!("catalog/providers.d/github.yaml"),
-    embedded_asset!("catalog/providers.d/stripe.yaml"),
-    embedded_asset!("catalog/providers.d/vercel.yaml"),
 ];
 
 /// Binaries earlier installs published under names this build no longer ships. Every platform's
@@ -421,8 +355,6 @@ const FORCE_CLEAN_TREES: &[&str] = &[
     "artifacts",
     "sentence.staged",
     "sentence.audit_pending",
-    "actions.d",
-    "providers.d",
     "profiles.d",
 ];
 
@@ -516,7 +448,6 @@ struct SourceLayout {
     /// ONE-BINARY: the single regular executable to publish. There is no pair to keep coherent.
     binary: PathBuf,
     config: PathBuf,
-    catalog: PathBuf,
     #[cfg(not(target_os = "macos"))]
     unit: PathBuf,
     #[cfg(not(target_os = "macos"))]
@@ -575,7 +506,6 @@ impl SourceLayout {
         Ok(Self {
             binary,
             config: platform.join("config.toml"),
-            catalog: assets.join("catalog"),
             #[cfg(not(target_os = "macos"))]
             unit: platform.join("cermetd.service"),
             #[cfg(not(target_os = "macos"))]
@@ -598,7 +528,7 @@ impl SourceLayout {
         })
     }
 
-    /// The service assets this platform installs, beyond the shared config template and catalog.
+    /// The service assets this platform installs, beyond the shared config template.
     #[cfg(not(target_os = "macos"))]
     fn platform_assets(&self) -> Vec<(&'static str, &PathBuf)> {
         vec![
@@ -629,7 +559,6 @@ impl SourceLayout {
             require_regular_source(path, false)
                 .map_err(|error| format!("{label} {}: {error}", path.display()))?;
         }
-        catalog_seed_plan(&self.catalog, Path::new(STATE_DIR))?;
         // ONE-BINARY: one target, so the contamination scan runs ONCE, on the exact bytes that get
         // published under all three names.
         reject_non_installable_binary(&self.binary)
@@ -937,7 +866,6 @@ fn run_linux(args: &SetupArgs) -> Result<(), String> {
     let custody = provision_master_key(args.force_clean_bootstrap)?;
     record_custody_profile(custody)?;
     initialize_lockdown_record()?;
-    seed_catalog(&sources.catalog)?;
 
     // Assets are installed and reloaded; NOW the daemon setup stopped may come back on the newly
     // published binary.
@@ -1287,7 +1215,6 @@ fn run_macos(args: &SetupArgs) -> Result<(), String> {
     let custody = write_master_key(args.force_clean_bootstrap)?;
     record_custody_profile(custody)?;
     initialize_lockdown_record()?;
-    seed_catalog(&sources.catalog)?;
 
     let plist = Path::new(PLIST_DEST);
     let converged = published_file_is_current(&sources.plist, plist, 0o644)?;
@@ -2851,7 +2778,7 @@ fn wait_until_serving() -> Result<(), String> {
         if !said_still_starting && waited >= std::time::Duration::from_secs(SERVING_PROGRESS_SECS) {
             println!(
                 "[cermet-setup]       cermetd is still starting ({SERVING_PROGRESS_SECS}s) — a \
-                 first boot mints the vault and seeds the catalog; waiting up to \
+                 first boot mints the vault; waiting up to \
                  {SERVING_TIMEOUT_SECS}s"
             );
             said_still_starting = true;
@@ -3436,86 +3363,6 @@ fn initialize_lockdown_record() -> Result<(), String> {
     let bytes = br#"{"version":1,"engaged":false,"occurrence_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
     exclusive_write(&destination, bytes, SERVICE_USER, SERVICE_GROUP, 0o600)?;
     fixed("lockdown", "initialized explicit clear generation");
-    Ok(())
-}
-
-#[derive(Debug)]
-struct CatalogSeedEntry {
-    source_dir: PathBuf,
-    destination_dir: PathBuf,
-    files: Vec<PathBuf>,
-    replace_whole_directory: bool,
-}
-
-fn catalog_seed_plan(source: &Path, state: &Path) -> Result<Vec<CatalogSeedEntry>, String> {
-    let mut plan = Vec::new();
-    for subdir in ["actions.d", "providers.d"] {
-        let source_dir = source.join(subdir);
-        if !source_dir.is_dir() {
-            return Err(format!(
-                "vendored catalog subdir {} is missing",
-                source_dir.display()
-            ));
-        }
-        let mut files = fs::read_dir(&source_dir)
-            .map_err(|error| format!("cannot read {}: {error}", source_dir.display()))?
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.extension() == Some(OsStr::new("yaml")))
-            .collect::<Vec<_>>();
-        files.sort();
-        if files.is_empty() {
-            return Err(format!(
-                "vendored catalog subdir {} contains no .yaml descriptors",
-                source_dir.display()
-            ));
-        }
-        for file in &files {
-            require_regular_source(file, false)?;
-            let text = fs::read_to_string(file)
-                .map_err(|error| format!("cannot read {}: {error}", file.display()))?;
-            let _: serde_yaml::Value = serde_yaml::from_str(&text)
-                .map_err(|error| format!("invalid YAML {}: {error}", file.display()))?;
-        }
-        plan.push(CatalogSeedEntry {
-            source_dir,
-            destination_dir: state.join(subdir),
-            files,
-            replace_whole_directory: true,
-        });
-    }
-    Ok(plan)
-}
-
-fn seed_catalog(source: &Path) -> Result<(), String> {
-    let plan = catalog_seed_plan(source, Path::new(STATE_DIR))?;
-    for entry in plan {
-        debug_assert!(entry.replace_whole_directory);
-        if path_exists_no_follow(&entry.destination_dir) {
-            remove_no_follow(&entry.destination_dir)?;
-        }
-        install_dir(&entry.destination_dir, SERVICE_USER, SERVICE_GROUP, 0o755)?;
-        for source_file in &entry.files {
-            let destination = entry
-                .destination_dir
-                .join(source_file.file_name().unwrap_or_default());
-            atomic_install_file(
-                source_file,
-                &destination,
-                SERVICE_USER,
-                SERVICE_GROUP,
-                0o644,
-            )?;
-        }
-        fixed(
-            "catalog",
-            &format!(
-                "wholesale reseeded {} from {} ({} descriptors)",
-                entry.destination_dir.display(),
-                entry.source_dir.display(),
-                entry.files.len()
-            ),
-        );
-    }
     Ok(())
 }
 
@@ -4355,19 +4202,6 @@ mod tests {
         ]
         .into_iter()
         .map(str::to_string)
-        .chain(["actions.d", "providers.d"].into_iter().flat_map(|subdir| {
-            let mut names = fs::read_dir(repo.join("dist/catalog").join(subdir))
-                .unwrap()
-                .map(|entry| {
-                    format!(
-                        "catalog/{subdir}/{}",
-                        entry.unwrap().file_name().to_string_lossy()
-                    )
-                })
-                .collect::<Vec<_>>();
-            names.sort();
-            names
-        }))
         .collect::<BTreeSet<_>>();
         let embedded = EMBEDDED_PAYLOAD
             .iter()
@@ -4662,19 +4496,15 @@ mod tests {
             "sentence.record",
             "sentence.pin",
             "policy.yaml",
-            "actions.d",
-            "providers.d",
             "profiles.d",
         ] {
             assert_eq!(
                 force_clean_kind(expected),
-                Some(
-                    if matches!(expected, "actions.d" | "providers.d" | "profiles.d") {
-                        ForceCleanKind::Tree
-                    } else {
-                        ForceCleanKind::File
-                    }
-                ),
+                Some(if expected == "profiles.d" {
+                    ForceCleanKind::Tree
+                } else {
+                    ForceCleanKind::File
+                }),
                 "missing {expected}"
             );
         }
@@ -4691,22 +4521,6 @@ mod tests {
             );
         }
         assert_eq!(force_clean_kind(".hidden.yaml.bak"), None);
-    }
-
-    #[test]
-    fn catalog_plan_is_wholesale_and_rejects_empty_subdirs() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("catalog");
-        let state = temp.path().join("state");
-        fs::create_dir_all(source.join("actions.d")).unwrap();
-        fs::create_dir_all(source.join("providers.d")).unwrap();
-        fs::write(source.join("actions.d/a.yaml"), "provider: p\n").unwrap();
-        fs::write(source.join("providers.d/p.yaml"), "name: p\n").unwrap();
-        let plan = catalog_seed_plan(&source, &state).unwrap();
-        assert_eq!(plan.len(), 2);
-        assert!(plan.iter().all(|entry| entry.replace_whole_directory));
-        fs::remove_file(source.join("providers.d/p.yaml")).unwrap();
-        assert!(catalog_seed_plan(&source, &state).is_err());
     }
 
     #[test]
@@ -5431,8 +5245,8 @@ system/dev.cermet.cermetd = {
     }
 
     /// The poll's three-way read of one launchctl snapshot. Failure needs EVIDENCE — an exit code,
-    /// or no job loaded at all. Elapsed time is never evidence: a slow first boot (vault mint,
-    /// catalog seed, a loaded machine) reads exactly like a fast one at every instant, so a daemon
+    /// or no job loaded at all. Elapsed time is never evidence: a slow first boot (vault mint, a
+    /// loaded machine) reads exactly like a fast one at every instant, so a daemon
     /// that has never exited is "still starting", however long that takes.
     #[test]
     fn the_poll_refuses_on_evidence_and_waits_on_none() {

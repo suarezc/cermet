@@ -8,6 +8,9 @@ use cermet_core::{
     VENDORED_ONTOLOGY,
 };
 
+mod common;
+use common::VENDORED_ONTOLOGY_RECORDS;
+
 fn registry() -> SourceRegistry {
     SourceRegistry::official().unwrap()
 }
@@ -16,13 +19,13 @@ fn registry() -> SourceRegistry {
 fn vendored_records_parse_resolve_sources_and_hash_join_green() {
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        52,
-        "twenty-seven GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, `read_job_log`, and the release plane's three) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        VENDORED_ONTOLOGY_RECORDS,
+        "the vendored corpus is whole before this suite checks its own slice"
     );
 
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &registry())
         .expect("all vendored records parse, obey caps, and resolve their sources");
-    assert_eq!(catalog.len(), 52);
+    assert_eq!(catalog.len(), VENDORED_ONTOLOGY_RECORDS);
 
     // Every declared bind hash equals the SHA-256 of the real vendored artifact bytes.
     catalog

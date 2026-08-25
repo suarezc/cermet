@@ -9,6 +9,9 @@ use cermet_core::templates::{catalog_of, CatalogClass, TemplateRegistry, VENDORE
 use cermet_core::{OntologyArtifacts, OntologyCatalog, SourceRegistry, VENDORED_ONTOLOGY};
 use serde_yaml::Value;
 
+mod common;
+use common::VENDORED_ONTOLOGY_RECORDS;
+
 const ACTIONS: [&str; 7] = [
     "create_payment_intent_off_session",
     "confirm_payment_intent",
@@ -49,7 +52,7 @@ fn yaml_strings(value: &Value) -> Vec<&str> {
 
 #[test]
 fn seven_moneypath_actions_and_sidecars_are_vendored_with_catalog_parity() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 52);
+    assert_eq!(VENDORED_ONTOLOGY.len(), VENDORED_ONTOLOGY_RECORDS);
 
     let templates = vendored_registry();
     let catalog = catalog_of(&templates, true);
@@ -62,7 +65,7 @@ fn seven_moneypath_actions_and_sidecars_are_vendored_with_catalog_parity() {
     );
     let sources = SourceRegistry::official().unwrap();
     let ontology = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(ontology.len(), 52);
+    assert_eq!(ontology.len(), VENDORED_ONTOLOGY_RECORDS);
     ontology.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     for action in ACTIONS {

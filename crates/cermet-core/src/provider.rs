@@ -2325,8 +2325,8 @@ pub use cermet_lang::provider::{
 };
 
 /// Every provider descriptor vendored with the core (one `include_str!` per file in
-/// `crates/cermet-core/providers/`). This is the shipped set `demo-up`/`dist` seed into the daemon's
-/// `providers.d`; github and vercel are ordinary ratified data here, no longer compiled-in structs.
+/// `crates/cermet-core/providers/`). This is the shipped set every daemon boots with; github and
+/// vercel are ordinary ratified data here, no longer compiled-in structs.
 pub const VENDORED_PROVIDERS: &[&str] = &[
     include_str!("../providers/github.yaml"),
     include_str!("../providers/vercel.yaml"),

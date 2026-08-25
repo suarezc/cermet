@@ -59,9 +59,8 @@ pub struct BrokerConfig {
 }
 
 impl BrokerConfig {
-    /// The VENDORED (shipped) provider descriptors as owned strings — the github+vercel set every
-    /// out-of-box daemon seeds into `providers.d`, and the default a test broker uses so github/vercel
-    /// resolve exactly as before.
+    /// The VENDORED (shipped) provider descriptors as owned strings — the set every daemon boots
+    /// with, and the default a test broker uses so github/vercel/stripe resolve the same way.
     pub fn vendored_descriptors() -> Vec<String> {
         crate::provider::VENDORED_PROVIDERS
             .iter()
@@ -372,7 +371,7 @@ impl Broker {
                 return Err(Error::Invalid(format!(
                     "two provider descriptors declare the same name `{}` — refusing to boot \
                      (a duplicate descriptor name silently shadows which origin a vaulted token \
-                     rides to; remove or rename one of the providers.d/*.yaml descriptors)",
+                     rides to; two vendored descriptors declare it — a packaging bug)",
                     d.name
                 )));
             }

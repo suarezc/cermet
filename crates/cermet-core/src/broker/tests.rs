@@ -72,9 +72,9 @@ fn open_product_broker() -> TestBroker {
 }
 
 /// Product availability is a positive ALLOWLIST, so a provider label nobody has ruled on
-/// resolves DISABLED. Production loads operator-owned descriptors from `providers.d`/`actions.d`,
-/// so a denylist would let a newly authored `acme` descriptor become catalog-visible, connectable,
-/// and mintable with no product-enable decision — unresolved access must never be granted.
+/// resolves DISABLED, so a denylist would let a newly vendored `acme` descriptor become
+/// catalog-visible, connectable, and mintable with no product-enable decision — unresolved access
+/// must never be granted.
 const UNRULED_PROVIDER_LABELS: &[&str] = &["acme", "github2", "stripe-eu", "Stripe", ""];
 
 #[test]
@@ -424,7 +424,7 @@ fn duplicate_provider_descriptor_name_refuses_boot() {
     // naming the collision.
     let (_dir_guard, dir) = fresh_broker_dir();
     let mut descriptors = BrokerConfig::vendored_descriptors();
-    // Duplicate the FIRST vendored descriptor (as if two providers.d/*.yaml files collided).
+    // Duplicate the FIRST vendored descriptor (as if two vendored documents collided).
     descriptors.push(descriptors[0].clone());
     let msg = match Broker::open(BrokerConfig {
         git: test_quarantine(),

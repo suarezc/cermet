@@ -1518,11 +1518,10 @@ At the moment it refuses, the relay already holds the frozen field map, the offe
 shape inventory. Disclosure is saying what it already holds: no new authority, no new state. Every
 value a refusal names is one of four things:
 
-- **Descriptor text** — the ratified verb's own `method`/`path` patterns, read out of the template
-  document the installer publishes world-readable under the shared catalog directory
-  (`.../share/cermet/catalog/actions.d/<provider>.<action>.yaml`). Anyone who can reach the loopback
-  door can already read it. (`cermet catalog` is *not* that surface: it projects a verb's fields and
-  bounds, not its relay predicate.)
+- **Descriptor text** — the ratified verb's own `method`/`path` patterns, vendored into the
+  world-readable `cermet` binary. Anyone who can reach the loopback door can already read it.
+  (`cermet catalog` is *not* that surface: it projects a verb's fields and bounds, not its relay
+  predicate.)
 - **A field *this* caller's own approval froze.**
 - **A value off the hop *this* caller just wrote.**
 - **A value *this* caller's own session already received** — a capture taken from the response to

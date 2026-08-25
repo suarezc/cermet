@@ -900,7 +900,7 @@ and names what to run instead.
 A `git:` template may extend only a provider whose ratified descriptor pins a git origin:
 
 ```yaml
-# providers.d/github.yaml
+# the vendored github provider descriptor
 git:
   origin: https://github.com          # a bare scheme+host[:port] https origin
   auth: basic:x-access-token          # how the vault credential is presented
