@@ -7345,3 +7345,67 @@ fn read_workflow_runs_refuses_a_ref_name_as_head_sha() {
         .expect_err("head_sha pins the git_oid shape");
     assert!(format!("{error}").contains("head_sha"), "{error}");
 }
+
+/// The descriptor's credential-mode table is the ONLY place a prefix→book mapping is written, and
+/// it must resolve unambiguously: a table whose prefixes overlap would make the derived book depend
+/// on iteration order, and the derived book decides what a sentence admits.
+#[test]
+fn a_credential_mode_table_must_resolve_one_book_unambiguously() {
+    let ok = ProviderDescriptor::parse(
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    ak_test_: test\n    ak_live_: live\n",
+    )
+    .expect("a well-formed table parses");
+    let table = ok.credential_mode.expect("the table is carried");
+    assert_eq!(table.field, "mode");
+    assert_eq!(table.of("ak_test_abc"), Some("test"));
+    assert_eq!(table.of("ak_live_abc"), Some("live"));
+    // Unrecognized is never a guess.
+    assert_eq!(table.of("ak_abc"), None);
+    assert_eq!(table.of(""), None);
+
+    for bad in [
+        // One prefix extends another: which book `ak_test_x` names would depend on order.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    ak_: live\n    ak_test_: test\n",
+        // An empty prefix matches every credential, including one of a kind we cannot classify.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    '': test\n",
+        // An empty table can never resolve.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix: {}\n",
+        // The field name is an identifier, like every other declared name.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: Mode\n  \
+         by_prefix:\n    ak_test_: test\n",
+    ] {
+        assert!(
+            ProviderDescriptor::parse(bad).is_err(),
+            "must refuse: {bad}"
+        );
+    }
+}
+
+/// The shipped Stripe descriptor is what every Stripe verb's `mode` is derived from, so the exact
+/// key kinds it recognises are a reviewed property, not an implementation detail.
+#[test]
+fn the_shipped_stripe_descriptor_names_both_books_for_secret_and_restricted_keys() {
+    let stripe = VENDORED_PROVIDERS
+        .iter()
+        .map(|doc| ProviderDescriptor::parse(doc).expect("vendored descriptor parses"))
+        .find(|d| d.name == "stripe")
+        .expect("stripe is vendored");
+    let table = stripe
+        .credential_mode
+        .expect("stripe keys name their own book");
+    assert_eq!(table.field, "mode");
+    for (token, expected) in [
+        ("sk_test_abc", Some("test")),
+        ("rk_test_abc", Some("test")),
+        ("sk_live_abc", Some("live")),
+        ("rk_live_abc", Some("live")),
+        ("pk_test_abc", None),
+        ("whsec_abc", None),
+    ] {
+        assert_eq!(table.of(token), expected, "{token}");
+    }
+}

@@ -361,6 +361,20 @@ pub trait Provider: Send + Sync {
         Err(EvidenceFailure::new(EvidenceFailureClass::Integrity))
     }
 
+    /// The field this provider's own credential decides, if its descriptor declared one. The
+    /// daemon populates it at request freeze and re-derives it at execution; an agent may never
+    /// supply it.
+    fn credential_mode_field(&self) -> Option<&str> {
+        None
+    }
+
+    /// Derive the credential-decided value from the plaintext token. `None` means no declared
+    /// prefix matched — unresolved, never a guess. The token is read here and nowhere else; only
+    /// the derived value (a plain `"test"`/`"live"` string) leaves.
+    fn credential_mode(&self, _token: &str) -> Option<&str> {
+        None
+    }
+
     /// Rewrite ONE request-supplied field to the provider's own canonical identifier,
     /// before the sentence judges the request. Never called for a value the profile's pure
     /// [`crate::canonicalize::CanonicalizerKind::is_canonical`] already accepts, so a request that
@@ -2165,6 +2179,36 @@ pub struct ProviderDescriptor {
     /// origin, and a template carries paths under it, never an origin of its own.
     #[serde(default)]
     pub git: Option<GitTransport>,
+    /// The field this provider's own credential decides, if its keys carry the answer. Absent means
+    /// the provider has no such field and no template of its may declare one.
+    #[serde(default)]
+    pub credential_mode: Option<CredentialMode>,
+}
+
+/// A provider whose credential itself says which BOOK it operates on. Stripe issues one key per
+/// mode and spells the mode in the key's prefix, so the daemon can name the mode of the credential
+/// it holds without asking the provider — the derived value is a plain `"test"`/`"live"` string,
+/// never a secret. The plaintext is matched inside the trusted runtime and dropped.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialMode {
+    /// The request field the derived value populates. A template that wants it declares the field
+    /// with `source: credential`; the agent may never supply it.
+    pub field: String,
+    /// Credential prefix → the value the field freezes to. Validation refuses a table where one
+    /// prefix extends another, so a match is unambiguous without longest-prefix arbitration.
+    pub by_prefix: BTreeMap<String, String>,
+}
+
+impl CredentialMode {
+    /// The value this credential decides, or `None` when no declared prefix matches. Unrecognized
+    /// is never a guess: the caller fails closed.
+    pub fn of(&self, token: &str) -> Option<&str> {
+        self.by_prefix
+            .iter()
+            .find(|(prefix, _)| token.starts_with(prefix.as_str()))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// A provider's git transport pin: the exact origin `git push` may reach, and how the credential is
@@ -2203,6 +2247,14 @@ pub struct SplitRewrite {
 
 fn default_auth() -> String {
     "bearer".to_string()
+}
+
+/// A non-empty `[a-z0-9_]` token — the shape every descriptor-declared name uses.
+fn is_lower_ident(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 fn default_sep() -> String {
     "/".to_string()
@@ -2298,6 +2350,49 @@ impl ProviderDescriptor {
             AuthShape::parse(&git.auth)
                 .map_err(|e| format!("provider `{}`: git.{e}", self.name))?;
         }
+        if let Some(mode) = &self.credential_mode {
+            if !is_lower_ident(&mode.field) {
+                return Err(format!(
+                    "provider `{}`: credential_mode.field `{}` must be a lowercase [a-z0-9_] \
+                     identifier",
+                    self.name, mode.field
+                ));
+            }
+            if mode.by_prefix.is_empty() {
+                return Err(format!(
+                    "provider `{}`: credential_mode.by_prefix must name at least one prefix (an \
+                     empty table can never resolve, so every request would refuse)",
+                    self.name
+                ));
+            }
+            for (prefix, value) in &mode.by_prefix {
+                if prefix.is_empty() {
+                    return Err(format!(
+                        "provider `{}`: credential_mode.by_prefix has an empty prefix, which \
+                         matches every credential",
+                        self.name
+                    ));
+                }
+                if !is_lower_ident(value) {
+                    return Err(format!(
+                        "provider `{}`: credential_mode value `{value}` must be a lowercase \
+                         [a-z0-9_] identifier",
+                        self.name
+                    ));
+                }
+                // One prefix extending another would make the match order-dependent, and the
+                // derived value decides which book a credential is allowed to touch.
+                for (other, other_value) in &mode.by_prefix {
+                    if other != prefix && other.starts_with(prefix.as_str()) {
+                        return Err(format!(
+                            "provider `{}`: credential_mode prefix `{other}` ({other_value}) \
+                             extends `{prefix}` ({value}); the match must be unambiguous",
+                            self.name
+                        ));
+                    }
+                }
+            }
+        }
         for sp in &self.split {
             if sp.into.len() < 2 {
                 return Err(format!(
@@ -2332,6 +2427,26 @@ pub const VENDORED_PROVIDERS: &[&str] = &[
     include_str!("../providers/vercel.yaml"),
     include_str!("../providers/stripe.yaml"),
 ];
+
+/// The vendored descriptor's credential-mode table for one provider name. Test doubles that stand
+/// in for a real provider carry no descriptor of their own; this is how they model the same
+/// credential-decided field the shipped descriptor declares, instead of inventing a second table.
+#[cfg(any(test, feature = "test-double"))]
+pub fn vendored_credential_mode(name: &str) -> Option<&'static CredentialMode> {
+    static TABLES: OnceLock<HashMap<String, CredentialMode>> = OnceLock::new();
+    TABLES
+        .get_or_init(|| {
+            VENDORED_PROVIDERS
+                .iter()
+                .filter_map(|doc| {
+                    let d = ProviderDescriptor::parse(doc)
+                        .expect("vendored provider descriptor must parse (packaging bug)");
+                    d.credential_mode.map(|mode| (d.name, mode))
+                })
+                .collect()
+        })
+        .get(name)
+}
 
 /// The names of the vendored (shipped) providers — the fallback "is this an egress-pinned, real
 /// provider?" set for a `DefaultContractSource` with no broker in hand. Derived by pure parse.
@@ -2420,6 +2535,9 @@ pub struct GenericProvider {
     git_transport: Option<(String, AuthShape)>,
     /// The hermetic git runner's settings — pinned binary, quarantine root, timeout, retention.
     git: crate::git::GitConfig,
+    /// The descriptor's credential-mode table, if it declared one: the field this provider's own
+    /// key decides, and the prefixes that decide it.
+    credential_mode: Option<CredentialMode>,
     templates: Arc<TemplateRegistry>,
 }
 
@@ -2445,6 +2563,7 @@ impl GenericProvider {
             brokers_credential,
             git_transport,
             git,
+            credential_mode: d.credential_mode,
             templates,
         }
     }
@@ -2468,6 +2587,7 @@ impl GenericProvider {
             brokers_credential,
             git_transport,
             git: crate::git::GitConfig::at(std::env::temp_dir()),
+            credential_mode: d.credential_mode,
             templates,
         }
     }
@@ -2769,6 +2889,16 @@ impl Provider for GenericProvider {
         } else {
             Err(EvidenceFailure::new(EvidenceFailureClass::Integrity))
         }
+    }
+    fn credential_mode_field(&self) -> Option<&str> {
+        self.credential_mode
+            .as_ref()
+            .map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        self.credential_mode
+            .as_ref()
+            .and_then(|mode| mode.of(token))
     }
     fn canonicalize_request_field(
         &self,

@@ -2,7 +2,7 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: capture_payment_intent
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
   action_template_sha256: 0ebaeaf30b9f380886fc8892065eef02693ba2a1c91e5d2e56ba4fe5f106f140
 semantics:
   resource_family: payment_intent

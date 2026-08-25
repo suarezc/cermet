@@ -711,6 +711,13 @@ fn moneypath_vendored_tools_expose_only_each_actions_real_agent_inputs() {
             "stripe-create_standard_payout",
             &["amount", "destination", "source_type"][..],
         ),
+        // Non-money Stripe verbs carry `mode` too, derived from the vaulted credential rather
+        // than read back from the provider. Neither origin is an agent input, so neither shows up
+        // here — and a verb whose origin the bridge does not understand vanishes from the tool
+        // list entirely, which is what these three would do if the new origin went unhandled.
+        ("stripe-refund", &["amount", "charge"][..]),
+        ("stripe-get_charge", &["charge"][..]),
+        ("stripe-search_customers", &["email_contains"][..]),
     ];
 
     for (name, expected_fields) in expected {
@@ -729,7 +736,7 @@ fn moneypath_vendored_tools_expose_only_each_actions_real_agent_inputs() {
         for resolved in ["account", "mode", "currency"] {
             assert!(
                 !properties.contains_key(resolved),
-                "{name} exposes provider-resolved {resolved}"
+                "{name} exposes daemon-supplied {resolved}"
             );
         }
     }

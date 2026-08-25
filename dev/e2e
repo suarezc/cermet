@@ -59,7 +59,9 @@ STAGE="$REPO_ROOT/target/e2e-stage"
 # The synthetic credential. It never leaves this box: it is minted here, piped to `cermet connect`
 # on stdin, and the only server that ever sees it is the fixture in the container.
 FIXTURE_TOKEN="sk_test_e2e_fixture_do_not_use"
-SENTENCE='allow stripe.refund where charge = "ch_alpha" and amount <= 5000'
+# `mode` is not in the request: the daemon derives it from the vaulted key's own prefix before the
+# sentence is evaluated, so pinning it here proves the derivation end to end on a real daemon.
+SENTENCE='allow stripe.refund where charge = "ch_alpha" and amount <= 5000 and mode = "test"'
 
 SELF_TEST=0
 
@@ -322,6 +324,8 @@ EOF
   assert_contains "oracle: it was POST /v1/refunds" '"method": "POST", "path": "/v1/refunds"' "the oracle" "$seen"
   assert_contains "oracle: it carried the vaulted credential" "\"authorization\": \"Bearer $FIXTURE_TOKEN\"" "the oracle" "$seen"
   assert_contains "oracle: the frozen fields arrived verbatim" '"amount": "500", "charge": "ch_alpha"' "the oracle" "$seen"
+  # The derived field is authority, not payload: it bounded the sentence and stayed off the wire.
+  assert_absent "oracle: the derived mode never reached the provider" '"mode"' "the oracle" "$seen"
 
   # --- the neighbours: denied, and the provider never hears about it -----------------------------
   local denied_out denied_rc

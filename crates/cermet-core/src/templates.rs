@@ -296,6 +296,20 @@ pub struct TemplateField {
     /// Legal only on a required `str` field; the literal is `[a-z0-9_-]{1,64}`.
     #[serde(default, deserialize_with = "deserialize_present_fixed")]
     fixed: Option<String>,
+    /// Who supplies this field. Absent means the AGENT does, in the request, like every other
+    /// field. `credential` means the DAEMON does, deriving it from the vaulted credential's own
+    /// shape at request freeze — the agent may not supply it and no step may reference it.
+    #[serde(default)]
+    source: Option<FieldSource>,
+}
+
+/// The declared filler of a field. One variant: the credential itself. A provider whose keys carry
+/// an answer declares it in its descriptor (`credential_mode`); a template that wants that answer
+/// as a pinnable target declares the field here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FieldSource {
+    Credential,
 }
 
 /// One admitted request shape of a relay verb. The predicate is the ENTIRE
@@ -1488,7 +1502,9 @@ impl ActionTemplate {
                     required: f.required,
                     class: f.class.as_str().to_string(),
                     binding: f.binding.as_str().to_string(),
-                    origin: if self
+                    origin: if f.source == Some(FieldSource::Credential) {
+                        "credential_derived".to_string()
+                    } else if self
                         .evidence_profile()
                         .is_some_and(|profile| profile.is_output(&f.name))
                     {
@@ -1663,6 +1679,15 @@ impl ActionTemplate {
             }
         }
         out
+    }
+
+    /// The field this template has the DAEMON fill from the vaulted credential, if it declared one.
+    /// The agent may never supply it and no step may reference it.
+    pub(crate) fn credential_sourced_field(&self) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|f| f.source == Some(FieldSource::Credential))
+            .map(|f| f.name.as_str())
     }
 
     /// The declared fields carrying a canonical-value `format` shape, for the request-time resource
@@ -1914,6 +1939,53 @@ impl ActionTemplate {
                     ));
                 }
             }
+            // A credential-sourced field is filled by the daemon from the vaulted credential's
+            // own shape and pinned by a sentence. It must be exactly comparable, and it must never
+            // reach the wire: nothing an agent writes decides it, and nothing this template
+            // constructs carries it.
+            if f.source == Some(FieldSource::Credential) {
+                // OPTIONAL on purpose: with no credential connected there is nothing to derive
+                // from, and absence is the honest answer. A sentence pinning the field then admits
+                // nothing — the fail-closed outcome — while a sentence that does not pin it is
+                // unaffected, exactly as for any other unconstrained field.
+                if f.required
+                    || f.ty != TemplateType::Str
+                    || f.class != TemplateClass::Identity
+                    || f.binding != TemplateBinding::ExactResourcePin
+                {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is not an optional \
+                         exact-pinned Str Identity",
+                        f.name
+                    ));
+                }
+                if !self.execution_targets.contains(&f.name) {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is not an execution \
+                         target; a daemon-derived field exists to be pinned by a sentence",
+                        f.name
+                    ));
+                }
+                if self.effective_consumes().contains(&f.name) {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is listed in consumes; \
+                         the derived value is never sent to the provider",
+                        f.name
+                    ));
+                }
+            }
+        }
+        if self
+            .fields
+            .iter()
+            .filter(|f| f.source == Some(FieldSource::Credential))
+            .count()
+            > 1
+        {
+            return Err(format!(
+                "{ctx}: more than one field declares `source: credential`; a provider \
+                 descriptor decides exactly one such field"
+            ));
         }
 
         // Request-time canonicalization. The document names one compiled profile; what it
@@ -2249,11 +2321,28 @@ impl ActionTemplate {
         // authority quantum. The claim must be DECLARED (`scope: account`) and earned (a bounded
         // read, checked below) — never inferred from request shape, which is how this concept used
         // to leak out as two provider-shaped special cases.
-        match (self.execution_targets.is_empty(), self.scope) {
+        // An account-scoped verb may still name execution targets the DAEMON fills from the
+        // credential: those describe the credential itself, which is exactly what the account claim
+        // says the resource is. A target the AGENT names still contradicts the claim.
+        let agent_named_targets: Vec<&String> = self
+            .execution_targets
+            .iter()
+            .filter(|t| {
+                self.field(t)
+                    .is_none_or(|f| f.source != Some(FieldSource::Credential))
+            })
+            .collect();
+        match (agent_named_targets.is_empty(), self.scope) {
             (false, Some(ScopeMode::Account)) => {
                 return Err(format!(
-                    "{ctx}: `scope: account` contradicts named execution_targets; the account claim \
-                     is that the credential IS the resource — pin the targets or drop the scope"
+                    "{ctx}: `scope: account` contradicts agent-named execution_targets `{}`; the \
+                     account claim is that the credential IS the resource — pin the targets or \
+                     drop the scope",
+                    agent_named_targets
+                        .iter()
+                        .map(|t| t.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             (true, None) => {
@@ -2300,11 +2389,16 @@ impl ActionTemplate {
             return Err(format!("{ctx}: `scope: account` refuses a money template"));
         }
         for field in &self.fields {
-            if field.class != TemplateClass::ReadFilter {
+            // A credential-sourced field is the DAEMON's account of the credential, not something
+            // the agent names, so it does not contradict the claim that the credential is the
+            // resource — it refines which credential-book the sentence admits.
+            if field.class != TemplateClass::ReadFilter
+                && field.source != Some(FieldSource::Credential)
+            {
                 return Err(format!(
-                    "{ctx}: `scope: account` field `{}` must be class `read_filter`; an account-\
-                     scoped verb has nothing a sentence can pin, so no identity/side_effect/\
-                     free_payload field may ride it",
+                    "{ctx}: `scope: account` field `{}` must be class `read_filter` or \
+                     `source: credential`; an account-scoped verb has nothing an AGENT can pin, so \
+                     no agent-supplied identity/side_effect/free_payload field may ride it",
                     field.name
                 ));
             }

@@ -113,6 +113,14 @@ struct EvidenceProvider {
 }
 
 impl Provider for EvidenceProvider {
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+
     fn name(&self) -> &str {
         "stripe"
     }
@@ -271,6 +279,14 @@ struct CompiledContractProvider {
 }
 
 impl Provider for CompiledContractProvider {
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+
     fn name(&self) -> &str {
         "stripe"
     }

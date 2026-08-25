@@ -71,11 +71,12 @@ fn language_guide_inventory_exactly_matches_typed_vendored_templates() {
                 }),
         );
 
-        if template.execution_targets.is_empty() {
-            assert_eq!(
-                template.scope,
-                Some(ScopeMode::Account),
-                "{}.{} is targetless without declaring `scope: account`",
+        if template.scope == Some(ScopeMode::Account) {
+            assert!(
+                template.execution_targets.iter().all(|target| template
+                    .field(target)
+                    .is_some_and(|field| field.source == Some(FieldSource::Credential))),
+                "{}.{} claims account scope while naming an agent-pinnable execution target",
                 template.provider,
                 template.action
             );
@@ -281,13 +282,14 @@ fn vendors_the_complete_stripe_support_catalog() {
         });
         assert_eq!(contract.provider, "stripe");
         assert_eq!(contract.action, action);
+        assert!(!contract.execution_targets.is_empty());
         if action == "search_customers" {
-            assert!(contract.execution_targets.is_empty());
+            // Account-scoped: the only thing a sentence can pin is the credential's own mode,
+            // which the daemon derives. The filter itself stays unbound.
+            assert_eq!(contract.execution_targets, ["mode"]);
             let filter = contract.field_decl("email_contains").unwrap();
             assert_eq!(filter.class, FieldClass::ReadFilter);
             assert_eq!(filter.binding, AllowBinding::Unbound);
-        } else {
-            assert!(!contract.execution_targets.is_empty());
         }
     }
 
@@ -3213,4 +3215,97 @@ fn a_step_may_declare_a_3xx_success_and_retain_the_header_it_carries() {
             "{why}: refusal must name `{expected}`, got: {error}"
         );
     }
+}
+
+/// `source: credential` says the DAEMON fills this field from the vaulted credential's own shape.
+/// The load rules make that claim structural: it is pinnable by a sentence, it is never present on
+/// the wire, and it is optional because a box with no credential connected has nothing to derive.
+#[test]
+fn a_credential_sourced_field_is_pinnable_wire_free_and_optional() {
+    let base = |field: &str, targets: &str| {
+        format!(
+            "provider: stripe\naction: probe_read\nfields:\n  - {{ name: charge, type: str, \
+             required: true, class: identity, binding: exact_resource_pin }}\n{field}consumes: \
+             [charge]\nexecution_targets: [{targets}]\nhttp:\n  steps:\n    - id: get\n      \
+             method: GET\n      path: /v1/charges/{{charge}}\n      success_statuses: [200]\n"
+        )
+    };
+    let good = base(
+        "  - { name: mode, type: str, required: false, class: identity, binding: \
+         exact_resource_pin, source: credential }\n",
+        "charge, mode",
+    );
+    TemplateRegistry::new()
+        .load(&good)
+        .expect("the shipped shape loads");
+
+    for (why, doc) in [
+        (
+            "required would refuse every request on a box with no credential connected",
+            base(
+                "  - { name: mode, type: str, required: true, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n",
+                "charge, mode",
+            ),
+        ),
+        (
+            "an unpinnable derived field is authority nothing can constrain",
+            base(
+                "  - { name: mode, type: str, required: false, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n",
+                "charge",
+            ),
+        ),
+        (
+            "a free_payload derived field is not exactly comparable",
+            base(
+                "  - { name: mode, type: str, required: false, class: free_payload, binding: \
+                 unbound, source: credential }\n",
+                "charge, mode",
+            ),
+        ),
+        (
+            "two derived fields: a descriptor decides exactly one",
+            base(
+                "  - { name: mode, type: str, required: false, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n  - { name: book, type: str, required: \
+                 false, class: identity, binding: exact_resource_pin, source: credential }\n",
+                "charge, mode, book",
+            ),
+        ),
+    ] {
+        assert!(
+            TemplateRegistry::new().load(&doc).is_err(),
+            "must refuse ({why}): {doc}"
+        );
+    }
+}
+
+/// Every shipped Stripe verb carries the derived field, and none of them lets it reach the wire.
+#[test]
+fn every_stripe_verb_pins_the_credentials_own_mode() {
+    let mut seen = 0;
+    for doc in VENDORED_CATALOG {
+        let template: ActionTemplate = serde_yaml::from_str(doc).unwrap();
+        if template.provider != "stripe" {
+            continue;
+        }
+        seen += 1;
+        let mode = template
+            .field("mode")
+            .unwrap_or_else(|| panic!("stripe.{} declares no `mode`", template.action));
+        assert_eq!(mode.class, TemplateClass::Identity);
+        assert_eq!(mode.binding, TemplateBinding::ExactResourcePin);
+        assert!(
+            template.execution_targets.iter().any(|t| t == "mode"),
+            "stripe.{} does not let a sentence pin `mode`",
+            template.action
+        );
+        assert!(
+            !template.effective_consumes().iter().any(|c| c == "mode"),
+            "stripe.{} would send `mode` to the provider",
+            template.action
+        );
+    }
+    assert_eq!(seen, 33, "every vendored stripe verb was checked");
 }

@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: archive_price
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 86c04b3d39909b9cc4d5326524cd4cd0aecfb9e4c92a76ea70ad9ae7fb35d284
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 27c13244c8a0587f68cfeb8beccfb8027ecaf89971d5d2ef85f753aadbb9de4f
 semantics:
   resource_family: price
   provider_operation: price_archive

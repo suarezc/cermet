@@ -387,6 +387,32 @@ impl Broker {
         for doc in &cfg.action_templates {
             templates.load(doc).map_err(Error::Invalid)?;
         }
+        // A `source: credential` field is filled from the provider's own descriptor table. If the
+        // descriptor names no such field — or names a different one — the field could never be
+        // filled and every request for that verb would refuse at run time. Refuse to boot instead,
+        // where the packaging bug is legible.
+        let credential_mode_fields: HashMap<&str, &str> = descriptors
+            .iter()
+            .filter_map(|d| {
+                d.credential_mode
+                    .as_ref()
+                    .map(|mode| (d.name.as_str(), mode.field.as_str()))
+            })
+            .collect();
+        for lt in templates.loaded_entries() {
+            let Some(field) = lt.template.credential_sourced_field() else {
+                continue;
+            };
+            if credential_mode_fields.get(lt.template.provider()) != Some(&field) {
+                return Err(Error::Invalid(format!(
+                    "{}.{}: field `{field}` is `source: credential`, but the `{}` descriptor \
+                     declares no such credential-decided field",
+                    lt.template.provider(),
+                    lt.template.action(),
+                    lt.template.provider(),
+                )));
+            }
+        }
         let dir = &cfg.dir;
         let audit_path = dir.join("audit.db").to_string_lossy().into_owned();
         let vault_path = dir.join("vault.db").to_string_lossy().into_owned();

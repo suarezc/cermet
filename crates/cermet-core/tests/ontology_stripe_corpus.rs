@@ -149,8 +149,9 @@ fn stage_dispute_evidence_has_exact_optional_frozen_fields_and_output_boundary()
     let contract = registry
         .resolve("stripe", "stage_dispute_evidence")
         .expect("stage action must resolve");
-    assert_eq!(contract.schema.len(), 28);
-    assert_eq!(contract.execution_targets, ["dispute"]);
+    // 28 reviewed evidence fields plus the daemon-derived `mode`, which no step consumes.
+    assert_eq!(contract.schema.len(), 29);
+    assert_eq!(contract.execution_targets, ["dispute", "mode"]);
     assert_eq!(contract.consumes.len(), 28);
     assert_eq!(contract.consumes[0], "dispute");
     assert_eq!(&contract.consumes[1..], EVIDENCE_FIELDS);
@@ -227,9 +228,9 @@ fn submit_dispute_evidence_is_standalone_and_carries_only_fixed_submit_true() {
     let contract = registry
         .resolve("stripe", "submit_dispute_evidence")
         .expect("submit action must resolve");
-    assert_eq!(contract.schema.len(), 1);
+    assert_eq!(contract.schema.len(), 2);
     assert_eq!(contract.consumes, ["dispute"]);
-    assert_eq!(contract.execution_targets, ["dispute"]);
+    assert_eq!(contract.execution_targets, ["dispute", "mode"]);
     let dispute = contract.field_decl("dispute").unwrap();
     assert!(dispute.required);
     assert_eq!(dispute.class, FieldClass::Identity);
@@ -259,9 +260,9 @@ fn webhook_update_has_two_exact_targets_and_one_fixed_literal_bundle() {
     let contract = registry
         .resolve("stripe", "update_webhook_endpoint_fixed_bundle")
         .expect("webhook action must resolve");
-    assert_eq!(contract.schema.len(), 2);
+    assert_eq!(contract.schema.len(), 3);
     assert_eq!(contract.consumes, ["endpoint", "url"]);
-    assert_eq!(contract.execution_targets, ["endpoint", "url"]);
+    assert_eq!(contract.execution_targets, ["endpoint", "url", "mode"]);
     assert!(contract.has_fully_pinned_execution_targets());
     for field in ["endpoint", "url"] {
         let declaration = contract.field_decl(field).unwrap();
@@ -343,14 +344,19 @@ fn seven_reads_are_requestable_exact_pinned_one_step_gets() {
         let contract = registry
             .resolve("stripe", action)
             .unwrap_or_else(|| panic!("stripe.{action} must resolve"));
-        assert_eq!(contract.schema.len(), 1, "stripe.{action}");
-        assert_eq!(contract.execution_targets, [target], "stripe.{action}");
+        // The pinned read target plus the daemon-derived `mode`, which the read does not consume.
+        assert_eq!(contract.schema.len(), 2, "stripe.{action}");
+        assert_eq!(
+            contract.execution_targets,
+            [target, "mode"],
+            "stripe.{action}"
+        );
         assert_eq!(contract.consumes, [target], "stripe.{action}");
         assert!(contract.has_fully_pinned_execution_targets());
         assert!(contract.schema.iter().all(|field| {
-            field.required
-                && field.class == FieldClass::Identity
+            field.class == FieldClass::Identity
                 && field.binding == AllowBinding::ExactResourcePin
+                && (field.required || field.name == "mode")
         }));
 
         let shapes = registry
@@ -495,7 +501,11 @@ fn six_m2_contracts_freeze_exact_targets_and_the_only_bounded_amount() {
             .resolve("stripe", action)
             .unwrap_or_else(|| panic!("stripe.{action} must resolve"));
         assert_eq!(contract.consumes, consumes, "stripe.{action}");
-        assert_eq!(contract.execution_targets, [target], "stripe.{action}");
+        assert_eq!(
+            contract.execution_targets,
+            [target, "mode"],
+            "stripe.{action}"
+        );
         assert!(contract.has_fully_pinned_execution_targets());
 
         let identity = contract.field_decl(target).unwrap();
@@ -505,14 +515,14 @@ fn six_m2_contracts_freeze_exact_targets_and_the_only_bounded_amount() {
         assert_eq!(identity.binding, AllowBinding::ExactResourcePin);
 
         if action == "issue_credit_note_adjustment_no_email" {
-            assert_eq!(contract.schema.len(), 2);
+            assert_eq!(contract.schema.len(), 3);
             let amount = contract.field_decl("amount").unwrap();
             assert!(amount.required);
             assert_eq!(amount.ty, ScalarKind::Int);
             assert_eq!(amount.class, FieldClass::SideEffect);
             assert_eq!(amount.binding, AllowBinding::Bounded);
         } else {
-            assert_eq!(contract.schema.len(), 1, "stripe.{action}");
+            assert_eq!(contract.schema.len(), 2, "stripe.{action}");
         }
     }
 }
@@ -641,7 +651,7 @@ fn credit_note_shape_has_no_caller_selected_combined_effect_channel() {
         .map(|field| field["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     let body = yaml["http"]["steps"][0]["body"].as_mapping().unwrap();
-    assert_eq!(field_names, ["invoice", "amount"]);
+    assert_eq!(field_names, ["invoice", "amount", "mode"]);
     assert_eq!(body.len(), 3);
     for forbidden in [
         "refund_amount",

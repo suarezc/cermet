@@ -7,8 +7,9 @@ fields:
   - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [customer, currency, amount]
-execution_targets: [customer, currency]
+execution_targets: [customer, currency, mode]
 http:
   steps:
     - id: credit

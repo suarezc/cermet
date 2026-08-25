@@ -30,8 +30,9 @@ fields:
   - { name: shipping_tracking_number, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
   - { name: uncategorized_file, type: str, required: false, class: identity, binding: exact_resource_pin, max_chars: 20000 }
   - { name: uncategorized_text, type: str, required: false, class: free_payload, binding: unbound, max_chars: 20000 }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [dispute, access_activity_log, billing_address, cancellation_policy, cancellation_policy_disclosure, cancellation_rebuttal, customer_communication, customer_email_address, customer_name, customer_purchase_ip, customer_signature, duplicate_charge_documentation, duplicate_charge_explanation, duplicate_charge_id, product_description, receipt, refund_policy, refund_policy_disclosure, refund_refusal_explanation, service_date, service_documentation, shipping_address, shipping_carrier, shipping_date, shipping_documentation, shipping_tracking_number, uncategorized_file, uncategorized_text]
-execution_targets: [dispute]
+execution_targets: [dispute, mode]
 string_char_budget:
   fields: [access_activity_log, billing_address, cancellation_policy, cancellation_policy_disclosure, cancellation_rebuttal, customer_communication, customer_email_address, customer_name, customer_purchase_ip, customer_signature, duplicate_charge_documentation, duplicate_charge_explanation, duplicate_charge_id, product_description, receipt, refund_policy, refund_policy_disclosure, refund_refusal_explanation, service_date, service_documentation, shipping_address, shipping_carrier, shipping_date, shipping_documentation, shipping_tracking_number, uncategorized_file, uncategorized_text]
   max_chars: 150000

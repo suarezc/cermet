@@ -1712,6 +1712,14 @@ struct V2M1FakeStripe {
 }
 
 impl Provider for V2M1FakeStripe {
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+
     fn name(&self) -> &str {
         "stripe"
     }
@@ -1764,6 +1772,14 @@ struct V2M1CredStripe {
 }
 
 impl Provider for V2M1CredStripe {
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+
     fn name(&self) -> &str {
         "stripe"
     }
@@ -1810,6 +1826,14 @@ struct V2ShapeStripe {
 }
 
 impl Provider for V2ShapeStripe {
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+
     fn name(&self) -> &str {
         "stripe"
     }
@@ -3124,7 +3148,7 @@ fn budget_error_after_invocation_keeps_the_debit() {
     // Enroll a credential so open_secret succeeds and provider.execute is invoked (then errors).
     broker
         .vault
-        .connect(&credential_ref("stripe"), "stripe", None, "tok")
+        .connect(&credential_ref("stripe"), "stripe", None, "sk_test_tok")
         .unwrap();
     let first = broker
         .request_capability("s", v2_m1_refund_request_at("ch1", 60))
@@ -3390,8 +3414,8 @@ fn recovered_non_money_pre_effect_terminal_releases_its_budget() {
 // needs the daemon's own audit key. The redaction property this test is named for is unchanged
 // and still asserted.
 fn recovery_replays_the_audit_writers_complete_resource_redaction() {
-    const VAULT_SECRET: &str = "vault_resource_canary";
-    const CHARGE: &str = "prefix_vault_resource_canary_suffix";
+    const VAULT_SECRET: &str = "sk_test_vault_resource_canary";
+    const CHARGE: &str = "prefix_sk_test_vault_resource_canary_suffix";
 
     {
         let altered = false;
@@ -3502,8 +3526,8 @@ fn recovery_replays_the_audit_writers_complete_resource_redaction() {
 
 #[test]
 fn effect_start_recovery_survives_vault_secret_rotation() {
-    const HISTORICAL_SECRET: &str = "historical_vault_secret_canary";
-    const CHARGE: &str = "prefix_historical_vault_secret_canary_suffix";
+    const HISTORICAL_SECRET: &str = "sk_test_historical_vault_secret_canary";
+    const CHARGE: &str = "prefix_sk_test_historical_vault_secret_canary_suffix";
 
     let (_dir_guard, dir) = fresh_broker_dir();
     let (broker, _invoked) = budget_broker_cred(
@@ -3715,7 +3739,7 @@ fn budget_sweep_keeps_the_debit_of_an_abandoned_executing_grant() {
     // but instead of executing we terminalize the lease as abandoned (unreported — may have run).
     broker
         .vault
-        .connect(&credential_ref("stripe"), "stripe", None, "tok")
+        .connect(&credential_ref("stripe"), "stripe", None, "sk_test_tok")
         .unwrap();
     let g = broker.load_grant(&grant_id).unwrap();
     // Manually put it Executing with lease stamps (mirrors a claim), then abandon via the sweep.
@@ -6261,7 +6285,9 @@ fn stripe_egress_broker_without_credential(base: &str, rules: &str) -> TestBroke
         .into_iter()
         .filter(|descriptor| !descriptor.contains("name: stripe\n"))
         .chain([format!(
-            "name: stripe\negress:\n  - {base}\nauth: bearer\nheaders:\n  Stripe-Version: 2026-06-24.dahlia\n"
+            "name: stripe\negress:\n  - {base}\nauth: bearer\nheaders:\n  Stripe-Version: \
+             2026-06-24.dahlia\ncredential_mode:\n  field: mode\n  by_prefix:\n    sk_test_: \
+             test\n    sk_live_: live\n"
         )])
         .collect();
     let mut parsed = crate::sentence::parse_rules(rules).unwrap();
@@ -10185,4 +10211,260 @@ fn an_escape_sequence_in_a_request_field_never_reaches_the_error_body_or_the_aud
         refusals[0]
     );
     assert!(broker.verify_integrity().unwrap().verified);
+}
+
+// ---------------------------------------------------------------------------
+// The credential decides the book: `mode` is daemon-derived, never agent-supplied
+// ---------------------------------------------------------------------------
+
+/// A stripe key names its own book in its prefix, so the mode a request executes against is a
+/// property of the vaulted credential — not of anything the requester says. These cover the whole
+/// path: derived at freeze, judged by the sentence, re-derived at execution.
+struct ModeStripe {
+    templates: Arc<TemplateRegistry>,
+    calls: Arc<std::sync::Mutex<usize>>,
+}
+
+impl Provider for ModeStripe {
+    fn name(&self) -> &str {
+        "stripe"
+    }
+    fn supported_actions(&self) -> &'static [&'static str] {
+        &["refund"]
+    }
+    fn action_contract(&self, action: &str) -> Option<&'static crate::contract::ActionContract> {
+        self.templates.resolve("stripe", action)
+    }
+    fn requires_credential(&self) -> bool {
+        true
+    }
+    // A stripe stand-in models the same credential-decided field the shipped descriptor declares.
+    fn credential_mode_field(&self) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        crate::provider::vendored_credential_mode("stripe").and_then(|mode| mode.of(token))
+    }
+    fn execute(&self, _call: ProviderCall) -> Result<ProviderResponse> {
+        *self.calls.lock().unwrap() += 1;
+        Ok(ProviderResponse {
+            proof: None,
+            ok: true,
+            failure_class: None,
+            result: json!({"id": "re_mode", "status": "succeeded"}),
+            retained: None,
+            envelope: Default::default(),
+        })
+    }
+}
+
+fn mode_broker(dir: &std::path::Path, rules: &str) -> (Broker, Arc<std::sync::Mutex<usize>>) {
+    let mut parsed = crate::sentence::parse_rules(rules).unwrap();
+    crate::sentence::pin_set_references(&mut parsed, &crate::sets::VendoredSetResolver).unwrap();
+    let source = Arc::new(V2M1SentenceAuthority::new(parsed));
+    let mut broker = open_broker_reuse_with_sentence_authority(dir, "providers: {}", source);
+    let calls = Arc::new(std::sync::Mutex::new(0));
+    broker.providers.insert(
+        "stripe".into(),
+        Box::new(ModeStripe {
+            templates: broker.templates.clone(),
+            calls: calls.clone(),
+        }),
+    );
+    broker.set_now(1_700_000_000);
+    (broker, calls)
+}
+
+const TEST_MODE_SENTENCE: &str =
+    "allow stripe.refund where charge = \"ch_alpha\" and amount <= 5000 and mode = \"test\"";
+
+#[test]
+fn a_test_key_freezes_mode_test_into_the_resource_the_sentence_judges() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, _calls) = mode_broker(&dir, TEST_MODE_SENTENCE);
+    broker
+        .connect_credential("stripe", None, "sk_test_mode_derivation")
+        .unwrap();
+
+    let outcome = broker
+        .request_capability("s", v2_m1_refund_request("ch_alpha"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
+    let grant = broker
+        .load_grant(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    let frozen: Value = serde_json::from_str(&grant.resource_json).unwrap();
+    assert_eq!(
+        frozen.get("mode").and_then(Value::as_str),
+        Some("test"),
+        "the frozen resource carries the mode the credential decided: {frozen}"
+    );
+}
+
+#[test]
+fn a_live_key_denies_a_test_only_sentence_with_zero_provider_contact() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, calls) = mode_broker(&dir, TEST_MODE_SENTENCE);
+    broker
+        .connect_credential("stripe", None, "sk_live_mode_derivation")
+        .unwrap();
+
+    let outcome = broker
+        .request_capability("s", v2_m1_refund_request("ch_alpha"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Deny, "{}", outcome.reason);
+    assert!(outcome.grant_id.is_none(), "a deny mints no grant");
+    assert_eq!(
+        *calls.lock().unwrap(),
+        0,
+        "the deny is decided before any provider is reached"
+    );
+
+    // The CREDENTIAL is what changed the answer: the same sentence and the same request admit
+    // once the vaulted key names the test book.
+    broker
+        .connect_credential("stripe", None, "sk_test_mode_derivation")
+        .unwrap();
+    let after = broker
+        .request_capability("s", v2_m1_refund_request("ch_alpha"))
+        .unwrap();
+    assert_eq!(after.decision, Decision::Allow, "{}", after.reason);
+}
+
+#[test]
+fn a_sentence_that_does_not_pin_mode_admits_the_book_the_credential_names() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, _calls) = mode_broker(
+        &dir,
+        "allow stripe.refund where charge = \"ch_alpha\" and amount <= 5000",
+    );
+    broker
+        .connect_credential("stripe", None, "sk_live_mode_derivation")
+        .unwrap();
+
+    // Conjunctive containment: an unconstrained field constrains nothing. The receipt still
+    // records which book executed, because the derived value is frozen either way.
+    let outcome = broker
+        .request_capability("s", v2_m1_refund_request("ch_alpha"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Allow, "{}", outcome.reason);
+    let grant = broker
+        .load_grant(outcome.grant_id.as_deref().unwrap())
+        .unwrap();
+    assert!(
+        grant.resource_json.contains("\"mode\":\"live\""),
+        "{}",
+        grant.resource_json
+    );
+}
+
+#[test]
+fn a_credential_of_an_unrecognised_kind_refuses_and_says_the_mode_is_undetermined() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, calls) = mode_broker(&dir, TEST_MODE_SENTENCE);
+    broker
+        .connect_credential("stripe", None, "not_a_stripe_key_shape")
+        .unwrap();
+
+    let outcome = broker
+        .request_capability("s", v2_m1_refund_request("ch_alpha"))
+        .unwrap();
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(
+        outcome.reason.contains("`mode` could not be determined"),
+        "the refusal names the undetermined field: {}",
+        outcome.reason
+    );
+    assert_eq!(*calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn an_agent_supplied_mode_is_refused_because_the_field_is_the_daemons() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, calls) = mode_broker(&dir, TEST_MODE_SENTENCE);
+    broker
+        .connect_credential("stripe", None, "sk_live_mode_derivation")
+        .unwrap();
+
+    // T1/T2: a steered or sloppy agent asserting the book it wants to act on. The assertion is not
+    // weighed against the credential — it is refused, so there is no channel to assert through.
+    let mut request = v2_m1_refund_request("ch_alpha");
+    request.resource = json!({"charge": "ch_alpha", "amount": 2300, "mode": "test"});
+    let outcome = broker.request_capability("s", request).unwrap();
+    assert_eq!(outcome.decision, Decision::Deny);
+    assert!(
+        outcome.reason.contains("may not be supplied in a request"),
+        "{}",
+        outcome.reason
+    );
+    assert_eq!(*calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn a_credential_replaced_after_approval_refuses_before_the_provider_is_invoked() {
+    let (_guard, dir) = fresh_broker_dir();
+    let (broker, invoked) = budget_broker_cred(
+        &dir,
+        budget_rules(
+            "allow stripe.refund where amount <= 5000 and mode = \"test\" and budget amount 100 per day",
+        ),
+    );
+    broker.set_now(1_700_000_000);
+    broker
+        .connect_credential("stripe", None, "sk_test_before_rotation")
+        .unwrap();
+    let outcome = broker
+        .request_capability("s", v2_m1_refund_request_at("ch_alpha", 60))
+        .unwrap();
+    let grant_id = outcome.grant_id.clone().expect("a test-mode allow mints");
+
+    // T2: the operator re-connected the LIVE key between the decision and the claim. The grant was
+    // approved against the test book and must not execute against the live one.
+    broker
+        .connect_credential("stripe", None, "sk_live_after_rotation")
+        .unwrap();
+    let error = broker
+        .execute_capability(&grant_id)
+        .expect_err("a credential whose mode drifted refuses");
+    assert!(
+        error.to_string().contains("approved against `test`"),
+        "{error}"
+    );
+    assert!(
+        !invoked.load(std::sync::atomic::Ordering::SeqCst),
+        "the provider adapter is never invoked"
+    );
+}
+
+#[test]
+fn a_descriptor_that_decides_no_mode_refuses_to_boot_a_template_that_wants_one() {
+    // A `source: credential` field can only be filled from the provider's own descriptor table.
+    // Pair the shipped Stripe catalog with a descriptor that declares none and the field could
+    // never be filled — every Stripe request would refuse at run time. Fail at boot instead, where
+    // the packaging mistake is legible.
+    let descriptors: Vec<String> = BrokerConfig::vendored_descriptors()
+        .into_iter()
+        .filter(|descriptor| !descriptor.contains("name: stripe\n"))
+        .chain(["name: stripe\negress:\n  - https://api.stripe.com\nauth: bearer\n".to_string()])
+        .collect();
+    let (_guard, dir) = fresh_broker_dir();
+    let error = Broker::open_for_semantic_test(
+        BrokerConfig {
+            git: test_quarantine(),
+            dir,
+            master_key: vec![5u8; 32],
+            action_templates: catalog(),
+            provider_descriptors: descriptors,
+            artifacts: crate::artifacts::ArtifactConfig::default(),
+        },
+        None,
+    );
+    let error = match error {
+        Ok(_) => panic!("a template wanting an undeclared credential-decided field must not boot"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("source: credential"),
+        "the refusal names the mismatch: {error}"
+    );
 }

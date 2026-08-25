@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: archive_product
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: df1adf19662ed37557c4d6d9cfe015f794c5d4f3d897e2eccee0dd0b1c683068
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 6a74c7ecd9b8b1c74f76f7b8142478b365ad5f18e2a02454d01db8534b11c9dc
 semantics:
   resource_family: product
   provider_operation: product_archive

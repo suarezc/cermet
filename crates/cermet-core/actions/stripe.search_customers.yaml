@@ -2,8 +2,9 @@ provider: stripe
 action: search_customers
 fields:
   - { name: email_contains, type: str, required: true, class: read_filter, binding: unbound }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [email_contains]
-execution_targets: []
+execution_targets: [mode]
 scope: account
 http:
   steps:

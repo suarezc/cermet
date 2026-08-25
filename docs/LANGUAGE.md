@@ -201,6 +201,9 @@ allow stripe.get_charge where charge = "ch_3PabcXYZ"
 # Bounded side effect
 allow stripe.refund where amount <= 5000
 
+# The book the credential itself names — the daemon derives `mode`; the sentence bounds it
+allow stripe.refund where amount <= 5000 and mode = "test"
+
 # A finite set for one verb
 allow stripe.get_price where price in {"price_basic", "price_pro"}
 
@@ -287,6 +290,11 @@ targetless_query_shapes:
         required: true
         class: read_filter
         binding: unbound
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
     transforms: [query_literal]
   - verb: vercel.list_projects
     method: GET
@@ -362,8 +370,8 @@ Each entry in `fields` is:
 - { name: project, type: str, required: true, class: identity, binding: exact_resource_pin }
 ```
 
-The five keys shown above are mandatory. `format`, `max_chars`, `max_int`, and `fixed` are optional
-field keys.
+The five keys shown above are mandatory. `format`, `max_chars`, `max_int`, `fixed`, and `source`
+are optional field keys.
 
 - **`name`** — a lowercase identifier: `[a-z0-9_]`, non-empty, at most 64 characters. It must be
   unique within the template. The names **`token`** and **`parameters`** are **reserved** and may
@@ -380,7 +388,27 @@ field keys.
   canonicalization before claim. This counts characters, not UTF-8 bytes, and does not replace the
   generic byte cap.
 
-One **optional** field key exists beyond those:
+Two **optional** field keys exist beyond those:
+
+- **`source`** — who supplies the value. Absent means the AGENT does, on the request, like every
+  other field. The one other value is **`credential`**: the DAEMON derives it from the vaulted
+  credential's own shape at request freeze, before the sentence judges anything. Which providers
+  have such a field, and how it is derived, is descriptor data — a provider whose keys carry the
+  answer declares `credential_mode: { field: <name>, by_prefix: { <prefix>: <value>, … } }`, and a
+  template that wants that answer as a pinnable target declares the field with `source: credential`.
+  Stripe issues one key per book and spells the book in the key's prefix, so every `stripe.*` verb
+  declares `mode`, and `mode = "test"` in a sentence is a real bound rather than something the
+  requester asserts about itself.
+
+  The load rules make the claim structural: the field must be an **optional**, exact-pinned `str`
+  `identity`, it must be an **execution target** (a derived value nothing can pin is authority
+  nothing constrains), and it must be absent from `consumes` and from every step placeholder — it
+  never reaches the provider. It is optional because a box with no credential connected has nothing
+  to derive from; the field then freezes as absence, a sentence pinning it admits nothing, and a
+  sentence that does not pin it is unaffected. A request that supplies the field itself is refused
+  as malformed. Boot refuses a template whose `source: credential` field the provider descriptor
+  does not declare. In the catalog the field's `origin` reads `credential_derived`, and the MCP verb
+  tools omit it exactly as they omit `provider_resolved` inputs.
 
 - **`format`** — a pure **admission predicate** on the field's scalar (reject-only, never a value
   rewrite): one of `git_oid` (a 40/64-char lowercase-hex Git object ID), `https_url` (an absolute
@@ -447,16 +475,18 @@ handles that identify *which* resource is affected. It remains structural contra
 included in the frozen resource; sentence authors choose whether to constrain each field. Rules:
 
 1. Every execution target must be a **declared** field.
-2. Every execution target must be a **required** field.
-3. A template must name **at least one** execution target unless it declares **`scope: account`** —
-   "the pin is the verb": an account-scoped read has no finer resource
+2. Every execution target must be a **required** field, unless it is `source: credential` — a
+   daemon-derived value is optional by construction (§3), and its absence pins nothing.
+3. A template must name **at least one AGENT-nameable** execution target unless it declares
+   **`scope: account`** — "the pin is the verb": an account-scoped read has no finer resource
    than the credential itself, so the verb name is the complete authority quantum and a bare
    `allow provider.action` states it. The declaration is earned by boundedness, checked at
-   ratification: constructed `http` execution only, no `money`, only `read_filter` fields, and every
-   step a statused read (a bodyless GET, or a POST whose body is a frozen GraphQL `query`). A filter
-   placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a quoted
-   `query_literal` — injected filter content must never rewrite the query's meaning; a placeholder that
-   is the whole value has no DSL around it and rides plain.
+   ratification: constructed `http` execution only, no `money`, only `read_filter` fields (plus any
+   `source: credential` field, which describes the credential rather than a finer resource), and
+   every step a statused read (a bodyless GET, or a POST whose body is a frozen GraphQL `query`). A
+   filter placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a
+   quoted `query_literal` — injected filter content must never rewrite the query's meaning; a
+   placeholder that is the whole value has no DSL around it and rides plain.
 
 Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter) and
 `vercel.list_projects` (whole-value optional filter):
@@ -464,8 +494,10 @@ Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filte
 ```yaml
 fields:
   - { name: email_contains, type: str, required: true, class: read_filter, binding: unbound }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [email_contains]
-execution_targets: []
+execution_targets: [mode]
+scope: account
 http:
   steps:
     - id: search
@@ -476,7 +508,9 @@ http:
 
 **Why optional targets are refused.** If an optional execution target were absent, a provider default
 could select authority not represented in the frozen resource. Therefore every target is required;
-the provider cannot silently execute an omitted target value.
+the provider cannot silently execute an omitted target value. A `source: credential` target is the
+one exception, and it is exempt for the reason the rule exists: the value never reaches the
+provider, so there is no omitted value for a provider default to fill.
 
 **Express an API default without an optional target.** If the provider requires a field but you
 usually want a fixed default, do *not* make it an optional target. Instead declare a **required**

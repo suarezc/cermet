@@ -6,8 +6,9 @@ provider: stripe
 action: get_payment_intent
 fields:
   - { name: payment_intent, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [payment_intent]
-execution_targets: [payment_intent]
+execution_targets: [payment_intent, mode]
 http:
   steps:
     - id: get

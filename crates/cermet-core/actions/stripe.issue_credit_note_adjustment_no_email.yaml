@@ -6,8 +6,9 @@ action: issue_credit_note_adjustment_no_email
 fields:
   - { name: invoice, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [invoice, amount]
-execution_targets: [invoice]
+execution_targets: [invoice, mode]
 http:
   steps:
     - id: issue

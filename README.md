@@ -36,7 +36,7 @@ reads as the intent:
 ```cermet
 allow github.fetch  where owner = "you" and name = "your-repo"
 allow github.push   where owner = "you" and name = "your-repo"
-allow stripe.refund where charge = "ch_3TyX" and amount <= 5000
+allow stripe.refund where charge = "ch_3TyX" and amount <= 5000 and mode = "test"
 allow vercel.deploy where project = "your-site" and target = "preview"
 ```
 

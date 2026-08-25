@@ -500,6 +500,7 @@ absence at request time; there is no execute-time fill.
 |---|---|
 | `agent_request` | You supply it on the request. |
 | `provider_resolved` | The daemon fills it from the provider's own response, after the fact, as a declared evidence output. You never supply it, and the default zoom omits it from the field list for that reason. |
+| `credential_derived` | The daemon fills it from the vaulted credential's own shape, before the sentence judges the request — Stripe's `mode` (`test` / `live`) is derived from the key's prefix. You never supply it (a request that carries it is refused), it never reaches the provider, and the default zoom omits it. A sentence may still pin it, which is the point: `mode = "test"` bounds a rule to the test book. With no credential connected there is nothing to derive, so the field is absent and a sentence pinning it admits nothing. |
 
 **`forms`** — the index of ways a sentence is *allowed* to constrain this field, printed in a fixed
 order. It is the WHERE-index: it tells an operator writing a rule what predicates that rule may use.

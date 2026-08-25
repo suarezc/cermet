@@ -350,7 +350,7 @@ sentence is one `+` line:
 +++ document
 @@ -3,1 +3,2 @@
  allow stripe.search_customers
-+allow stripe.refund where amount <= 5000
++allow stripe.refund where amount <= 5000 and mode = "test"
 ```
 
 Only the managed block is authority input. Prose in CERMET.md is guidance, never policy.
@@ -451,7 +451,9 @@ allowed now (22 verbs) — a standing sentence admits each of these; request it 
   vercel.deploy(project:str, target:str, team?:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" | ...
 ```
 
-`?` marks an optional field; provider-resolved fields are omitted because the broker fills them.
+`?` marks an optional field; fields the broker fills itself are omitted — what it reads back from
+the provider, and what it derives from the credential (Stripe's `mode`, from the key's own prefix:
+`and mode = "test"` in a sentence keeps a rule on the test book).
 `cermet catalog --all` is the full dictionary, every entry stamped with its authority status.
 
 Two prerequisites worth knowing up front:
