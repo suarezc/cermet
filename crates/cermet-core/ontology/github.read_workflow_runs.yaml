@@ -3,7 +3,7 @@ provider: github
 action: read_workflow_runs
 binds:
   provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: e65340ba229ad790ff3eca9a11a718750a7631e6798297fb823b913b465879ff
+  action_template_sha256: c446fcc5bb8432c02291d8bab9364165c689d8dc90b1ab52eaa58dc137ee0583
 semantics:
   resource_family: workflow_run
   provider_operation: workflow_runs_list

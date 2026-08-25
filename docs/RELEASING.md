@@ -18,8 +18,11 @@ sentences, and the version string in them is the decision.
    `github.push` sentence), open a pull request, and merge it.
 2. **Tag it.** `git tag -a v1.2.3 -m "…"` then `git push origin v1.2.3`. The push is decided by
    git's update hook against the `push_tag` sentence, and it is what triggers tag-driven CI.
-3. **Watch the build.** `read_workflow_runs` with the tagged commit's SHA gives you a run id;
+3. **Watch the build.** `read_workflow_runs` with the tagged COMMIT's SHA gives you a run id;
    `read_workflow_run` and `read_workflow_run_jobs` take it from there until the run is green.
+   For an annotated tag the oid the push receipt carried is the tag object, not the commit —
+   `git rev-parse v1.2.3^{commit}` is the value CI ran against. Querying with the tag object's
+   oid is not an error; it is an honest empty list, which reads as "CI never fired".
 4. **Find the draft.** `read_releases` lists the newest releases including drafts, which is where a
    build that publishes its artifacts as a draft leaves them. Take its `id`.
 5. **Publish it.** `publish_release` with that id, the tag, and your notes. The verb proves the id

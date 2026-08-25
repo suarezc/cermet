@@ -205,12 +205,12 @@ impl<'de> Deserialize<'de> for ActionTemplate {
                     (Some(_), Some(_)) => {
                         return Err(Error::custom(
                             "a template declares exactly ONE execution kind; `http:` and `git:` are mutually exclusive",
-                        ))
+                        ));
                     }
                     (None, None) => {
                         return Err(Error::custom(
                             "a template must declare `http:` or `git:` (the supported execution kinds)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -2935,7 +2935,7 @@ impl ActionTemplate {
                 (None, Some(tag)) => ("tag", tag, FieldFormat::GitTagName),
                 _ => {
                     return Err(format!(
-                        "{ctx}: git.push must name exactly one of `branch` and `tag` (the two ref                          namespaces that have vocabulary)"
+                        "{ctx}: git.push must name exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
                     ));
                 }
             };

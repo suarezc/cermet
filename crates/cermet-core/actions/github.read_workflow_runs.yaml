@@ -3,7 +3,10 @@
 #
 # This is the entry point of the CI-diagnosis ladder: `read_workflow_run` and
 # `read_workflow_run_jobs` both take a `run_id`, and nothing produced one. After a push the agent
-# knows the commit it pushed, so the commit is the handle that turns into a run id.
+# knows the commit it pushed, so the commit is the handle that turns into a run id. Mind the tag
+# case: an annotated tag's push receipt carries the TAG OBJECT's oid, and CI ran against the commit
+# it points at (`git rev-parse <tag>^{commit}`). A tag object's oid is a well-formed `git_oid`, so
+# nothing here can refuse it — the provider answers with an honest empty list.
 #
 # `head_sha` and NOT a branch pin: a run triggered by a TAG push reports the tag as its
 # `head_branch`, so a branch filter would silently return nothing for exactly the case a release

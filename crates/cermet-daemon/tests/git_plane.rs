@@ -562,6 +562,34 @@ fn an_allowed_tag_push_lands_upstream_and_receipts_the_transition() {
     assert_eq!(receipt["resource"]["new_oid"], serde_json::json!(tag_oid));
 }
 
+/// The release's actual guard: the tag sentence pins ONE version, and a push of any other tag is a
+/// decided deny by the same exact-pin path a branch pin uses. Nothing reaches the upstream.
+#[test]
+fn a_tag_sentence_does_not_admit_a_different_tag() {
+    let h = Harness::start(ALLOW_TAG);
+    let (src, _oid) = h.source();
+    git_ok(
+        &h.root,
+        &src,
+        &["tag", "-a", "v1.0.1", "-m", "not the pinned version"],
+    );
+
+    let (ok, output) = h.push(&src, "github/acme/website", "refs/tags/v1.0.1");
+    assert!(!ok, "a sentence for v1.0.0 must not move v1.0.1:\n{output}");
+    assert!(
+        output.contains("no standing authority"),
+        "the refusal is the ordinary sentence refusal:\n{output}"
+    );
+    assert_eq!(h.qualified_ref_of(&h.upstream, "refs/tags/v1.0.1"), None);
+    assert_eq!(h.qualified_ref_of(&h.mirror(), "refs/tags/v1.0.1"), None);
+
+    let receipt = h
+        .receipt_for_tag("v1.0.1")
+        .expect("a refused tag push is a decided deny with a receipt");
+    assert_eq!(receipt["action"], "push_tag");
+    assert_eq!(receipt["decision"], "deny");
+}
+
 /// Conjunctive containment in one test: a standing `github.push` authority covers BRANCHES. It must
 /// not silently start moving tags — a different namespace with different consequences (a tag is
 /// what CI releases on) needs its own word and its own sentence.

@@ -2073,7 +2073,9 @@ fn a_git_push_step_names_exactly_one_of_branch_and_tag() {
         .check_load(&both)
         .expect_err("branch and tag are alternatives, not a pair");
     assert!(
-        error.contains("exactly one of `branch` and `tag`"),
+        error.contains(
+            "exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+        ),
         "{error}"
     );
 
@@ -2082,7 +2084,9 @@ fn a_git_push_step_names_exactly_one_of_branch_and_tag() {
         .check_load(&neither)
         .expect_err("a push step with no ref names no effect");
     assert!(
-        error.contains("exactly one of `branch` and `tag`"),
+        error.contains(
+            "exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+        ),
         "{error}"
     );
 }
