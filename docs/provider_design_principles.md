@@ -151,6 +151,25 @@ credential nor a reusable signing/execution oracle.
 > configuration held aside ships a differently-configured artifact. Widening from observed evidence
 > stays the rule — the hop record is now where that evidence arrives.
 
+### What a template's comments are for
+
+> A template's comment header carries only what the STRUCTURED FIELDS CANNOT SAY. Three things
+> qualify, one line each:
+>
+> 1. Every position whose value could steer where an effect lands and is NOT bound to a frozen
+>    field — named, declared authority-free, with the reason (the ratification obligation above).
+> 2. The adversary a defensive choice answers, where the choice is not obvious from the field it
+>    lives on.
+> 3. An outcome or precondition semantic the fields cannot express — what a step PROVES, what a
+>    status set means, what an absent optional field does on the wire.
+>
+> Everything else comes out. `class: identity, binding: exact_resource_pin` already IS the
+> classification, so restating it in prose is noise; so is narrating the envelope, recounting the
+> defect a shape closes, or repeating the `review.summary` and `cautions` the verb's ontology
+> sidecar already carries. A template whose fields say everything gets no header at all. Eight
+> comment lines is the working ceiling; a relay predicate with many per-key classifications may run
+> longer, but each classification still gets one line.
+
 ### A wildcard path segment is a value too
 
 > The same obligation reaches the PATH. A `*` segment in a predicate shape is an admitted position

@@ -1,23 +1,9 @@
-# Action template for github.create_pull_request (external_state_change). Open ONE pull
-# request on the frozen repository, using the exact
-# branch-addressed base/head values supplied in the original request. Both carry the strict
-# `git_branch_name` format, which rejects GitHub's cross-repository `user:branch` syntax rather than
-# admitting an unpinned source repository. The endpoint offers no OID/CAS to claim.
-#
-# owner/name/base/head are exact-pinned identity execution targets. title/body are required,
-# request-time free_payload values: typed, capped, audited verbatim, HMAC-covered, and frozen before
-# approval. Every declared field is consumed by the one POST. Fork/cross-repository controls are
-# absent. This action neither marks a PR ready nor approves, merges, or requests changes.
-#
-# Product parity: `draft` is a DECLARED required identity
-# field, not a frozen `draft: true` literal. Draft-only was policy baked into a template, which is
-# the wrong layer: an operator who wants draft-only agents writes `where draft = true` in their
-# sentence corpus, and one who wants ready PRs writes `draft = false` or omits the predicate. The
-# value is still frozen at request time and HMAC-covered before approval like every other field, so
-# the approver always knows which kind of PR they are allowing.
-#
-# The response is the created pull request VERBATIM, retained under the declared retention
-# default; `require` proves the stable IDs. Only 201 Created is success.
+# `git_branch_name` on `base`/`head` rejects GitHub's cross-repository `user:branch` syntax, so a PR
+# can never name an unpinned source repository.
+# `draft` is a DECLARED field rather than a frozen `draft: true` literal: which kind of PR an agent
+# may open is the operator's sentence (`... and draft = true`), not a policy baked into a vendored
+# template. It freezes at request time like every other field, so the approver knows which they
+# allow. The verb neither marks a PR ready nor approves, merges, or requests changes.
 provider: github
 action: create_pull_request
 fields:

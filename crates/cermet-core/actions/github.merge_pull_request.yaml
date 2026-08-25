@@ -1,29 +1,13 @@
-# Action template for github.merge_pull_request (PR-flow parity; external_state_change).
-# Merge ONE pull request on the frozen repository, guarded by the exact head
-# OID the approval was granted against.
-#
-# `sha` is the expected_head_oid pattern (push_commit / request_workflow_cancel) applied to a merge:
-# GitHub's own CAS. The endpoint refuses with 409 unless the PR head still equals this value, so the
-# commit an approver ruled on is the commit that merges — a branch that moved after approval fails
-# closed instead of merging work nobody looked at. That makes `sha` a GENUINELY executed identity,
-# enforced by the provider rather than merely frozen in the resource. It carries
-# `format: git_oid`; `number` carries `format: uint`, so "1"/"01" can never be two pins for
-# one PR.
-#
-# `merge_method` is a required identity field, so a sentence can pin it
-# (`... and merge_method = squash`) and an approval that says "squash" can never rebase.
-# NOTE (no enum in the grammar): the template language has admission FORMATS, not closed value sets,
-# so `merge_method` is not enum-checked here — GitHub enforces the closed set {merge, squash, rebase}
-# and rejects anything else with a 422, which fails closed like any other non-200. The operator's
-# tool for narrowing it is the sentence pin, which is the stronger control anyway.
-#
-# Outcome: 200 is the ONLY success. `require` proves the merge commit's `sha` and the `merged` flag
-# exist, and `expect_literal` requires `merged: true`, so a 200 that did not actually merge is a
-# postcondition failure carrying the provider's body as proof rather than a silent success.
-# NOTE (conflict classification): `conflict_on` classifies GraphQL error TYPES; this is REST, where
-# the drift arrives as an HTTP 409 (head moved) and unmergeable/draft as 405. Both fail closed and
-# return status + the provider's body verbatim, which is the legible receipt — no REST equivalent of
-# push_commit's STALE_DATA tag exists to attach.
+# `sha` is GitHub's own compare-and-swap: the endpoint refuses with 409 unless the PR head still
+# equals it, so the commit an approver ruled on is the commit that merges, and a branch that moved
+# after approval fails closed instead of merging work nobody looked at. That makes it a genuinely
+# EXECUTED identity, enforced by the provider rather than merely frozen in the resource.
+# `merge_method` is not enum-checked: the grammar has admission FORMATS, not closed value sets.
+# GitHub refuses anything outside {merge, squash, rebase} with a 422; the narrowing control is the
+# sentence pin (`... and merge_method = squash`).
+# `expect_literal: {merged: true}` makes a 200 that did not actually merge a postcondition failure
+# rather than a silent success. Head drift arrives as 409 and unmergeable/draft as 405; both fail
+# closed carrying the provider's body, which is the whole legible receipt.
 provider: github
 action: merge_pull_request
 fields:
@@ -39,8 +23,8 @@ http:
     - id: merge
       method: PUT
       path: /repos/{owner}/{name}/pulls/{number}/merge
-      success_statuses: [200]        # 200 only: 405 (not mergeable / draft) and 409 (sha drift) fail closed.
-      require: [sha, merged]         # the merge commit's own OID and the merged flag must be present.
+      success_statuses: [200]
+      require: [sha, merged]
       expect_literal: { merged: true }
       body:
         sha: "{sha}"

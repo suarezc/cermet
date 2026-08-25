@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: create_issue
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: 739bcbd2e6dd1e40bc51f009b85b5fe94ee071096fc7b6ecf3e0e41290178cca
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: fe0f99b83c8637091fe112b1050aaea342564a0a4ba899cd44fc531ee1994027
 semantics:
   resource_family: issue
   provider_operation: issue_create

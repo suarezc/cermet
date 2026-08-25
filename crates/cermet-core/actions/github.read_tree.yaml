@@ -1,18 +1,7 @@
-# Action template for github.read_tree. Read one Git tree object by its
-# IMMUTABLE OID on the frozen repository — no name-only addressing: the tree is selected by
-# `tree_sha`, an exact-pinned identity, so an agent can never widen the read to a different tree.
-#
-# Recursion is FROZEN OFF in v1 (the API's `recursive` query param is omitted → a single tree level).
-# This is the tightest bound on output; an agent-fillable recursion flag is deferred exactly like the
-# read_logs since/until/limit filters were (a bounded read-filter, not an authority-bearing target,
-# and the grammar defers ReadFilter-in-query alongside a target). `truncated` comes back so a
-# caller can see when GitHub itself capped the listing..
-#
-# `tree_sha` carries `format: git_oid` — GitHub's trees endpoint also accepts a branch/ref
-# NAME, which would pin a moving pointer; the OID-shape admission check refuses any non-OID value so
-# the "immutable object" claim is enforced, not merely asserted.
-# The response returns the whole tree verbatim, the five documented per-entry fields (path, mode, type, sha,
-# size), so the broad per-entry URLs GitHub returns (`url`, `git_url`) are dropped, not cloned.
+# Recursion is frozen OFF (the endpoint's `recursive` query param is omitted), so one tree level
+# comes back; `truncated` rides in the response, so a listing GitHub itself capped is visible.
+# `format: git_oid` refuses a ref/branch NAME, which this endpoint would otherwise accept and
+# resolve — pinning a moving pointer instead of an immutable object.
 provider: github
 action: read_tree
 fields:

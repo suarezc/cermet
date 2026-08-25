@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: read_workflow_run
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: 351fa2372746dd3fa7c9b808bf5dbe3bb3db8b61d54005b2d4fb1ca9c18aafc4
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 6a1138bff1f97e0214cdf95dc949ee0b174007b6d13c3fdd9493d3554bcf5629
 semantics:
   resource_family: workflow_run
   provider_operation: workflow_run_read

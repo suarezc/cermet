@@ -1,55 +1,15 @@
-# Action template for github.push_tag.
-#
-# The tag half of the git plane. Like `github.push`, this verb is NOT requestable: its decision is
-# git's own `update` hook — the sanctioned per-ref policy seam — running on the daemon's persistent
-# mirror, driven by an ordinary `git push origin <tag>`. The agent-facing request path refuses it and
-# says so. What lives here is the sentence VOCABULARY (the fields a rule matches on) plus the one
-# credentialed step.
-#
-# WHY A SEPARATE VERB AND NOT A FIELD ON `push`: sentence bounds are conjunctive over a verb's own
-# fields, so widening is per-verb. A standing `allow github.push where owner = … and name = …` is a
-# BRANCH authority; if the tag namespace rode the same word, that sentence would silently start
-# admitting tags — a different namespace with different consequences, since a forge's release
-# automation triggers on tags. A branch sentence admits branches. Tags need their own word, and each
-# release names its own version:
-#
-#   allow github.push_tag where owner = "…" and name = "…" and tag = "v1.2.3"
-#
-# The grammar has no prefix match, so there is no standing tag authority to acquire by accident: the
-# operator writes one sentence per version, and that sentence IS the human act of the release.
-#
-# The envelope (docs/provider_design_principles.md, Part I — The canonical action envelope):
-# - authority  = owner/name/tag, frozen identity execution targets. The upstream URL is
-#                `<descriptor git.origin>/{owner}/{name}.git`: a template carries PATHS only.
-# - state      = NONE that we enforce. `mirror_old_oid` is git's `old` from the hook tuple — THE
-#                MIRROR'S TIP, not the upstream's. The mirror refresh mirrors branches only, so for a
-#                tag this is normally absent (the mirror had no such ref), and an existing tag's
-#                value is the daemon's view rather than the forge's. It is not a compare-and-swap
-#                either: the upstream git server refuses to move an existing tag under a plain push,
-#                and that refusal IS the concurrency control.
-# - payload    = NONE. The tag object reached the mirror through git's own wire protocol before this
-#                decision existed. An ANNOTATED tag's `new_oid` is the tag OBJECT's id; nothing here
-#                peels it to a commit, so signatures and messages ride byte-identical.
-# - outcome    = the receipt is DERIVED from the hook's frozen tuple plus the upstream's OWN account
-#                of the transition, read out of `git push --porcelain`: `upstream_old_oid` (what the
-#                forge moved from) beside `mirror_old_oid` (what the daemon held), separately
-#                labelled because they legitimately differ. The hook confirms only on upstream
-#                success, so the mirror ref advances iff the upstream's did.
-#
-# Deleting a tag is this verb with `new_oid` at the zero oid, under the same sentence — git's own
-# model, where push authority over a ref includes removing it. Restricting that for an operator who
-# wants the restriction is sentence-axis work, not a hole here.
-#
-# Named adversaries (defense ↔ adversary, per doctrine):
-# - T1 hostile input: parsed by `git receive-pack`, git's most-hardened surface. The daemon never
-#   looks at a pack, so there is nothing of ours to harden. `format: git_tag_name` keeps the ref
-#   COMPONENT to git's own refname rules, so an option-shaped or qualified string cannot reach the
-#   refspec the hermetic runner builds.
-# - T2 accident/config bleed: the hop runs through the hermetic runner (cleared environment,
-#   GIT_CONFIG_NOSYSTEM, neutralized global config, controlled HOME, registered absolute binary,
-#   process-group timeout).
-# - T3 peer uid: the stream plane is SO_PEERCRED-attested; mirrors are 0700; the credential rides
-#   `http.<url>.extraHeader` through environment config, never argv.
+# NOT requestable: the decision is git's own `update` hook running on the daemon's mirror, driven by
+# a plain `git push origin <tag>`. The request path refuses the verb and says so.
+# Tags get their OWN verb so a standing branch sentence never widens onto the namespace a forge's
+# release automation triggers on. There is no prefix match in the grammar, so the operator writes
+# one sentence per version and that sentence is the human act of the release.
+# `mirror_old_oid` is the MIRROR's tip and is normally absent here, because the refresh mirrors
+# branches only. It is not a compare-and-swap: the upstream refuses to move an existing tag under a
+# plain push, and that refusal is the concurrency control.
+# `new_oid` is the pushed object's own id — an annotated tag is never peeled, so its signature and
+# message ride byte-identical. Deleting a tag is this verb at the zero oid, under the same sentence.
+# The receipt is derived from `git push --porcelain`: the upstream's old oid rides beside the
+# mirror's, separately labelled, because they legitimately differ.
 provider: github
 action: push_tag
 fields:

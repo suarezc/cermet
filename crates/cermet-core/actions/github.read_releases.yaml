@@ -1,17 +1,10 @@
-# Action template for github.read_releases (observation). List the newest releases of the frozen
-# repository — including DRAFTS, which a token with push access sees and an anonymous reader does
-# not. That is the whole reason this verb exists: a draft has no by-tag address (GitHub's
-# `releases/tags/{tag}` endpoint answers 404 for one), so the list is the only way to learn a draft's
-# `release_id`, and `publish_release` needs that id.
-#
-# `per_page=20` is a FIXED query literal, not an agent field, and there is NO page cursor: the verb
-# reads one bounded first page and stops. A paging field would be an agent-steerable widening of a
-# read whose whole value is its boundedness. NOTE (deliberate limit, recorded here rather than in
-# handling code): a draft older than the twenty newest releases is not reachable through this verb.
-#
-# The response is a JSON ARRAY, so there are no object keys to prove with `require` (the engine's
-# dotted lookups are object-only). `success_statuses: [200]` is the whole outcome contract: anything
-# else — including another 2xx — fails closed, and the body rides back verbatim.
+# Lists DRAFTS, which a push-scoped token sees and an anonymous reader does not. That is why the
+# verb exists: a draft has no by-tag address (GitHub answers 404 there), so this list is the only
+# way to learn the `release_id` that `publish_release` needs.
+# `per_page=20` is a fixed literal with no cursor: one bounded page. A draft older than the twenty
+# newest releases is not reachable through this verb — a declared limit, not a defect.
+# The response is a JSON ARRAY, so there are no object keys for `require` to prove (the engine's
+# dotted lookups are object-only); the status set is the whole outcome contract.
 provider: github
 action: read_releases
 fields:

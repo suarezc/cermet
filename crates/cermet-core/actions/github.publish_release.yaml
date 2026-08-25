@@ -1,42 +1,13 @@
-# Action template for github.publish_release (external_state_change). Turn ONE existing DRAFT
-# release on the frozen repository into a published one, carrying the notes the agent authored.
-#
-# The verb does not create a release and does not upload an asset. Release automation builds the
-# draft and attaches its artifacts; what stays is the decision to publish, which is exactly the part
-# authority belongs on. Nothing here touches assets: the published bytes are the ones the build
-# attached, by construction.
-#
-# TWO STEPS, VERIFY-THEN-ACT:
-#
-#   1. GET the release and PROVE it is the draft the sentence names — `expect_eq: {tag_name: tag}`
-#      against the frozen tag, `expect_literal: {draft: true}`. A value-free precondition on a GET,
-#      which is the sanctioned shape for a guard before a mutation.
-#   2. PATCH the same release to `draft: false` with the notes, and prove the consequence — the same
-#      tag equality plus `draft: false` — as a postcondition, so a 200 that did not actually publish
-#      is a failure rather than a hollow success.
-#
-# WHY `release_id` AND NOT THE TAG ALONE: GitHub's by-tag endpoint serves PUBLISHED releases only
-# (a draft answers 404), so the list read is the only way to find a draft, and the engine's response
-# pointers do not index arrays — it cannot pick a row out of that list for the agent. The agent
-# therefore reads the list, chooses the id, and this verb PROVES the id is the draft for the pinned
-# tag before it acts. Growing the engine an array selector for one verb is the alternative, and it
-# is a worse trade.
-#
-# Named adversaries:
-# - T1 — a steered agent publishing the wrong thing: the sentence pins `tag`, and step 1 refuses
-#   before the PATCH if the id names a different tag or a release that is already published. The
-#   id is agent-supplied; the tag is what authority names, so the id alone is never trusted.
-# - T2 — a stale id left over from an earlier draft: the same step, for the same reason.
-# The release automation itself is first-party CI and is not an adversary here.
-#
-# `notes` is a REQUEST-TIME free_payload hole: the agent authors it in the request, it is typed
-# (str), size-capped by the template-field cap, audited verbatim in the frozen resource, and frozen
-# at mint like every other field. There is no post-approval fill channel. The release TITLE is left
-# as the build set it, and `make_latest` is left at the provider's default: neither is vocabulary
-# here, so neither can be steered.
-#
-# `require` on the terminal step proves the published release's stable identity and the fact of
-# publication (`published_at`), so the receipt names a real, reachable release.
+# VERIFY-THEN-ACT. Step 1 proves the agent-supplied `release_id` names a DRAFT whose tag is the one
+# the sentence pinned; a different tag, or a release already published, stops before the PATCH. The
+# id is agent-supplied and the tag is what authority names, so the id alone is never trusted (T1: a
+# steered agent publishing the wrong thing; T2: a stale id left from an earlier draft).
+# Step 2 re-proves the same tag plus `draft: false` as a POSTcondition, so a 200 that did not
+# actually publish is a failure rather than a hollow success.
+# Why an id and not the tag alone: GitHub's by-tag endpoint answers 404 for a draft, and the
+# engine's response pointers do not index arrays, so the agent reads the list and chooses the row.
+# The verb neither creates the release nor touches assets — the published bytes are the ones the
+# build attached — and the title and `make_latest` are not vocabulary here, so neither is steerable.
 provider: github
 action: publish_release
 fields:

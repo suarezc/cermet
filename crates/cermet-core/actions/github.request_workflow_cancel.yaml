@@ -1,16 +1,8 @@
-# Action template for github.request_workflow_cancel (external_state_change). Request
-# cancellation of ONE Actions workflow run on the frozen repository,
-# GUARDED by the run's observed head SHA. The envelope freezes the workflow run ID and the
-# observed head SHA: owner/name, the `run_id`, and the `head_sha` — all exact-pinned identity execution
-# targets an allow must anchor.
-#
-# GitHub's cancel endpoint (POST .../cancel) accepts no body, so a bare cancel could not honor the
-# approved head. This template is a TWO-STEP guarded write: step 1 GETs the run and asserts (expect_eq)
-# that the run's `head_sha` equals the approved pin — a run/head mismatch fails closed BEFORE any
-# mutation, so `head_sha` is a GENUINELY executed identity, not a hollow approved-but-unexecuted pin.
-# Only on a match does step 2 POST the cancel. `run_id` carries `format: uint`; `head_sha`
-# carries `format: git_oid`. HTTP 202 is the accepted evidence; the run may already be terminal, which
-# GitHub reports as 409 (fails closed here). The 202 body is empty.
+# GitHub's cancel endpoint accepts no body, so a bare POST could not honor the approved head. Step 1
+# GETs the run and refuses unless its `head_sha` equals the pin, BEFORE any mutation — which is what
+# makes `head_sha` a genuinely executed identity rather than a hollow approved-but-unexecuted pin.
+# 202 is the accepted evidence and its body is empty; an already-terminal run answers 409 and fails
+# closed like any other undeclared status.
 provider: github
 action: request_workflow_cancel
 fields:
@@ -25,11 +17,10 @@ http:
     - id: verify_head
       method: GET
       path: /repos/{owner}/{name}/actions/runs/{run_id}
-      success_statuses: [200]        # the verification read must be a clean 200.
+      success_statuses: [200]
       expect_eq:
         head_sha: head_sha
     - id: cancel
       method: POST
       path: /repos/{owner}/{name}/actions/runs/{run_id}/cancel
-      success_statuses: [202]        # 202 Accepted is the ONLY success; a 409 (already terminal) or any
-                                     # other status fails closed. The 202 body is empty, so 202 IS the evidence.
+      success_statuses: [202]
