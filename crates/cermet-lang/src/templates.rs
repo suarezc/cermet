@@ -31,7 +31,8 @@ pub enum CatalogShape {
     HttpApiCall,
     /// The subprocess execution shape: the client's own packfile, arriving over the attested git
     /// stream, is carried to a pinned git remote by the hermetic system-git seam, advancing one
-    /// branch.
+    /// ref. Which ref NAMESPACE a verb moves (a branch, a tag) is the verb's own vocabulary; the
+    /// execution shape is the same.
     GitPush,
     /// The verb credentials a native client's own requests through the loopback relay instead of
     /// constructing any request itself.
@@ -140,7 +141,11 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/github.read_workflow_run.yaml"),
     include_str!("../../cermet-core/actions/github.read_workflow_run_jobs.yaml"),
     include_str!("../../cermet-core/actions/github.read_job_log.yaml"),
+    include_str!("../../cermet-core/actions/github.read_releases.yaml"),
+    include_str!("../../cermet-core/actions/github.read_workflow_runs.yaml"),
+    include_str!("../../cermet-core/actions/github.publish_release.yaml"),
     include_str!("../../cermet-core/actions/github.push.yaml"),
+    include_str!("../../cermet-core/actions/github.push_tag.yaml"),
     include_str!("../../cermet-core/actions/github.fetch.yaml"),
     include_str!("../../cermet-core/actions/github.create_issue.yaml"),
     include_str!("../../cermet-core/actions/github.comment_thread.yaml"),

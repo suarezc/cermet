@@ -22,6 +22,9 @@ const WORKFLOWS_RECHECKED_AT: &str = "2026-08-17";
 /// and per-step conclusions are that page's subject, not the workflow-runs page's — read the day
 /// the diagnosis verb landed.
 const WORKFLOW_JOBS_RECHECKED_AT: &str = "2026-08-17";
+/// The release verbs (`read_releases`, `publish_release`) cite the REST releases reference — read
+/// the day the release plane landed.
+const RELEASES_RECHECKED_AT: &str = "2026-08-25";
 
 const PLAN_SOURCES: &[(&str, &str)] = &[
     (
@@ -88,6 +91,10 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
     (
         "GH-REST-WORKFLOW-JOBS",
         "https://docs.github.com/en/rest/actions/workflow-jobs",
+    ),
+    (
+        "GH-REST-RELEASES",
+        "https://docs.github.com/en/rest/releases/releases",
     ),
     (
         "GH-REST-DEPLOYMENTS",
@@ -282,6 +289,8 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
                 WORKFLOWS_RECHECKED_AT
             } else if source.id == "GH-REST-WORKFLOW-JOBS" {
                 WORKFLOW_JOBS_RECHECKED_AT
+            } else if source.id == "GH-REST-RELEASES" {
+                RELEASES_RECHECKED_AT
             } else {
                 RECHECKED_AT
             };
@@ -291,7 +300,7 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
         .collect::<BTreeMap<_, _>>();
     let expected = PLAN_SOURCES.iter().copied().collect::<BTreeMap<_, _>>();
 
-    assert_eq!(PLAN_SOURCES.len(), 58);
+    assert_eq!(PLAN_SOURCES.len(), 59);
     assert_eq!(actual, expected);
     assert_eq!(registry.len(), PLAN_SOURCES.len());
     assert!(!registry.is_empty());

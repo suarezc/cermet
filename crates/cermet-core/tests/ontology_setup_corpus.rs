@@ -79,7 +79,7 @@ fn catalog_partition_is_derived_from_action_names() {
 
     assert_eq!(
         corpus.len(),
-        58,
+        62,
         "the exact-once corpus grows only with a ratified verb"
     );
     assert_eq!(

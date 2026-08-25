@@ -168,12 +168,12 @@ fn new_error_and_literal_assertion_grammar_fails_closed_on_unsafe_shapes() {
 fn github_corpus_sidecars_hash_join_and_carry_the_reviewed_risk_bands() {
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        48,
-        "twenty-three GitHub (git-native `push` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        52,
+        "twenty-seven GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, `read_job_log`, and the release plane's three) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
     );
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), 52);
     catalog.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     assert_eq!(

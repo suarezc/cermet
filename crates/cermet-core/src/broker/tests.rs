@@ -2236,6 +2236,41 @@ fn catalog_listing_names_the_admitting_sentence_for_verb_and_set_rules() {
     // A non-member of the set is not admitted by it either.
     assert!(entry("stripe", "refund").admitted_by.is_empty());
 }
+
+/// The tag verb is discoverable the same way every other verb is: in the catalog, carrying the
+/// git-plane shape (it is exercised by running git, never by a request) and stamped with the exact
+/// sentence that admits it. The branch verb beside it stays unadmitted — the two words do not
+/// borrow each other's authority.
+#[test]
+fn catalog_listing_names_the_tag_verb_with_its_shape_and_admitting_sentence() {
+    const SENTENCE: &str =
+        "allow github.push_tag where owner = \"acme\" and name = \"widget\" and tag = \"v0.1.2\"";
+    let rules = crate::sentence::parse_rules(SENTENCE).unwrap();
+    let (_dir_guard, dir) = fresh_broker_dir();
+    let broker = sentence_broker(&dir, Arc::new(V2M1SentenceAuthority::new(rules)));
+    let listing = broker.catalog_listing().unwrap();
+    let entry = |action: &str| {
+        listing
+            .catalog
+            .iter()
+            .find(|e| e.provider == "github" && e.action == action)
+            .unwrap_or_else(|| panic!("github.{action} is in the catalog"))
+    };
+
+    let push_tag = entry("push_tag");
+    assert_eq!(push_tag.shape, crate::templates::CatalogShape::GitPush);
+    assert!(!push_tag.sentence_denied);
+    assert_eq!(push_tag.admitted_by, vec![SENTENCE.to_string()]);
+    assert!(
+        push_tag.execution_targets.iter().any(|t| t == "tag"),
+        "the version string is a pinnable execution target"
+    );
+
+    let push = entry("push");
+    assert!(push.admitted_by.is_empty());
+    assert!(push.sentence_denied);
+}
+
 #[test]
 fn every_provider_uses_sentence_authority_and_emits_complete_pre_effect_evidence() {
     let requests = representative_requests();

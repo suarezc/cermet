@@ -1,0 +1,40 @@
+# Action template for github.read_workflow_runs (observation). List the Actions workflow runs of the
+# frozen repository triggered against ONE exact commit, selected by `head_sha`.
+#
+# This is the entry point of the CI-diagnosis ladder: `read_workflow_run` and
+# `read_workflow_run_jobs` both take a `run_id`, and nothing produced one. After a push the agent
+# knows the commit it pushed, so the commit is the handle that turns into a run id. Mind the tag
+# case: an annotated tag's push receipt carries the TAG OBJECT's oid, and CI ran against the commit
+# it points at (`git rev-parse <tag>^{commit}`). A tag object's oid is a well-formed `git_oid`, so
+# nothing here can refuse it — the provider answers with an honest empty list.
+#
+# `head_sha` and NOT a branch pin: a run triggered by a TAG push reports the tag as its
+# `head_branch`, so a branch filter would silently return nothing for exactly the case a release
+# needs. The commit is the same fact in every trigger.
+#
+# `head_sha` carries `format: git_oid` (canonical lowercase hex, 40 or 64 chars) so a ref NAME can
+# never enter the query — GitHub would resolve one, and a mutable name is not an identity a sentence
+# can pin (T1: a steered agent asking about "main" instead of the commit it actually pushed).
+#
+# `per_page=20` is a FIXED query literal and there is no cursor: one bounded page. `total_count`
+# rides in the response, so a truncated read is VISIBLE rather than silent, and `require` proves the
+# two keys that make the body a run list at all — a 200 carrying neither is not an answer, and this
+# verb fails closed there rather than rendering an empty list as "no runs".
+provider: github
+action: read_workflow_runs
+fields:
+  - { name: owner,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: head_sha, type: str, required: true, class: identity, binding: exact_resource_pin, format: git_oid }
+consumes: [owner, name, head_sha]
+execution_targets: [owner, name, head_sha]
+http:
+  steps:
+    - id: runs
+      method: GET
+      path: /repos/{owner}/{name}/actions/runs
+      query:
+        head_sha: "{head_sha}"
+        per_page: "20"
+      success_statuses: [200]
+      require: [total_count, workflow_runs]

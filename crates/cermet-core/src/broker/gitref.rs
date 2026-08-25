@@ -177,11 +177,15 @@ impl super::Broker {
     /// behind it leaves the attempt with no receipt at all, which is the one outcome the broker's
     /// contract does not allow.
     pub fn authorize_ref_update(&self, update: &RefUpdate) -> RefVerdict {
-        let Some(branch) = update.refname.strip_prefix("refs/heads/") else {
+        // The ref's NAMESPACE selects the verb, and the verb is what a sentence bounds. Branch
+        // authority and tag authority are separate words on purpose: bounds are conjunctive over a
+        // verb's own fields, so a standing `push` sentence can never widen onto the tag namespace
+        // that CI releases on.
+        let Some((action, ref_field, ref_name)) = ref_vocabulary(&update.refname) else {
             return RefVerdict::deny(
                 format!(
-                    "cermet: {} is not a branch. Only branch updates have vocabulary today; tags \
-                     and other ref namespaces have none yet.",
+                    "cermet: {} is neither a branch nor a tag. Only `refs/heads/` and `refs/tags/` \
+                     updates have vocabulary; other ref namespaces have none yet.",
                     update.refname
                 ),
                 None,
@@ -191,7 +195,7 @@ impl super::Broker {
         let mut resource = json!({
             "owner": update.repo.owner,
             "name": update.repo.name,
-            "branch": branch,
+            ref_field: ref_name,
             "new_oid": update.new,
         });
         if update.old != NULL_OID {
@@ -201,7 +205,7 @@ impl super::Broker {
         }
         let request = CapabilityRequest {
             provider: update.repo.provider.clone(),
-            action: "push".into(),
+            action: action.into(),
             resource,
             environment: None,
             justification: None,
@@ -217,7 +221,7 @@ impl super::Broker {
         };
         if outcome.decision != Decision::Allow {
             return RefVerdict::deny(
-                self.render_refusal(update, branch, &outcome.reason, outcome.hint.as_deref()),
+                self.render_refusal(update, ref_name, &outcome.reason, outcome.hint.as_deref()),
                 Some(outcome.request_id),
             );
         }
@@ -244,7 +248,7 @@ impl super::Broker {
                 message: if update.new == NULL_OID {
                     format!(
                         "cermet: deleted {} on {} (was {}; request {})",
-                        branch,
+                        ref_name,
                         update.repo.slug(),
                         short(&update.old),
                         outcome.request_id
@@ -252,7 +256,7 @@ impl super::Broker {
                 } else {
                     format!(
                         "cermet: carried {}@{} to {} (request {})",
-                        branch,
+                        ref_name,
                         short(&update.new),
                         update.repo.slug(),
                         outcome.request_id
@@ -262,7 +266,7 @@ impl super::Broker {
             },
             Ok(_) => RefVerdict::deny(
                 format!(
-                    "cermet: the upstream did not accept {branch}; the mirror is unchanged \
+                    "cermet: the upstream did not accept {ref_name}; the mirror is unchanged \
                      (request {})",
                     outcome.request_id
                 ),
@@ -300,13 +304,13 @@ impl super::Broker {
     fn render_refusal(
         &self,
         update: &RefUpdate,
-        branch: &str,
+        ref_name: &str,
         reason: &str,
         hint: Option<&str>,
     ) -> String {
         let mut out = format!(
             "cermet: no standing authority for {} on {} ({reason})",
-            branch,
+            ref_name,
             update.repo.slug()
         );
         // address the party that can actually act. The pusher is usually an AGENT, and
@@ -361,6 +365,18 @@ impl super::Broker {
         let mirror = crate::git::mirror_path(&self.git, &update.repo);
         crate::git::changed_paths(&self.git, &mirror, &update.old, &update.new).ok()
     }
+}
+
+/// The verb, the resource field, and the bare ref component for one fully-qualified refname, or
+/// `None` for a namespace with no vocabulary. This is the WHOLE of the namespace dispatch: adding a
+/// namespace means adding a verb here and a template to match, never a special case downstream.
+fn ref_vocabulary(refname: &str) -> Option<(&'static str, &'static str, &str)> {
+    if let Some(branch) = refname.strip_prefix("refs/heads/") {
+        return Some(("push", "branch", branch));
+    }
+    refname
+        .strip_prefix("refs/tags/")
+        .map(|tag| ("push_tag", "tag", tag))
 }
 
 fn short(oid: &str) -> &str {

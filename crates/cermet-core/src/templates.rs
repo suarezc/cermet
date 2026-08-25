@@ -205,12 +205,12 @@ impl<'de> Deserialize<'de> for ActionTemplate {
                     (Some(_), Some(_)) => {
                         return Err(Error::custom(
                             "a template declares exactly ONE execution kind; `http:` and `git:` are mutually exclusive",
-                        ))
+                        ));
                     }
                     (None, None) => {
                         return Err(Error::custom(
                             "a template must declare `http:` or `git:` (the supported execution kinds)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -579,6 +579,11 @@ pub enum FieldFormat {
     /// `git_branch_ref`, but without the `refs/heads/` prefix. In particular `:` is refused, so a
     /// GitHub `user:branch` cross-repository address cannot enter a same-repository verb.
     GitBranchName,
+    /// A bare Git TAG name — the component after `refs/tags/`. Git's refname rules are one set for
+    /// every namespace, so the predicate is the same one `git_branch_name` uses; the shape exists
+    /// separately because the field it admits addresses a different namespace, and a refusal that
+    /// says "branch" about a tag sends the reader to the wrong place.
+    GitTagName,
     /// An absolute HTTPS URL with a host and no userinfo or fragment. Query strings, paths, and
     /// explicit ports are legal. Pure predicate: the approved bytes are never normalized.
     HttpsUrl,
@@ -673,7 +678,7 @@ impl FieldFormat {
             FieldFormat::GitBranchRef => value
                 .strip_prefix("refs/heads/")
                 .is_some_and(is_valid_branch_name),
-            FieldFormat::GitBranchName => {
+            FieldFormat::GitBranchName | FieldFormat::GitTagName => {
                 !value.starts_with("refs/") && is_valid_branch_name(value)
             }
             FieldFormat::HttpsUrl => {
@@ -709,6 +714,9 @@ impl FieldFormat {
             }
             FieldFormat::GitBranchName => {
                 "a valid bare Git branch name, not a qualified ref or cross-repository `user:branch`"
+            }
+            FieldFormat::GitTagName => {
+                "a valid bare Git tag name, not a qualified `refs/tags/` ref"
             }
             FieldFormat::HttpsUrl => {
                 "an exact lowercase `https://` ASCII URL with a nonempty host authority and no whitespace, controls, backslash, userinfo, password, or fragment"
@@ -797,9 +805,16 @@ pub struct GitPushStep {
     /// `/{owner}/{name}.git`. A template carries PATHS only; the origin is descriptor data
     /// (the same rule the HTTP kind obeys).
     pub(crate) remote_path: String,
-    /// The field naming the branch to advance.
-    pub(crate) branch: String,
-    /// The field naming the object the branch must end up at — git's `new` in the update hook's
+    /// The field naming the branch to advance, for a verb in the `refs/heads/` namespace. Exactly
+    /// one of `branch` and `tag` is declared: they are the two ref namespaces that have vocabulary,
+    /// and a verb that named both would be two effects under one sentence.
+    #[serde(default)]
+    pub(crate) branch: Option<String>,
+    /// The field naming the tag to move, for a verb in the `refs/tags/` namespace. The alternative
+    /// to `branch`, never its companion.
+    #[serde(default)]
+    pub(crate) tag: Option<String>,
+    /// The field naming the object the ref must end up at — git's `new` in the update hook's
     /// `(ref, old, new)`.
     pub(crate) new_oid: String,
     /// The field naming the MIRROR's tip for this ref — git's `old` in the update hook's
@@ -2903,6 +2918,7 @@ impl ActionTemplate {
                     match format {
                         FieldFormat::GitOid => "git_oid",
                         FieldFormat::GitBranchName => "git_branch_name",
+                        FieldFormat::GitTagName => "git_tag_name",
                         _ => "…",
                     }
                 ));
@@ -2911,13 +2927,25 @@ impl ActionTemplate {
             Ok(())
         };
         if let Some(step) = &git.push {
+            // ONE ref namespace per verb. Sentence bounds are conjunctive over a verb's own fields,
+            // so a branch authority can only widen onto branches — the tag namespace needs its own
+            // word, and a step declaring both would let one sentence move either.
+            let (slot, field, format) = match (&step.branch, &step.tag) {
+                (Some(branch), None) => ("branch", branch, FieldFormat::GitBranchName),
+                (None, Some(tag)) => ("tag", tag, FieldFormat::GitTagName),
+                _ => {
+                    return Err(format!(
+                        "{ctx}: git.push must name exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+                    ));
+                }
+            };
             check(
-                "branch",
-                &step.branch,
+                slot,
+                field,
                 true,
                 TemplateClass::Identity,
                 TemplateBinding::ExactResourcePin,
-                FieldFormat::GitBranchName,
+                format,
             )?;
             check(
                 "new_oid",

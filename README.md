@@ -231,8 +231,8 @@ Layout:
 - `crates/cermet-lang` — the sentence language (parser, evaluator, shadow checker)
 - `crates/cermet-ipc` — the socket protocol shared by all three planes
 - `docs/` — the language reference ([LANGUAGE](docs/LANGUAGE.md), [GRAMMAR](docs/GRAMMAR.md)),
-  settled design ([REFERENCE](docs/REFERENCE.md)), provider doctrine, and the
-  [quickstart](docs/QUICKSTART.md)
+  settled design ([REFERENCE](docs/REFERENCE.md)), provider doctrine, the
+  [quickstart](docs/QUICKSTART.md), and [cutting a release](docs/RELEASING.md)
 
 ## Status
 
