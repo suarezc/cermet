@@ -13,7 +13,6 @@ const STRIPE_SETUP_SOURCES: &[&str] = &[
     "STRIPE-PRODUCT-CREATE",
     "STRIPE-PRICE-CREATE",
     "STRIPE-INVOICE-CREATE",
-    "STRIPE-WEBHOOK-CREATE",
     "STRIPE-PAYMENT-METHOD-ATTACH",
     "STRIPE-SUBSCRIPTION-CREATE",
     "STRIPE-CHARGE-CREATE",
@@ -279,10 +278,6 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
         "https://docs.stripe.com/api/invoices/create",
     ),
     (
-        "STRIPE-WEBHOOK-CREATE",
-        "https://docs.stripe.com/api/webhook_endpoints/create",
-    ),
-    (
         "STRIPE-PAYMENT-METHOD-ATTACH",
         "https://docs.stripe.com/api/payment_methods/attach",
     ),
@@ -350,7 +345,7 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
         .collect::<BTreeMap<_, _>>();
     let expected = PLAN_SOURCES.iter().copied().collect::<BTreeMap<_, _>>();
 
-    assert_eq!(PLAN_SOURCES.len(), 69);
+    assert_eq!(PLAN_SOURCES.len(), 68);
     assert_eq!(actual, expected);
     assert_eq!(registry.len(), PLAN_SOURCES.len());
     assert!(!registry.is_empty());

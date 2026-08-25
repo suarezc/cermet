@@ -459,11 +459,10 @@ pub struct ExecutionResult {
 pub struct ReceiptEnvelope {
     /// The broker-minted id of the request this receipt answers — the handle for `cermet log <request_id>`.
     pub request_id: String,
-    /// Per-verb metadata that deliberately lives OUTSIDE `result`: a setup verb's declared
-    /// `result_captures` (values observed on an EARLIER step, which were never in this body) and a
-    /// GraphQL step's classified `outcome`/`conflict` verdict. Injecting them into `result` would
-    /// make the receipt disagree with the stored artifact and the wire body, which is the divergence
-    /// the response contract forbids. Empty for the overwhelming majority of verbs.
+    /// Per-verb metadata that deliberately lives OUTSIDE `result`: a GraphQL step's classified
+    /// `outcome`/`conflict` verdict. Injecting it into `result` would make the receipt disagree with
+    /// the stored artifact and the wire body, which is the divergence the response contract forbids.
+    /// Empty for the overwhelming majority of verbs.
     ///
     /// Serialized flat, alongside the identity above; the identity key is broker-reserved, and
     /// [`ReceiptEnvelope::stamp`] drops a same-named verb key rather than emit a duplicate.

@@ -18,6 +18,7 @@ review:
     - Provider evidence requires the exact PaymentMethod to belong to the exact Customer in one account and mode before mint.
     - Currency is the authenticated account default_currency; the request cannot supply currency, account, or mode.
     - off_session is absent at create and confirm is false, so this grant cannot confirm or collect funds by itself.
+    - capture_method is optional (automatic or manual); a sentence that does not pin it admits both, and manual capture still needs a separate capture grant.
     - Client secret, next action, bearer URLs, platform routing, and future-use controls are structurally absent from output and inputs.
     - The broker-generated idempotency key is hidden, HMAC-bound, and reused only through authenticated ambiguous-effect lineage.
     - Sandbox proof must confirm restricted-key access, account default-currency shape, relationship fields, and requires_confirmation response status.

@@ -7075,13 +7075,6 @@ fn stripe_setup_vocabulary_sends_only_its_reviewed_path_and_frozen_form() {
             r#"{"id":"in_1","object":"invoice","customer":"cus_1","status":"draft","auto_advance":false,"collection_method":"charge_automatically","livemode":false}"#,
         ),
         (
-            "create_webhook_endpoint_fixed_bundle",
-            json!({"url": "https://hooks.example.invalid/stripe", "mode": "test"}),
-            "/v1/webhook_endpoints",
-            "enabled_events%5B%5D=charge.succeeded&enabled_events%5B%5D=charge.failed&url=https%3A%2F%2Fhooks.example.invalid%2Fstripe",
-            r#"{"id":"we_1","object":"webhook_endpoint","url":"https://hooks.example.invalid/stripe","status":"enabled","enabled_events":["charge.succeeded","charge.failed"],"livemode":false}"#,
-        ),
-        (
             "attach_payment_method",
             json!({"payment_method": "pm_1", "customer": "cus_1", "mode": "test"}),
             "/v1/payment_methods/pm_1/attach",
