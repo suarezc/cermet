@@ -286,6 +286,7 @@ const EMBEDDED_PAYLOAD: &[EmbeddedAsset] = &[
     embedded_asset!("catalog/actions.d/github.create_issue.yaml"),
     embedded_asset!("catalog/actions.d/github.fetch.yaml"),
     embedded_asset!("catalog/actions.d/github.push.yaml"),
+    embedded_asset!("catalog/actions.d/github.push_tag.yaml"),
     embedded_asset!("catalog/actions.d/github.read_blob.yaml"),
     embedded_asset!("catalog/actions.d/github.read_commit.yaml"),
     embedded_asset!("catalog/actions.d/github.merge_pull_request.yaml"),

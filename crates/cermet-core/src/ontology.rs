@@ -405,6 +405,10 @@ impl OntologyArtifacts {
             include_str!("../actions/github.push.yaml"),
         );
         templates.insert(
+            ("github", "push_tag"),
+            include_str!("../actions/github.push_tag.yaml"),
+        );
+        templates.insert(
             ("github", "fetch"),
             include_str!("../actions/github.fetch.yaml"),
         );
@@ -564,7 +568,7 @@ impl OntologyArtifacts {
 
 /// The V1 ontology records vendored with the core, one `include_str!` per file in
 /// `crates/cermet-core/ontology/`: six read GitHub records (repo/ref/tree/blob/thread/PR), the
-/// git-native `push`, the GitHub guarded-writes-and-automation set (two Actions reads —
+/// git-native `push` and `push_tag`, the GitHub guarded-writes-and-automation set (two Actions reads —
 /// `read_workflow_run` plus `read_workflow_run_jobs` —
 /// plus seven durable-broker-only writes — create_branch/create_issue/comment_thread/
 /// create_pull_request_review/request_workflow_cancel/dispatch_workflow/
@@ -589,6 +593,8 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/github.read_pull_request.yaml"),
     // the system-git carrier verb.
     include_str!("../ontology/github.push.yaml"),
+    // The tag namespace's own word: a branch sentence never widens onto it.
+    include_str!("../ontology/github.push_tag.yaml"),
     include_str!("../ontology/github.fetch.yaml"),
     // GitHub guarded writes and automation: the two Actions reads plus seven guarded
     // writes. All run on the durable daemon (there is no separate daemonless surface).

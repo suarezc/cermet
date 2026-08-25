@@ -289,6 +289,13 @@ impl Harness {
             .find(|row| row["resource"]["branch"] == serde_json::json!(branch))
     }
 
+    /// The newest receipt naming this tag, whatever it decided.
+    fn receipt_for_tag(&self, tag: &str) -> Option<serde_json::Value> {
+        self.receipts()
+            .into_iter()
+            .find(|row| row["resource"]["tag"] == serde_json::json!(tag))
+    }
+
     /// A local clone with one commit; returns its oid.
     fn source(&self) -> (PathBuf, String) {
         let src = self.root.join("clone");
@@ -410,15 +417,16 @@ impl Harness {
     }
 
     fn ref_of(&self, repo: &Path, branch: &str) -> Option<String> {
+        self.qualified_ref_of(repo, &format!("refs/heads/{branch}"))
+    }
+
+    /// Any ref by its fully-qualified name — the tag namespace has no shorthand here on purpose,
+    /// so an assertion can never be satisfied by a same-named branch.
+    fn qualified_ref_of(&self, repo: &Path, refname: &str) -> Option<String> {
         let out = git(
             &self.root,
             &self.root,
-            &[
-                "--git-dir",
-                repo.to_str().unwrap(),
-                "rev-parse",
-                &format!("refs/heads/{branch}"),
-            ],
+            &["--git-dir", repo.to_str().unwrap(), "rev-parse", refname],
         );
         out.status
             .success()
@@ -492,6 +500,11 @@ const ALLOW: &str = "allow github.push where owner = \"acme\" and name = \"websi
 const ALLOW_BOTH: &str = "allow github.push where owner = \"acme\" and name = \"website\"\n\
                           allow github.fetch where owner = \"acme\" and name = \"website\"";
 
+/// Tag authority for ONE exact version, and nothing else. The grammar has no prefix match, so this
+/// is the whole shape a release sentence has: the version string is the human act.
+const ALLOW_TAG: &str = "allow github.push_tag where owner = \"acme\" and name = \"website\" and \
+                         tag = \"v1.0.0\"";
+
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -508,6 +521,99 @@ fn an_allowed_push_streams_through_receive_pack_and_lands_upstream() {
     // mirror ≡ upstream: the hook confirms ONLY after the credentialed hop lands.
     assert_eq!(h.ref_of(&h.upstream, "main").as_deref(), Some(oid.as_str()));
     assert_eq!(h.ref_of(&h.mirror(), "main").as_deref(), Some(oid.as_str()));
+}
+
+/// The tag namespace, end to end: `git push origin v1.0.0` against a tag sentence. The tag ref is a
+/// ref like any other — the hook decides it, the credentialed hop carries it, and `mirror ≡
+/// upstream` holds. Nothing about the branch plane is involved: this repo has no branch sentence.
+#[test]
+fn an_allowed_tag_push_lands_upstream_and_receipts_the_transition() {
+    let h = Harness::start(ALLOW_TAG);
+    let (src, _oid) = h.source();
+    git_ok(&h.root, &src, &["tag", "-a", "v1.0.0", "-m", "release"]);
+    let tag_oid = git_ok(&h.root, &src, &["rev-parse", "refs/tags/v1.0.0"]);
+
+    let (ok, output) = h.push(&src, "github/acme/website", "refs/tags/v1.0.0");
+    assert!(ok, "a tag sentence admits the tag push:\n{output}");
+    assert!(
+        output.contains("cermet: carried v1.0.0@"),
+        "the receipt rides git's own channel and names the tag:\n{output}"
+    );
+    // The ANNOTATED tag object is what lands — nothing peels it to the commit.
+    assert_eq!(
+        h.qualified_ref_of(&h.upstream, "refs/tags/v1.0.0")
+            .as_deref(),
+        Some(tag_oid.as_str())
+    );
+    assert_eq!(
+        h.qualified_ref_of(&h.mirror(), "refs/tags/v1.0.0")
+            .as_deref(),
+        Some(tag_oid.as_str())
+    );
+    // The branch namespace is untouched: a tag sentence is not a push sentence.
+    assert_eq!(h.ref_of(&h.upstream, "main"), None);
+
+    let receipt = h
+        .receipt_for_tag("v1.0.0")
+        .expect("a carried tag push leaves a receipt like any other effect");
+    assert_eq!(receipt["provider"], "github");
+    assert_eq!(receipt["action"], "push_tag");
+    assert_eq!(receipt["decision"], "allow");
+    assert_eq!(receipt["resource"]["new_oid"], serde_json::json!(tag_oid));
+}
+
+/// Conjunctive containment in one test: a standing `github.push` authority covers BRANCHES. It must
+/// not silently start moving tags — a different namespace with different consequences (a tag is
+/// what CI releases on) needs its own word and its own sentence.
+///
+/// The refusal is a DECIDED deny, not a pre-decision bounce: the attempt goes through the same
+/// corpus and leaves the same receipt every other refused effect does.
+#[test]
+fn a_branch_sentence_does_not_admit_a_tag_push() {
+    let h = Harness::start(ALLOW);
+    let (src, _oid) = h.source();
+    assert!(h.push(&src, "github/acme/website", "main").0);
+    git_ok(&h.root, &src, &["tag", "-a", "v1.0.0", "-m", "release"]);
+
+    let (ok, output) = h.push(&src, "github/acme/website", "refs/tags/v1.0.0");
+    assert!(!ok, "a branch sentence must not move a tag:\n{output}");
+    assert!(
+        output.contains("no standing authority"),
+        "the refusal is the ordinary sentence refusal:\n{output}"
+    );
+    assert_eq!(
+        h.qualified_ref_of(&h.upstream, "refs/tags/v1.0.0"),
+        None,
+        "nothing reached the upstream"
+    );
+
+    let receipt = h
+        .receipt_for_tag("v1.0.0")
+        .expect("a refused tag push is a decided deny with a receipt, not a silent bounce");
+    assert_eq!(receipt["action"], "push_tag");
+    assert_eq!(receipt["decision"], "deny");
+    assert!(
+        receipt["reason"].is_string(),
+        "the deny row carries why:\n{receipt}"
+    );
+}
+
+/// Every other ref namespace still has no vocabulary, and the refusal says so by name rather than
+/// leaving a push to fail somewhere less legible.
+#[test]
+fn a_ref_namespace_with_no_vocabulary_is_refused_by_name() {
+    let h = Harness::start(ALLOW);
+    let (src, oid) = h.source();
+    assert!(h.push(&src, "github/acme/website", "main").0);
+    git_ok(&h.root, &src, &["notes", "add", "-m", "a note", &oid]);
+
+    let (ok, output) = h.push(&src, "github/acme/website", "refs/notes/commits");
+    assert!(!ok, "a note ref has no verb to decide it:\n{output}");
+    assert!(
+        output.contains("refs/notes/commits") && output.contains("neither a branch nor a tag"),
+        "the refusal names the ref and why it cannot be decided:\n{output}"
+    );
+    assert_eq!(h.qualified_ref_of(&h.upstream, "refs/notes/commits"), None);
 }
 
 /// A silent pre-read drop of the peercred gate's refusal would surface to the

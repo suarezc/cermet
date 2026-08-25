@@ -263,6 +263,7 @@ field_formats:
   - git_branch_name
   - git_branch_ref
   - git_oid
+  - git_tag_name
   - https_url
   - uint
 targetless_query_shapes:
@@ -377,8 +378,10 @@ One **optional** field key exists beyond those:
   no whitespace, controls, backslash, or fragment), `uint`, `git_branch_ref` (requires
   `refs/heads/<branch>`), or
   `git_branch_name` (requires a bare same-repository branch and rejects GitHub's cross-repository
-  `user:branch` syntax). It tightens what a field will accept at admission; it adds no authority and
-  is not a policy input.
+  `user:branch` syntax), or `git_tag_name` (the component after `refs/tags/`: git's refname rules are
+  one set for every namespace, so the predicate is `git_branch_name`'s — the shape is separate
+  because the field addresses a different namespace and a refusal must name the right one). It
+  tightens what a field will accept at admission; it adds no authority and is not a policy input.
 
 ### Field classes (the authority axis)
 
@@ -912,7 +915,7 @@ so a read has something current to serve.
 git:
   push:
     remote_path: "/{owner}/{name}.git"   # a PATH under the descriptor's git origin, never an origin
-    branch:  branch                      # field naming the branch to advance
+    branch:  branch                      # field naming the branch to advance (or `tag:`, never both)
     new_oid: new_oid                     # field naming git's `new` from the hook tuple
     mirror_old_oid: mirror_old_oid       # OPTIONAL: git's `old` — the MIRROR's tip, not the upstream's
 ```
@@ -923,9 +926,17 @@ class/binding/format the validator enforces:
 | slot | required | type | class | binding | format |
 |---|---|---|---|---|---|
 | `remote_path` placeholders | yes | `str` | `identity` | `exact_resource_pin` | — |
-| `branch` | yes | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `branch` | one of | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `tag` | one of | `str` | `identity` | `exact_resource_pin` | `git_tag_name` |
 | `new_oid` | yes | `str` | `identity` | `exact_resource_pin` | `git_oid` |
 | `mirror_old_oid` | **no** | `str` | `identity` | `exact_resource_pin` | `git_oid` |
+
+A push step names EXACTLY ONE of `branch` and `tag` — the two ref namespaces that have vocabulary —
+and the validator refuses both or neither. They are separate because sentence bounds are conjunctive
+over a verb's own fields: a standing `allow github.push where owner = … and name = …` is a BRANCH
+authority, and if tags rode the same word that sentence would silently start admitting them. A
+release's tag therefore needs its own sentence, naming its own version. Every other ref namespace
+(`refs/notes/`, `refs/pull/`, …) has no vocabulary at all, and the update hook refuses it by name.
 
 A `fetch` step declares only `remote_path`:
 

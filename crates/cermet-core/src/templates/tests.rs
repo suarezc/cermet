@@ -2063,6 +2063,60 @@ fn each_git_push_slot_must_carry_the_class_binding_and_format_the_runner_assumes
     assert!(error.contains("git.push.mirror_old_oid field"), "{error}");
 }
 
+/// The push step moves ONE ref, and it names which namespace it moves it in: `branch:` or `tag:`.
+/// Declaring both would make one verb two effects under one sentence — a branch authority silently
+/// admitting tags; declaring neither leaves the runner with no ref to move at all.
+#[test]
+fn a_git_push_step_names_exactly_one_of_branch_and_tag() {
+    let both = GIT_TEMPLATE.replace("    branch: branch\n", "    branch: branch\n    tag: tag\n");
+    let error = git_registry()
+        .check_load(&both)
+        .expect_err("branch and tag are alternatives, not a pair");
+    assert!(
+        error.contains("exactly one of `branch` and `tag`"),
+        "{error}"
+    );
+
+    let neither = GIT_TEMPLATE.replace("    branch: branch\n", "");
+    let error = git_registry()
+        .check_load(&neither)
+        .expect_err("a push step with no ref names no effect");
+    assert!(
+        error.contains("exactly one of `branch` and `tag`"),
+        "{error}"
+    );
+}
+
+/// The tag alternative is a first-class push step: same remote path, same oid slots, its own
+/// `git_tag_name` admission shape on the ref component.
+#[test]
+fn a_git_push_step_may_name_a_tag_instead_of_a_branch() {
+    let doc = GIT_TEMPLATE
+        .replace(
+            "  - { name: branch,  type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_branch_name }",
+            "  - { name: tag,     type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_tag_name }",
+        )
+        .replace(
+            "consumes: [owner, name, branch, new_oid, mirror_old_oid]",
+            "consumes: [owner, name, tag, new_oid, mirror_old_oid]",
+        )
+        .replace(
+            "execution_targets: [owner, name, branch]",
+            "execution_targets: [owner, name, tag]",
+        )
+        .replace("    branch: branch\n", "    tag: tag\n");
+    git_registry()
+        .check_load(&doc)
+        .expect("a tag push step is a valid git verb");
+
+    // And the slot pins its own shape: a branch-shaped format on the tag slot is refused.
+    let wrong = doc.replace("format: git_tag_name", "format: git_branch_name");
+    let error = git_registry()
+        .check_load(&wrong)
+        .expect_err("the tag slot pins the tag shape");
+    assert!(error.contains("git.push.tag field"), "{error}");
+}
+
 #[test]
 fn a_git_template_consumes_exactly_what_its_step_references() {
     let doc = GIT_TEMPLATE.replace(
@@ -2120,6 +2174,44 @@ fn the_vendored_push_verb_carries_no_carrier_vocabulary() {
     assert_eq!(response.returns, "receipt");
     assert_eq!(response.retention, "none");
     assert_eq!(response.errors, "refusal");
+}
+
+/// `push_tag` is a SEPARATE verb, not a widening of `push`. Sentence bounds are conjunctive over a
+/// verb's own fields, so a standing `allow github.push where …` can only ever admit branches: the
+/// tag namespace needs its own word, and that word carries the tag's own admission shape.
+#[test]
+fn the_vendored_tag_verb_is_a_separate_word_pinning_a_bare_tag_name() {
+    let registry = crate::templates::vendored_registry();
+    let loaded = registry
+        .loaded("github", "push_tag")
+        .expect("github.push_tag is vendored");
+    let spec = loaded
+        .template
+        .git_spec()
+        .expect("push_tag declares the git execution kind");
+    let push = spec.push.as_ref().expect("push_tag declares a push step");
+    assert!(spec.fetch.is_none(), "one verb, one effect");
+    assert_eq!(push.branch, None, "a tag verb moves no branch");
+    assert_eq!(push.tag.as_deref(), Some("tag"));
+
+    let fields: Vec<&str> = loaded.contract.schema.iter().map(|f| f.name).collect();
+    assert_eq!(
+        fields,
+        vec!["owner", "name", "tag", "new_oid", "mirror_old_oid"]
+    );
+    let tag = loaded
+        .template
+        .format_fields()
+        .into_iter()
+        .find(|(name, _)| *name == "tag")
+        .expect("the tag field declares a format");
+    assert_eq!(tag.1, FieldFormat::GitTagName);
+
+    // `push` and `push_tag` share nothing on the sentence axis: `push` has no `tag` field for a
+    // branch sentence to be widened onto, and vice versa.
+    let branch_verb = registry.loaded("github", "push").expect("push is vendored");
+    assert!(branch_verb.contract.schema.iter().all(|f| f.name != "tag"));
+    assert!(loaded.contract.schema.iter().all(|f| f.name != "branch"));
 }
 
 // ---------------------------------------------------------------------------

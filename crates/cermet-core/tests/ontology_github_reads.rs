@@ -169,13 +169,13 @@ fn github_vendored_records_parse_and_hash_join_green() {
     // This GitHub-focused test asserts all twenty-two GitHub records in the vendored set.
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        48,
-        "twenty-three GitHub (git-native `push` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        49,
+        "twenty-four GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
     );
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources)
         .expect("all vendored records parse, obey caps, and resolve their sources");
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), 49);
 
     // Every declared bind hash equals the SHA-256 of the real vendored artifact bytes — a one-byte
     // template/descriptor drift (including a stale post-API-version-bump github descriptor hash)

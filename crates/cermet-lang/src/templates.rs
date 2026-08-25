@@ -141,6 +141,7 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/github.read_workflow_run_jobs.yaml"),
     include_str!("../../cermet-core/actions/github.read_job_log.yaml"),
     include_str!("../../cermet-core/actions/github.push.yaml"),
+    include_str!("../../cermet-core/actions/github.push_tag.yaml"),
     include_str!("../../cermet-core/actions/github.fetch.yaml"),
     include_str!("../../cermet-core/actions/github.create_issue.yaml"),
     include_str!("../../cermet-core/actions/github.comment_thread.yaml"),
