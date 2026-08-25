@@ -1,9 +1,14 @@
 use std::collections::BTreeSet;
 
 use cermet_core::contract::FieldClass;
-use cermet_core::templates::{catalog_of, HttpStepShape, TemplateRegistry, VENDORED_CATALOG};
+use cermet_core::templates::{
+    vendored_action_templates, HttpStepShape, TemplateRegistry, FIXTURE_CATALOG, VENDORED_CATALOG,
+};
 use cermet_core::{Broker, BrokerConfig};
 use serde_yaml::Value;
+
+mod common;
+use common::{FIXTURE_VERBS, PRODUCT_VERBS};
 
 const SETUP_ACTIONS: &[(&str, &str)] = &[
     ("github", "fixture_repositories_discover"),
@@ -36,11 +41,13 @@ const STRIPE_SETUP_MUTATIONS: &[&str] = &[
     "fixture_webhook_endpoint_create",
 ];
 
+/// Every document THIS build vendors — the product catalog plus the setup fixtures, which the
+/// crate's `fixtures` feature compiles in for its own tests.
 fn vendored_registry() -> TemplateRegistry {
     let registry = TemplateRegistry::new();
-    for doc in VENDORED_CATALOG {
+    for doc in vendored_action_templates() {
         registry
-            .load(doc)
+            .load(&doc)
             .unwrap_or_else(|error| panic!("vendored template failed to load: {error}\n{doc}"));
     }
     registry
@@ -49,110 +56,115 @@ fn vendored_registry() -> TemplateRegistry {
 fn vendored_yaml(provider: &str, action: &str) -> Value {
     let provider_line = format!("provider: {provider}\n");
     let action_line = format!("action: {action}\n");
-    let doc = VENDORED_CATALOG
+    let docs = vendored_action_templates();
+    let doc = docs
         .iter()
         .find(|doc| doc.contains(&provider_line) && doc.contains(&action_line))
         .unwrap_or_else(|| panic!("{provider}.{action} must be vendored"));
     serde_yaml::from_str(doc).expect("vendored descriptor is typed YAML")
 }
 
+/// The SPLIT, asserted from both sides: the product catalog a release build vendors carries no
+/// setup fixture, and the fixture catalog is exactly the `fixture_*` set this suite exercises.
+/// Nothing derives an agent-visible CLASS from the name any more — a verb the catalog would have to
+/// hide is a verb a sentence could name and nothing could find, so the shipped set simply does not
+/// contain one.
 #[test]
-fn catalog_partition_is_derived_from_action_names() {
-    let catalog = catalog_of(&vendored_registry(), true);
-    let mut corpus = BTreeSet::new();
-    let mut setup = BTreeSet::new();
-
-    for entry in &catalog {
-        let encoded = serde_json::to_value(entry).expect("catalog entries serialize");
-        let class = encoded
-            .get("class")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("{}.{} has no catalog class", entry.provider, entry.action));
-        if entry.action.starts_with("fixture_") {
-            assert_eq!(class, "setup", "{}.{}", entry.provider, entry.action);
-            setup.insert((entry.provider.clone(), entry.action.clone()));
-        } else {
-            assert_eq!(class, "corpus", "{}.{}", entry.provider, entry.action);
-            corpus.insert((entry.provider.clone(), entry.action.clone()));
-        }
-    }
-
+fn the_product_catalog_carries_no_setup_fixture() {
+    let product: BTreeSet<(String, String)> = VENDORED_CATALOG
+        .iter()
+        .map(|doc| {
+            let parsed: Value = serde_yaml::from_str(doc).expect("vendored document parses");
+            (
+                parsed["provider"].as_str().unwrap().to_string(),
+                parsed["action"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
     assert_eq!(
-        corpus.len(),
-        62,
-        "the exact-once corpus grows only with a ratified verb"
+        product.len(),
+        PRODUCT_VERBS,
+        "the product catalog grows only with a ratified verb"
     );
+    assert!(
+        !product
+            .iter()
+            .any(|(_, action)| action.starts_with("fixture_")),
+        "a setup fixture must never enter the product catalog"
+    );
+
+    let fixtures: BTreeSet<(String, String)> = FIXTURE_CATALOG
+        .iter()
+        .map(|doc| {
+            let parsed: Value = serde_yaml::from_str(doc).expect("fixture document parses");
+            (
+                parsed["provider"].as_str().unwrap().to_string(),
+                parsed["action"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
     assert_eq!(
-        setup,
+        fixtures,
         SETUP_ACTIONS
             .iter()
             .map(|(provider, action)| ((*provider).to_string(), (*action).to_string()))
             .collect(),
-        "setup is the exact fixture_-prefixed vendored set"
+        "the fixture catalog is the exact `fixture_`-prefixed set"
     );
+    assert_eq!(fixtures.len(), FIXTURE_VERBS);
 }
 
-/// The product catalog reflects the Stripe-only launch plus the GitHub revival. The vendored set is
-/// UNCHANGED (see `catalog_partition_is_derived_from_action_names`, still 88 corpus across
-/// every vendored provider) — this asserts only what the product makes reachable, and both
-/// denominators are DERIVED from the vendored live-provider action names, never hardcoded.
+/// A broker booted on the PRODUCT catalog alone — what an installed box does — serves the product
+/// verbs of the live providers and not one fixture. Boot it on this build's full vendored set (the
+/// sitting's shape) and the fixtures come with it, requestable like any other verb: no surface
+/// hides them, because nothing about them is hidden any more.
 #[test]
-fn product_catalog_is_live_providers_corpus_plus_credentialed_setup() {
-    let dir = tempfile::tempdir().unwrap();
-    let broker = Broker::open(BrokerConfig {
-        git: cermet_core::git::GitConfig::at(std::env::temp_dir().join("cermet-test-quarantine")),
-        dir: dir.path().to_path_buf(),
-        master_key: vec![7u8; 32],
-        action_templates: VENDORED_CATALOG.iter().map(|doc| doc.to_string()).collect(),
-        provider_descriptors: BrokerConfig::vendored_descriptors(),
-        artifacts: cermet_core::ArtifactConfig::default(),
-    })
-    .unwrap();
-    let catalog = broker.catalog().unwrap();
-    let visible_providers: BTreeSet<&str> = catalog
-        .iter()
-        .map(|entry| entry.provider.as_str())
-        .collect();
-    // vercel joined PRODUCT_ENABLED_PROVIDERS and ships one relay verb.
+fn a_release_broker_serves_the_product_catalog_and_no_fixture() {
+    let open = |templates: Vec<String>| {
+        let dir = tempfile::tempdir().unwrap();
+        let broker = Broker::open(BrokerConfig {
+            git: cermet_core::git::GitConfig::at(
+                std::env::temp_dir().join("cermet-test-quarantine"),
+            ),
+            dir: dir.path().to_path_buf(),
+            master_key: vec![7u8; 32],
+            action_templates: templates,
+            provider_descriptors: BrokerConfig::vendored_descriptors(),
+            artifacts: cermet_core::ArtifactConfig::default(),
+        })
+        .unwrap();
+        let catalog = broker.catalog().unwrap();
+        drop(broker);
+        catalog
+    };
+
+    let release = open(VENDORED_CATALOG.iter().map(|doc| doc.to_string()).collect());
     assert_eq!(
-        visible_providers,
+        release
+            .iter()
+            .map(|entry| entry.provider.as_str())
+            .collect::<BTreeSet<_>>(),
         BTreeSet::from(["github", "stripe", "vercel"])
     );
-
-    // Denominators derived from the vendored registry, so a catalog edit moves both sides at once.
-    let vendored = catalog_of(&vendored_registry(), true);
-    let live = |provider: &str| matches!(provider, "stripe" | "github" | "vercel");
-    let live_corpus = vendored
-        .iter()
-        .filter(|entry| live(&entry.provider) && !entry.action.starts_with("fixture_"))
-        .count();
-    let live_setup: BTreeSet<(&str, &str)> = vendored
-        .iter()
-        .filter(|entry| live(&entry.provider) && entry.action.starts_with("fixture_"))
-        .map(|entry| (entry.provider.as_str(), entry.action.as_str()))
-        .collect();
-    assert_eq!(
-        catalog
+    assert_eq!(release.len(), PRODUCT_VERBS);
+    assert!(
+        !release
             .iter()
-            .filter(|entry| entry.class == cermet_core::templates::CatalogClass::Corpus)
-            .count(),
-        live_corpus
-    );
-    assert_eq!(
-        catalog
-            .iter()
-            .filter(|entry| entry.class == cermet_core::templates::CatalogClass::Setup)
-            .map(|entry| (entry.provider.as_str(), entry.action.as_str()))
-            .collect::<BTreeSet<_>>(),
-        live_setup
+            .any(|entry| entry.action.starts_with("fixture_")),
+        "a release broker must not serve a setup fixture"
     );
 
-    for (provider, action) in SETUP_ACTIONS.iter().filter(|(p, _)| live(p)) {
+    let with_fixtures = open(vendored_action_templates());
+    assert_eq!(with_fixtures.len(), PRODUCT_VERBS + FIXTURE_VERBS);
+    for (provider, action) in SETUP_ACTIONS {
+        let entry = with_fixtures
+            .iter()
+            .find(|entry| entry.provider == *provider && entry.action == *action)
+            .unwrap_or_else(|| panic!("{provider}.{action} is served by a fixtures build"));
         assert!(
-            catalog
-                .iter()
-                .any(|entry| entry.provider == *provider && entry.action == *action),
-            "credentialed setup verb {provider}.{action} remains visible"
+            entry.requestable,
+            "{provider}.{action} is loaded, so the catalog lists it requestable — the corpus \
+             invariant: nothing a sentence can name is hidden from the catalog"
         );
     }
 }

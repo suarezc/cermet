@@ -62,6 +62,15 @@ An agent may safely:
 An agent must never claim that a file edit is live, invoke operator authority commands as approval,
 or ask for raw credentials.
 
+### 2a. The corpus invariant
+
+**Every verb a sentence can name is a verb the catalog lists.** The catalog projection hides nothing
+the broker loaded, and a build vendors exactly the verbs it can serve — so an agent can never read
+standing authority for a verb it cannot find in the dictionary, and then execute it by name anyway.
+The two sets are one set: no surface may narrow either without narrowing the other. A sentence
+naming a verb this build does not hold resolves no contract, so it is refused where it is authored,
+and a request for it denies as an unknown verb rather than as an authority gap.
+
 ### 3. Sentence grammar
 
 One non-comment line is one rule:
@@ -448,9 +457,8 @@ included in the frozen resource; sentence authors choose whether to constrain ea
    `query_literal` — injected filter content must never rewrite the query's meaning; a placeholder that
    is the whole value has no DSL around it and rides plain.
 
-Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter),
-`stripe.fixture_account_discover` (fieldless discovery), `vercel.list_projects` (whole-value
-optional filter):
+Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter) and
+`vercel.list_projects` (whole-value optional filter):
 
 ```yaml
 fields:
@@ -647,7 +655,7 @@ unknown-field error, so the absence is enforced by the loader rather than merely
 | **success** | the provider's parsed JSON body, **unchanged** — array, object, or scalar |
 | **failure** | `{"status": <http status>, "error": <the provider's body>}` — the status is *added* evidence, never a narrowing |
 | **artifact** | the same bytes, stored under the step's `retention` (below) |
-| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a setup verb's declared `result_captures`, a GraphQL step's `outcome`/`conflict` verdict. Absent for an ordinary verb |
+| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a GraphQL step's `outcome`/`conflict` verdict, or a setup fixture's declared `result_captures` (fixtures are a test-build vocabulary and are absent from a shipped catalog). Absent for an ordinary verb |
 | **postcondition failure** | `{"outcome": ..., "provider_proof": <the provider's body>}` — a mismatch after the effect boundary is exactly when you need everything the provider said |
 
 This holds for **money** verbs too. A money success returns the verified object — its own provider
@@ -661,7 +669,7 @@ operator enables in a rule** — never a descriptor-buried list invisible to the
 today **zero such classes exist**.
 
 **Where broker-authored metadata goes.** Two things legitimately need to reach the agent next to
-the body: a setup verb's declared `result_captures` (values the broker observed on an EARLIER step,
+the body: a setup fixture's declared `result_captures` (values the broker observed on an EARLIER step,
 which are not in this body at all) and a GraphQL step's classified `outcome`/`conflict` verdict.
 They ride a **sibling `envelope` field on the receipt**, never inside the provider's JSON.
 Writing them into the body would have made receipt result ≠ stored artifact ≠ wire body,

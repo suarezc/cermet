@@ -64,7 +64,7 @@ When the verb executes in-core, the receipt is the execution result.
 | `effect_outcome` | The authenticated disposition of the effect (see §1.6). Derived only from chain-verified execution evidence; a caller can neither submit nor override it. |
 | `envelope` | The broker-authored half of the receipt, kept strictly outside the verbatim `result`. Always present. |
 | `envelope.request_id` | Stamped at the one broker seam that authors the envelope, so no verb can mint a receipt whose request cannot be chased with `cermet log <request_id>`. |
-| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a setup verb's declared `result_captures` (values observed on an *earlier* step, which were never in this body) and a GraphQL step's classified outcome/conflict verdict. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
+| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a setup fixture's declared `result_captures` (values observed on an *earlier* step, which were never in this body; fixtures are a test-build vocabulary and are absent from a shipped catalog) and a GraphQL step's classified outcome/conflict verdict. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
 
 ### 1.3 The relay object
 
@@ -441,14 +441,13 @@ Default zoom:
 `--all`:
 
 ```
-  <provider>.<action>  [<authority stamp>] class:<class> shape:<shape>
+  <provider>.<action>  [<authority stamp>] shape:<shape>
 ```
 
 | part | meaning |
 |---|---|
 | `provider.action` | The verb, dotted exactly as a sentence spells it. |
 | field list (default zoom) | Only the fields you actually supply on a request — provider-resolved fields are filtered out, because they are not yours to send. |
-| `class` | The verb's catalog class. `corpus` is the only value that reaches either surface: broker self-test plumbing is classified separately and stripped before rendering. |
 | `shape` | How the verb executes (§3.2). In the default zoom it is rendered bracketed and alone. |
 | authority stamp | What the live corpus says about this verb, in the `--all` zoom (§3.4). |
 
@@ -485,8 +484,7 @@ absence at request time; there is no execute-time fill.
 
 **`type`**: `str`, `int`, or `bool`.
 
-**`class`** — what kind of authority the field carries. Note this is a different axis from the
-verb-level `class:` above, which happens to share the word.
+**`class`** — what kind of authority the field carries.
 
 | value | meaning |
 |---|---|

@@ -3529,9 +3529,9 @@ fn create_issue_missing_proof_path_fails_closed() {
 }
 
 fn stripe_action(base: String, action: &str) -> GenericProvider {
-    let document = crate::templates::VENDORED_CATALOG
+    let documents = crate::templates::vendored_action_templates();
+    let document = documents
         .iter()
-        .copied()
         .find(|document| {
             document.contains("provider: stripe\n")
                 && document.contains(&format!("action: {action}\n"))
@@ -5767,7 +5767,7 @@ fn live_stripe_fixture_credential_stops_before_the_mutation() {
     let registry = Arc::new(TemplateRegistry::new());
     registry
         .load(include_str!(
-            "../../actions/stripe.fixture_customer_create.yaml"
+            "../../fixtures/actions/stripe.fixture_customer_create.yaml"
         ))
         .expect("the Stripe customer fixture descriptor loads");
     let provider = GenericProvider::from_descriptor_with_base(descriptor, base, registry);

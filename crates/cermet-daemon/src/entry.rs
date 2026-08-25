@@ -25,10 +25,7 @@ use crate::{
 /// sentence corpus, as it always was; loading is vocabulary, not authority.
 pub fn vendored_catalog() -> (Vec<String>, Vec<String>) {
     (
-        cermet_core::templates::VENDORED_CATALOG
-            .iter()
-            .map(|doc| doc.to_string())
-            .collect(),
+        cermet_core::templates::vendored_action_templates(),
         BrokerConfig::vendored_descriptors(),
     )
 }
@@ -840,10 +837,21 @@ mod tests {
         );
 
         let (action_templates, provider_descriptors) = super::vendored_catalog();
+        let vendored = cermet_core::templates::VENDORED_CATALOG;
+        let fixtures = cermet_core::templates::FIXTURE_CATALOG;
         assert_eq!(
             action_templates.len(),
-            cermet_core::templates::VENDORED_CATALOG.len(),
-            "every vendored verb boots"
+            vendored.len() + fixtures.len(),
+            "every verb this build vendors boots"
+        );
+        // The RELEASE claim, and it holds under every cfg: the PRODUCT catalog is the 62 shipped
+        // verbs and carries no setup fixture. A release build compiles no `FIXTURE_CATALOG` at all,
+        // so what an installed box can serve — and therefore what a sentence can name — is exactly
+        // this set.
+        assert_eq!(vendored.len(), 62, "the shipped product catalog");
+        assert!(
+            !vendored.iter().any(|doc| doc.contains("action: fixture_")),
+            "a setup fixture must never enter the product catalog"
         );
 
         let broker = cermet_core::Broker::open(cermet_core::BrokerConfig {
@@ -865,8 +873,8 @@ mod tests {
             .collect();
         assert_eq!(
             served.len(),
-            cermet_core::templates::VENDORED_CATALOG.len(),
-            "every vendored verb is served requestable"
+            vendored.len() + fixtures.len(),
+            "every verb this build vendors is served requestable"
         );
         for pair in [
             ("github", "read_repo"),

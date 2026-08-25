@@ -486,7 +486,6 @@ mod tests {
                 catalog: vec![CatalogEntry {
                     provider: "vercel".into(),
                     action: "deploy".into(),
-                    class: cermet_lang::templates::CatalogClass::Corpus,
                     fields: vec![CatalogField {
                         name: "project".into(),
                         ty: "str".into(),

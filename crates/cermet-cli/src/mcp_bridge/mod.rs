@@ -249,7 +249,6 @@ struct CatalogFieldView {
 struct CatalogEntryView {
     provider: String,
     action: String,
-    class: String,
     fields: Vec<CatalogFieldView>,
     execution_targets: Vec<String>,
     requestable: bool,
@@ -1108,13 +1107,7 @@ pub(crate) fn render_catalog_zoom(
     zoom: CatalogZoom,
     surface: CatalogSurface,
 ) -> Result<AgentOutput, AgentError> {
-    let (mut c, _): (CatalogView, Value) = parse_view("catalog", resp)?;
-    // Setup-class verbs (the `fixture_*` test fixtures) are broker plumbing,
-    // never capability. The runtime providers' `supports_action` does not carry them, so a `run`
-    // refuses them as nonexistent — and a projection that advertises them invites a proposed and
-    // ratified sentence for a verb that can never execute. Dropped HERE, in the one projection both
-    // surfaces share, so the daemon's ctl frame keeps the full set.
-    c.catalog.retain(|e| e.class != "setup");
+    let (c, _): (CatalogView, Value) = parse_view("catalog", resp)?;
     let json = serde_json::to_value(&c).map_err(|e| AgentError::Malformed(e.to_string()))?;
     if zoom == CatalogZoom::Allowed {
         return Ok(AgentOutput {
@@ -1134,10 +1127,7 @@ pub(crate) fn render_catalog_zoom(
                 .as_deref()
                 .map(|s| format!(" shape:{s}"))
                 .unwrap_or_default();
-            lines.push(format!(
-                "  {}.{}  [{tag}] class:{}{shape}",
-                e.provider, e.action, e.class
-            ));
+            lines.push(format!("  {}.{}  [{tag}]{shape}", e.provider, e.action));
             let fields: Vec<String> = e
                 .fields
                 .iter()
@@ -1647,11 +1637,11 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "get_charge", "class": "corpus",
+                { "provider": "stripe", "action": "get_charge",
                   "fields": [], "execution_targets": ["charge"], "requestable": true, "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"},
                   "response": { "returns": "verbatim", "retention": "full",
                                 "errors": "status_and_body" } },
-                { "provider": "stripe", "action": "refund_charge_bounded", "class": "corpus",
+                { "provider": "stripe", "action": "refund_charge_bounded",
                   "fields": [], "execution_targets": ["charge"], "requestable": true, "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"},
                   "response": { "returns": "verbatim", "retention": "none",
                                 "errors": "status_and_body" } }
@@ -1685,7 +1675,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "vercel", "action": "deploy", "class": "corpus",
+                { "provider": "vercel", "action": "deploy",
                   "fields": [], "execution_targets": ["project"], "requestable": true }
             ]
         });
@@ -2040,14 +2030,14 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [
                     { "name": "owner", "type": "str", "required": true, "class": "identity", "binding": "exact_resource_pin", "origin": "agent_request", "forms": ["=", "in"] }
                   ],
                   "execution_targets": ["owner"], "requestable": true, "shape": "http_api_call",
                   "admitted_by": ["allow github.read_repo"],
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                { "provider": "stripe", "action": "get_charge", "class": "corpus",
+                { "provider": "stripe", "action": "get_charge",
                   "fields": [], "execution_targets": ["charge"], "requestable": false, "shape": "http_api_call",
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
             ]
@@ -2071,7 +2061,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "push", "class": "corpus",
+                { "provider": "github", "action": "push",
                   "fields": [
                     { "name": "owner", "type": "str", "required": true, "class": "identity", "binding": "exact_resource_pin", "origin": "agent_request", "forms": ["=", "in"] }
                   ],
@@ -2095,7 +2085,7 @@ mod tests {
         let http = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [], "execution_targets": ["owner"], "requestable": true, "shape": "http_api_call",
                   "admitted_by": ["allow github.read_repo"],
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
@@ -2116,7 +2106,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "refund", "class": "corpus",
+                { "provider": "stripe", "action": "refund",
                   "fields": [
                     { "name": "charge", "type": "str", "required": true, "class": "identity",
                       "binding": "exact_resource_pin", "origin": "agent_request",
@@ -2168,7 +2158,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "refund", "class": "corpus",
+                { "provider": "stripe", "action": "refund",
                   "fields": [
                     { "name": "amount", "type": "int", "required": true, "class": "side_effect",
                       "binding": "bounded", "origin": "agent_request",
@@ -2198,7 +2188,7 @@ mod tests {
     fn no_dictionary_stamp_reads_as_permission_unless_a_sentence_admits_the_verb() {
         let entry = |extra: serde_json::Value| -> serde_json::Value {
             let mut e = json!({
-                "provider": "stripe", "action": "get_charge", "class": "corpus",
+                "provider": "stripe", "action": "get_charge",
                 "fields": [], "execution_targets": ["charge"], "requestable": true,
                 "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"}
             });
@@ -2261,51 +2251,36 @@ mod tests {
         }
     }
 
-    /// The `fixture_*` verbs are setup plumbing, not capability. They
-    /// rendered in the dictionary as real verbs stamped "no standing sentence — propose one" while
-    /// `cermet run` refused them as *nonexistent* ("no verb matches this intent", no widening hint),
-    /// because the runtime provider's `supports_action` never lists them. Two surfaces contradicting
-    /// each other is how a model proposes — and a human ratifies — a sentence for a verb that can
-    /// never execute. The shared projection drops the whole class, in both zooms and in `--json`.
+    /// THE CORPUS INVARIANT: every verb a sentence can name is a verb the catalog lists. A verb the
+    /// projection dropped was still nameable in a sentence and still executable by name, so an agent
+    /// could read authority for a verb it could not find — and could run anyway. The projection
+    /// therefore hides nothing: it renders every verb the daemon's frame carries.
     #[test]
-    fn setup_class_verbs_never_reach_either_catalog_projection() {
-        let resp = json!({
-            "kind": "catalog",
-            "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
-                  "fields": [], "execution_targets": ["owner"], "requestable": true,
-                  "admitted_by": ["allow github.read_repo"],
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                { "provider": "github", "action": "fixture_repositories_discover", "class": "setup",
-                  "fields": [], "execution_targets": ["owner"], "requestable": true,
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                // Even an ADMITTED setup verb stays off the surface: a standing sentence on one is
-                // exactly the mistake this filter exists to stop propagating.
-                { "provider": "stripe", "action": "fixture_customer_create", "class": "setup",
-                  "fields": [], "execution_targets": ["customer"], "requestable": true,
-                  "admitted_by": ["allow stripe.fixture_customer_create"],
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
-            ]
-        });
-        for zoom in [CatalogZoom::All, CatalogZoom::Allowed] {
-            for surface in [CatalogSurface::Cli, CatalogSurface::Mcp] {
-                let out = render_catalog_zoom(&resp, zoom, surface).expect("renders");
-                assert!(
-                    !out.text.contains("fixture_"),
-                    "{zoom:?}/{surface:?} rendered a setup verb: {}",
-                    out.text
-                );
-                assert!(
-                    !out.json.to_string().contains("fixture_"),
-                    "{zoom:?}/{surface:?} json carried a setup verb"
-                );
-                assert!(out.text.contains("github.read_repo"));
-            }
-        }
-        // The count the dictionary prints is the count it shows.
-        let all =
-            render_catalog_zoom(&resp, CatalogZoom::All, CatalogSurface::Cli).expect("renders");
-        assert!(all.text.contains("verbs (1):"), "{}", all.text);
+    fn the_projection_hides_no_vendored_verb() {
+        let entries: Vec<Value> = cermet_core::templates::vendored_action_templates()
+            .iter()
+            .map(|doc| {
+                let parsed: Value = serde_yaml::from_str(doc).expect("vendored document parses");
+                json!({
+                    "provider": parsed["provider"],
+                    "action": parsed["action"],
+                    "fields": [],
+                    "execution_targets": [],
+                    "requestable": true,
+                    "response": {"returns": "verbatim", "retention": "full",
+                                 "errors": "status_and_body"},
+                })
+            })
+            .collect();
+        let expected = entries.len();
+        let resp = json!({ "kind": "catalog", "catalog": entries });
+        let out =
+            render_catalog_zoom(&resp, CatalogZoom::All, CatalogSurface::Mcp).expect("renders");
+        assert!(
+            out.text.contains(&format!("verbs ({expected}):")),
+            "the projection dropped a vendored verb; it must render all {expected}:\n{}",
+            out.text
+        );
     }
 
     #[test]
@@ -2313,7 +2288,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [], "execution_targets": ["owner"], "requestable": true,
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
             ]

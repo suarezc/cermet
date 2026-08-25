@@ -50,12 +50,17 @@ test-egress = []
 # OFF in production so no release binary ships a canned-response provider; this crate's own unit
 # tests get them implicitly via cfg(test), external test crates (and the dev PyO3 extension) ask for them.
 test-double = ["cermet-lang/test-double"]
+# Compile the `fixture_*` SETUP vocabulary (`fixtures/actions/*.yaml`) into `FIXTURE_CATALOG`.
+# OFF in production: the release binary vendors the product catalog and nothing else, so no shipped
+# box can serve — or name in a sentence — a verb built to seed a test account. This crate's own unit
+# tests get them via cfg(test); external test crates and the sitting's tree build ask for them here.
+fixtures = []
 
 [dev-dependencies]
 # Self-reference so this crate's OWN integration tests (tests/*.rs — separate crates that link the
 # non-cfg(test) lib) see the `test-double` providers `Broker::open` registers. The lib target and
 # release binaries are unaffected.
-cermet-core = { path = ".", features = ["test-double"] }
+cermet-core = { path = ".", features = ["test-double", "fixtures"] }
 proptest = "1"
 tempfile = "3"
 

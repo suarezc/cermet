@@ -57,9 +57,6 @@ fn language_guide_inventory_exactly_matches_typed_vendored_templates() {
         let template: ActionTemplate = serde_yaml::from_str(source).unwrap_or_else(|error| {
             panic!("vendored template is not typed YAML: {error}\n{source}")
         });
-        if CatalogClass::from_action(&template.action) == CatalogClass::Setup {
-            continue;
-        }
         formats.extend(
             template
                 .fields
@@ -210,10 +207,10 @@ fn vendored_catalog_actions_have_execution_targets_or_the_one_bounded_read_filte
         ("stripe", "fixture_account_discover"),
         ("vercel", "list_projects"),
     ];
-    for doc in VENDORED_CATALOG {
+    for doc in crate::templates::vendored_action_templates() {
         let reg = TemplateRegistry::new();
         let (provider, action) = reg
-            .load(doc)
+            .load(&doc)
             .unwrap_or_else(|e| panic!("vendored catalog doc failed to load: {e}"));
         let contract = reg
             .resolve(&provider, &action)

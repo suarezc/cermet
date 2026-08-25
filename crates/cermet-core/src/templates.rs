@@ -1090,9 +1090,7 @@ impl TemplateBinding {
     }
 }
 
-pub use cermet_lang::templates::{
-    CatalogClass, CatalogEntry, CatalogField, CatalogShape, ResponseContract,
-};
+pub use cermet_lang::templates::{CatalogEntry, CatalogField, CatalogShape, ResponseContract};
 
 // ---------------------------------------------------------------------------
 // Placeholder grammar
@@ -1481,7 +1479,6 @@ impl ActionTemplate {
         CatalogEntry {
             provider: self.provider.clone(),
             action: self.action.clone(),
-            class: CatalogClass::from_action(&self.action),
             fields: self
                 .fields
                 .iter()
@@ -1813,7 +1810,7 @@ impl ActionTemplate {
                 self.action
             ));
         }
-        if CatalogClass::from_action(&self.action) == CatalogClass::Setup {
+        if is_fixture_action(&self.action) {
             if self.money.is_some() {
                 return Err(format!(
                     "{ctx}: setup-class action may not declare `money`; fixture vocabulary is \
@@ -3144,8 +3141,7 @@ impl ActionTemplate {
                     .filter_map(|source| parse_placeholders(source).ok())
                     .flatten()
                     .any(|placeholder| captured.contains(placeholder.name.as_str()));
-                let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                    == CatalogClass::Setup
+                let terminal_setup_reconciliation = is_fixture_action(&self.action)
                     && *i == last
                     && prior_mutations.len() == 1
                     && capture_bound;
@@ -3221,7 +3217,7 @@ impl ActionTemplate {
                         step.id
                     ));
                 }
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup {
+                if !is_fixture_action(&self.action) {
                     return Err(format!(
                         "{ctx}: step `{}` declares result_captures outside a fixture_* setup \
                          action",
@@ -3400,7 +3396,7 @@ impl ActionTemplate {
                             .any(|placeholder| all_captures.contains(&placeholder.name))
                     })
                 });
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup
+                if !is_fixture_action(&self.action)
                     || !is_final
                     || step.method != "GET"
                     || step.graphql_query.is_some()
@@ -3620,8 +3616,7 @@ impl ActionTemplate {
                             .iter()
                             .filter(|prior| !is_verification_read(prior))
                             .collect();
-                        let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                            == CatalogClass::Setup
+                        let terminal_setup_reconciliation = is_fixture_action(&self.action)
                             && is_final
                             && is_verification_read(step)
                             && prior_mutations.len() == 1
@@ -4398,7 +4393,59 @@ pub use cermet_lang::templates::vendored_response_contract;
 /// `crates/cermet-core/actions/`. This is the shipped default set: what every broker and the
 /// non-broker [`DefaultContractSource`](crate::policy::DefaultContractSource) resolve. Adding a
 /// vendored template is a one-line addition here.
+/// A SETUP FIXTURE verb, by the one naming rule the grammar recognises. Four load rules turn on it:
+/// a fixture may project prior captures out of its terminal step (`result_captures`), may end with
+/// a capture-keyed reconciliation read after its one mutation, and may `poll` that read — because a
+/// fixture's whole job is create-then-observe against a live provider account. A product verb may
+/// not, since letting provider response data steer a later query is how one approved effect grows a
+/// second target. Two rules run the other way: a fixture may declare neither `money` nor a secret
+/// field. The name is the gate deliberately — a template cannot declare its way into the
+/// relaxations, and the shipped catalog compiles no `fixture_` document at all.
+pub(crate) fn is_fixture_action(action: &str) -> bool {
+    action.starts_with("fixture_")
+}
+
 pub use cermet_lang::templates::VENDORED_CATALOG;
+
+/// The SETUP FIXTURES: the `fixture_*` verbs the sitting harness drives to build a provider account
+/// into a known state before it exercises the product vocabulary. They are NOT product vocabulary,
+/// so they are not in [`VENDORED_CATALOG`] and a release build does not compile them in at all —
+/// their documents live under `crates/cermet-core/fixtures/`, outside the shipped catalog. A build
+/// that wants them says so: this crate's own tests get them through `cfg(test)`, an external test
+/// crate or the sitting's tree build turns on the `fixtures` feature.
+#[cfg(any(test, feature = "fixtures"))]
+pub const FIXTURE_CATALOG: &[&str] = &[
+    include_str!("../fixtures/actions/github.fixture_repositories_discover.yaml"),
+    include_str!("../fixtures/actions/github.fixture_workflow_runs_discover.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_account_discover.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_customer_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_payment_method_attach.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_refundable_charge_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_bypass_pending_charge_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_product_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_price_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_subscription_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_draft_invoice_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_webhook_endpoint_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_manual_capture_payment_intent_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_dispute_charge_create.yaml"),
+];
+
+/// Empty on a build that did not ask for the fixtures, so every caller composes the same way and
+/// the release binary's catalog is exactly [`VENDORED_CATALOG`].
+#[cfg(not(any(test, feature = "fixtures")))]
+pub const FIXTURE_CATALOG: &[&str] = &[];
+
+/// Every action template THIS BUILD vendors, as owned documents: the product catalog, plus the
+/// setup fixtures when the build asked for them. This is the whole set a daemon boots on — there is
+/// no on-disk catalog — so what a build compiles in is exactly what its catalog can list.
+pub fn vendored_action_templates() -> Vec<String> {
+    VENDORED_CATALOG
+        .iter()
+        .chain(FIXTURE_CATALOG)
+        .map(|doc| doc.to_string())
+        .collect()
+}
 
 /// The `catalog` verb's per-verb schema, deduplicated by `(provider, action)`: every template LOADED
 /// in `reg` (marked `requestable: true`) UNIONed with the vendored stdlib catalog (a vendored verb

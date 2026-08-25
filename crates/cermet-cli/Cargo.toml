@@ -66,7 +66,7 @@ nix = { version = "0.26.4", features = ["user", "fs"] }
 # The integration harness stands up a REAL dev-mode cermetd broker behind a ctl.sock and drives the
 # CLI dispatch layer over it (the real path, never an in-process double). These are the SAME
 # dev-deps the ctl integration fixtures use.
-cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress"] }
+cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress", "fixtures"] }
 cermet-broker-actor = { path = "../cermet-broker-actor", features = ["semantic-test"] }
 cermet-daemon = { path = "../cermet-daemon" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time"] }
