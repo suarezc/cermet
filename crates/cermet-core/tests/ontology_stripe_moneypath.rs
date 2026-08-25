@@ -49,7 +49,7 @@ fn yaml_strings(value: &Value) -> Vec<&str> {
 
 #[test]
 fn seven_moneypath_actions_and_sidecars_are_vendored_with_catalog_parity() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 49);
+    assert_eq!(VENDORED_ONTOLOGY.len(), 52);
 
     let templates = vendored_registry();
     let catalog = catalog_of(&templates, true);
@@ -58,11 +58,11 @@ fn seven_moneypath_actions_and_sidecars_are_vendored_with_catalog_parity() {
             .iter()
             .filter(|entry| entry.class == CatalogClass::Corpus)
             .count(),
-        59
+        62
     );
     let sources = SourceRegistry::official().unwrap();
     let ontology = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(ontology.len(), 49);
+    assert_eq!(ontology.len(), 52);
     ontology.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     for action in ACTIONS {

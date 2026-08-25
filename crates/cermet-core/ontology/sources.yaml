@@ -51,6 +51,9 @@ sources:
   - id: GH-REST-WORKFLOW-JOBS
     url: https://docs.github.com/en/rest/actions/workflow-jobs
     rechecked_at: '2026-08-17'
+  - id: GH-REST-RELEASES
+    url: https://docs.github.com/en/rest/releases/releases
+    rechecked_at: '2026-08-25'
   - id: GH-REST-DEPLOYMENTS
     url: https://docs.github.com/en/rest/deployments/deployments
     rechecked_at: '2026-07-19'

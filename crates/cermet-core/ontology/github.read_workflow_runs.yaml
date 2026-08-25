@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: read_workflow_runs
+binds:
+  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
+  action_template_sha256: e65340ba229ad790ff3eca9a11a718750a7631e6798297fb823b913b465879ff
+semantics:
+  resource_family: workflow_run
+  provider_operation: workflow_runs_list
+  risk_class: observation
+  sensitivity: operational
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: List the Actions workflow runs triggered against one exact commit on a pinned repository.
+  cautions:
+    - Selection is by head_sha and not by branch, because a tag-triggered run reports the tag as its head_branch.
+    - Run status and conclusion are point-in-time; a run still executing changes them between reads.
+    - The read is one bounded page of at most twenty runs and there is no cursor; total_count is what reveals a truncated list.
+    - A commit can have runs from several workflows, so choosing which run to diagnose is the caller's decision, not this verb's.
+sources:
+  - GH-REST-WORKFLOW-RUNS
+  - GH-REST-BEST-PRACTICES

@@ -689,6 +689,73 @@ fn two_shot_full(
     (format!("http://{addr}"), handle)
 }
 
+/// A mock that serves `responses` in order and then WATCHES for a request it was never supposed to
+/// receive: once the script is exhausted it keeps accepting for a short window, so a step that
+/// should have been short-circuited by a failed precondition shows up as an EXTRA entry in the
+/// returned list instead of passing silently.
+fn scripted_full(
+    responses: &'static [(&'static str, &'static str)],
+) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        let read_request = |stream: &mut std::net::TcpStream| -> String {
+            let mut data = Vec::new();
+            let mut tmp = [0u8; 1024];
+            while let Ok(n) = stream.read(&mut tmp) {
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..pos]).to_lowercase();
+                    let want = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")
+                                .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    while data.len() < pos + 4 + want {
+                        match stream.read(&mut tmp) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => data.extend_from_slice(&tmp[..n]),
+                        }
+                    }
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&data).into_owned()
+        };
+        for (status_line, body) in responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            requests.push(read_request(&mut stream));
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+        // The watch window: anything arriving here is a hop the template promised not to make.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+                        .unwrap();
+                    requests.push(read_request(&mut stream));
+                }
+                Err(_) => thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+        requests
+    });
+    (format!("http://{addr}"), handle)
+}
+
 /// The canonical ratified `read_repo` template — the owner of the name; every read_repo test
 /// runs through the TEMPLATE path (the other arm survives only as the request oracle).
 const READ_REPO_TEMPLATE: &str = include_str!("../../actions/github.read_repo.yaml");
@@ -2384,6 +2451,9 @@ fn github_m3(base: String) -> GenericProvider {
         include_str!("../../actions/github.read_secret_scanning_alerts_open.yaml"),
         include_str!("../../actions/github.merge_pull_request.yaml"),
         include_str!("../../actions/github.update_pull_request.yaml"),
+        include_str!("../../actions/github.read_releases.yaml"),
+        include_str!("../../actions/github.read_workflow_runs.yaml"),
+        include_str!("../../actions/github.publish_release.yaml"),
     ] {
         reg.load(doc).expect("a github template loads");
     }
@@ -7034,4 +7104,244 @@ fn read_job_log_job_id_admits_only_the_canonical_uint() {
             "job_id `{bad}` must be refused at admission"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The release plane: two bounded reads and one verify-then-act publish.
+// ---------------------------------------------------------------------------
+
+/// A draft release body, echoing the tag the sentence pins.
+const DRAFT_BODY: &str = r#"{"id":991,"tag_name":"v0.1.2","draft":true,"name":"cermet v0.1.2","html_url":"https://github.invalid/acme/website/releases/tag/untagged-1","published_at":null}"#;
+
+fn publish_resource(gh: &GenericProvider, notes: &str) -> CanonicalResource {
+    gh.canonicalize(
+        "publish_release",
+        &json!({
+            "owner": "acme",
+            "name": "website",
+            "release_id": "991",
+            "tag": "v0.1.2",
+            "notes": notes,
+        }),
+    )
+    .expect("the publish resource canonicalizes")
+}
+
+fn publish(gh: &GenericProvider, resource: &CanonicalResource) -> Result<ProviderResponse> {
+    gh.execute(ProviderCall {
+        discipline: Default::default(),
+        git_mirror: None,
+        request_id: "",
+        action: "publish_release",
+        token: "ghp_broker_credential",
+        resource,
+    })
+}
+
+#[test]
+fn publish_release_proves_the_draft_then_patches_it_published_with_the_frozen_notes() {
+    let (base, server) = two_shot_full(&[
+        ("200 OK", DRAFT_BODY),
+        (
+            "200 OK",
+            r#"{"id":991,"tag_name":"v0.1.2","draft":false,"html_url":"https://github.invalid/acme/website/releases/tag/v0.1.2","published_at":"2026-08-25T00:00:00Z"}"#,
+        ),
+    ]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "what changed in this version");
+    let resp = publish(&gh, &resource).expect("a draft for the pinned tag publishes");
+    let requests = server.join().unwrap();
+
+    assert_eq!(requests.len(), 2, "verify then act, nothing else");
+    assert!(
+        requests[0].starts_with("GET /repos/acme/website/releases/991 "),
+        "step one reads the release it is about to change: {}",
+        requests[0]
+    );
+    assert!(
+        requests[1].starts_with("PATCH /repos/acme/website/releases/991 "),
+        "step two patches the SAME release: {}",
+        requests[1]
+    );
+    let body = requests[1]
+        .split_once("\r\n\r\n")
+        .expect("the PATCH carries a body")
+        .1;
+    let sent: Value = serde_json::from_str(body).expect("the body is JSON");
+    assert_eq!(sent["draft"], json!(false));
+    assert_eq!(sent["body"], json!("what changed in this version"));
+    assert!(
+        sent.get("tag_name").is_none() && sent.get("name").is_none(),
+        "the verb changes the draft bit and the notes and nothing else: {sent}"
+    );
+
+    assert!(resp.ok);
+    assert_eq!(resp.result["draft"], json!(false));
+    assert_eq!(
+        resp.result["published_at"],
+        json!("2026-08-25T00:00:00Z"),
+        "the receipt carries the provider's own account of the publication"
+    );
+}
+
+/// T2 — a stale `release_id` naming a release that was already published. The precondition catches
+/// it BEFORE the write: a second PATCH would rewrite the notes of a release the world has already
+/// fetched, under a sentence that was written to publish a draft.
+#[test]
+fn publish_release_refuses_an_already_published_release_without_writing() {
+    let (base, server) = scripted_full(&[(
+        "200 OK",
+        r#"{"id":991,"tag_name":"v0.1.2","draft":false,"html_url":"https://github.invalid/x","published_at":"2026-08-01T00:00:00Z"}"#,
+    )]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "notes");
+    let resp = publish(&gh, &resource).expect("the hop itself completed");
+    let requests = server.join().unwrap();
+
+    assert!(
+        !resp.ok,
+        "a published release is not a draft to publish: {:?}",
+        resp.result
+    );
+    assert_eq!(
+        requests.len(),
+        1,
+        "the mutation never left the box: {requests:?}"
+    );
+    assert_eq!(resp.result["outcome"], json!("precondition_failed"));
+    assert_eq!(
+        resp.result["path"],
+        json!("draft"),
+        "the refusal names the precondition that failed"
+    );
+}
+
+/// T1 — a steered agent supplying an id that belongs to a DIFFERENT release. The id is
+/// agent-supplied; the tag is what authority names, so the id alone is never trusted, and the
+/// mismatch fails closed before the PATCH.
+#[test]
+fn publish_release_refuses_a_release_whose_tag_is_not_the_pinned_one() {
+    let (base, server) = scripted_full(&[(
+        "200 OK",
+        r#"{"id":991,"tag_name":"v0.9.9","draft":true,"html_url":"https://github.invalid/x","published_at":null}"#,
+    )]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "notes");
+    let resp = publish(&gh, &resource).expect("the hop itself completed");
+    let requests = server.join().unwrap();
+
+    assert!(
+        !resp.ok,
+        "the id must name the pinned tag's draft: {:?}",
+        resp.result
+    );
+    assert_eq!(
+        requests.len(),
+        1,
+        "no PATCH is sent when the id names another release: {requests:?}"
+    );
+    assert_eq!(resp.result["outcome"], json!("precondition_failed"));
+    assert_eq!(
+        resp.result["field"],
+        json!("tag"),
+        "the refusal names the frozen field the response disagreed with"
+    );
+    assert!(
+        !format!("{}", resp.result).contains("v0.9.9"),
+        "a precondition refusal stays value-free: {:?}",
+        resp.result
+    );
+}
+
+#[test]
+fn read_releases_reads_one_bounded_page_and_returns_the_body_verbatim() {
+    const BODY: &str = r#"[{"id":991,"tag_name":"v0.1.2","draft":true},{"id":990,"tag_name":"v0.1.1","draft":false}]"#;
+    let (base, server) = one_shot_full("200 OK", BODY);
+    let gh = github_m3(base);
+    let resource = gh
+        .canonicalize(
+            "read_releases",
+            &json!({ "owner": "acme", "name": "website" }),
+        )
+        .unwrap();
+    let resp = gh
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "read_releases",
+            token: "ghp_broker_credential",
+            resource: &resource,
+        })
+        .unwrap();
+    let request = server.join().unwrap();
+
+    assert!(
+        request.starts_with("GET /repos/acme/website/releases?"),
+        "{request}"
+    );
+    assert!(
+        request.contains("per_page=20"),
+        "the page bound is frozen on the wire: {request}"
+    );
+    assert!(resp.ok);
+    assert_eq!(
+        resp.result,
+        serde_json::from_str::<Value>(BODY).unwrap(),
+        "a list read returns the provider's array as it arrived"
+    );
+}
+
+#[test]
+fn read_workflow_runs_selects_by_head_sha_and_returns_the_body_verbatim() {
+    const BODY: &str = r#"{"total_count":1,"workflow_runs":[{"id":77,"status":"completed","conclusion":"success","head_branch":"v0.1.2"}]}"#;
+    let (base, server) = one_shot_full("200 OK", BODY);
+    let gh = github_m3(base);
+    let head_sha = "c".repeat(40);
+    let resource = gh
+        .canonicalize(
+            "read_workflow_runs",
+            &json!({ "owner": "acme", "name": "website", "head_sha": head_sha }),
+        )
+        .unwrap();
+    let resp = gh
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "read_workflow_runs",
+            token: "ghp_broker_credential",
+            resource: &resource,
+        })
+        .unwrap();
+    let request = server.join().unwrap();
+
+    assert!(
+        request.starts_with("GET /repos/acme/website/actions/runs?"),
+        "{request}"
+    );
+    assert!(
+        request.contains(&format!("head_sha={head_sha}")),
+        "{request}"
+    );
+    assert!(request.contains("per_page=20"), "{request}");
+    assert!(
+        !request.contains("branch="),
+        "a tag-triggered run reports the TAG as head_branch, so no branch pin rides here: {request}"
+    );
+    assert!(resp.ok);
+    assert_eq!(resp.result, serde_json::from_str::<Value>(BODY).unwrap());
+}
+
+/// A branch NAME is not an identity anything can be pinned to — GitHub would happily resolve one.
+#[test]
+fn read_workflow_runs_refuses_a_ref_name_as_head_sha() {
+    let gh = github_m3("http://127.0.0.1:9".to_string());
+    let error = gh
+        .canonicalize(
+            "read_workflow_runs",
+            &json!({ "owner": "acme", "name": "website", "head_sha": "main" }),
+        )
+        .expect_err("head_sha pins the git_oid shape");
+    assert!(format!("{error}").contains("head_sha"), "{error}");
 }

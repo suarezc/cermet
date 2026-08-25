@@ -426,6 +426,18 @@ impl OntologyArtifacts {
             include_str!("../actions/github.read_job_log.yaml"),
         );
         templates.insert(
+            ("github", "read_releases"),
+            include_str!("../actions/github.read_releases.yaml"),
+        );
+        templates.insert(
+            ("github", "read_workflow_runs"),
+            include_str!("../actions/github.read_workflow_runs.yaml"),
+        );
+        templates.insert(
+            ("github", "publish_release"),
+            include_str!("../actions/github.publish_release.yaml"),
+        );
+        templates.insert(
             ("github", "create_issue"),
             include_str!("../actions/github.create_issue.yaml"),
         );
@@ -605,6 +617,10 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     // The minted-URL read that ends the diagnosis ladder — the broker spends the credential to mint
     // a ~60s log URL, native curl moves the bytes.
     include_str!("../ontology/github.read_job_log.yaml"),
+    // The release plane: find the run for a pushed commit, find the draft, publish it.
+    include_str!("../ontology/github.read_workflow_runs.yaml"),
+    include_str!("../ontology/github.read_releases.yaml"),
+    include_str!("../ontology/github.publish_release.yaml"),
     include_str!("../ontology/github.create_branch.yaml"),
     include_str!("../ontology/github.create_issue.yaml"),
     include_str!("../ontology/github.comment_thread.yaml"),

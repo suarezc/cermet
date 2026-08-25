@@ -169,13 +169,13 @@ fn github_vendored_records_parse_and_hash_join_green() {
     // This GitHub-focused test asserts all twenty-two GitHub records in the vendored set.
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        49,
-        "twenty-four GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        52,
+        "twenty-seven GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, `read_job_log`, and the release plane's three) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
     );
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources)
         .expect("all vendored records parse, obey caps, and resolve their sources");
-    assert_eq!(catalog.len(), 49);
+    assert_eq!(catalog.len(), 52);
 
     // Every declared bind hash equals the SHA-256 of the real vendored artifact bytes — a one-byte
     // template/descriptor drift (including a stale post-API-version-bump github descriptor hash)
@@ -204,7 +204,11 @@ fn github_vendored_records_parse_and_hash_join_green() {
         "request_deployment",
         "create_pull_request",
         "read_secret_scanning_alerts_open",
+        "read_releases",
+        "read_workflow_runs",
+        "publish_release",
         "push",
+        "push_tag",
         "fetch",
     ] {
         assert!(
@@ -266,6 +270,9 @@ fn wire_purity_read_band_is_one_bodiless_get_write_band_mutates() {
         "request_workflow_cancel",
         "dispatch_workflow",
         "request_deployment",
+        "read_releases",
+        "read_workflow_runs",
+        "publish_release",
     ] {
         let record = catalog
             .get("github", action)

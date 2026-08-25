@@ -67,8 +67,8 @@ fn github_write_status_guard(reg: &TemplateRegistry) -> Result<usize, String> {
 fn every_github_write_template_pins_success_statuses() {
     let checked = github_write_status_guard(&vendored_registry()).expect("all writes pin statuses");
     assert_eq!(
-        checked, 10,
-        "expected ten github write templates, saw {checked}"
+        checked, 11,
+        "expected eleven github write templates, saw {checked}"
     );
 }
 

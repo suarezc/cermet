@@ -16,13 +16,13 @@ fn registry() -> SourceRegistry {
 fn vendored_records_parse_resolve_sources_and_hash_join_green() {
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        49,
-        "twenty-four GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        52,
+        "twenty-seven GitHub (git-native `push`, `push_tag` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, `read_job_log`, and the release plane's three) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
     );
 
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &registry())
         .expect("all vendored records parse, obey caps, and resolve their sources");
-    assert_eq!(catalog.len(), 49);
+    assert_eq!(catalog.len(), 52);
 
     // Every declared bind hash equals the SHA-256 of the real vendored artifact bytes.
     catalog
@@ -38,6 +38,10 @@ fn vendored_records_parse_resolve_sources_and_hash_join_green() {
         ("github", "read_thread"),
         ("github", "read_pull_request"),
         ("github", "push"),
+        ("github", "push_tag"),
+        ("github", "read_releases"),
+        ("github", "read_workflow_runs"),
+        ("github", "publish_release"),
         ("github", "read_workflow_run"),
         ("github", "read_workflow_run_jobs"),
         ("github", "create_branch"),
