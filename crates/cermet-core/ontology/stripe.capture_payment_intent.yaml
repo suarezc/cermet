@@ -13,14 +13,15 @@ semantics:
   completion: terminal
   idempotency: idempotent
 review:
-  summary: Capture one bounded funds_collect amount from an exact manual PaymentIntent while freezing final_capture false.
+  summary: Capture one bounded funds_collect amount from an exact manual PaymentIntent; the request omits final_capture, which such an intent refuses.
   cautions:
     - Evidence and the fresh precondition require manual capture, requires_capture, a positive bound, and unchanged total and capturable amounts.
     - Routing, future-use, hooks, and method-level capture overrides must be absent before mint and immediately before mutation.
-    - The canonical amount is sent only as amount_to_capture; final_capture is false and no second side effect exists.
-    - Raw success proof requires exact post-capture capturable and received arithmetic plus the corresponding requires_capture or succeeded status.
+    - The canonical amount is sent only as amount_to_capture; final_capture is omitted and no second side effect exists.
+    - Raw success proof requires amount_received to equal the pre-capture received amount plus the exact captured amount.
+    - It also requires a state terminal for that capture, either succeeded with nothing left capturable, or requires_capture with exactly the uncaptured remainder still capturable.
+    - Without multicapture a capture is final, so capturing less than the capturable amount releases the remainder rather than leaving it capturable.
     - Refund is a separate grant; capture neither executes nor implies compensation.
-    - Sandbox proof must establish incremental capture support and final_capture false behavior for the connected account and payment method.
 sources:
   - STRIPE-ACCOUNT-RETRIEVE
   - STRIPE-PAYMENT-INTENT-RETRIEVE

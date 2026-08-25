@@ -5322,6 +5322,97 @@ fn moneypath_cancel_success_requires_a_positive_integer_canceled_at() {
 }
 
 #[test]
+fn moneypath_capture_success_accepts_both_terminal_shapes() {
+    // A capture's proof is the exact received amount plus a terminal state consistent with it.
+    // Two states are terminal for one capture: FINAL (the intent has no capturable remainder left
+    // and reads `succeeded` — the shape a non-multicapture intent takes even when the captured
+    // amount is less than the hold, because the uncaptured remainder is released), and
+    // MULTICAPTURE-CONTINUING (the remainder is still capturable and the intent still reads
+    // `requires_capture`). Anything else proves nothing.
+    struct Case {
+        label: &'static str,
+        fields: Value,
+        response: &'static str,
+        proof: EffectProof,
+    }
+    let cases = [
+        Case {
+            // Partial capture of a non-multicapture intent: 1000 taken from a 1200 hold, the
+            // remaining 200 released. Money moved, and the proof must say so.
+            label: "final partial capture",
+            fields: json!({"payment_intent":"pi_2","amount":1000,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":1200,"amount_capturable":1200}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":1200,"amount_capturable":0,"amount_received":1000,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            label: "full capture of the whole capturable remainder",
+            fields: json!({"payment_intent":"pi_2","amount":600,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":0,"amount_received":900,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            label: "multicapture leaves the remainder capturable",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":400,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            // The received-amount equality is the approved-fields-equal-executed-fields claim.
+            label: "received amount off by one",
+            fields: json!({"payment_intent":"pi_2","amount":1000,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":1200,"amount_capturable":1200}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":1200,"amount_capturable":0,"amount_received":999,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "succeeded while a capturable remainder is still reported",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":400,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "requires_capture with nothing left capturable",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":0,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "a capturable remainder that is neither released nor the exact remainder",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":399,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+    ];
+
+    for case in cases {
+        let (base, server) = one_shot_full("200 OK", case.response);
+        let provider = moneypath_action(base, "capture_payment_intent");
+        let resource = moneypath_complete(&provider, "capture_payment_intent", case.fields);
+        let response = provider
+            .execute(ProviderCall {
+                discipline: proving("hidden_money_key"),
+                git_mirror: None,
+                request_id: "",
+                action: "capture_payment_intent",
+                token: "rk_test_mutation_secret",
+                resource: &resource,
+            })
+            .unwrap();
+        let outcome = response
+            .proof
+            .expect("the proving discipline returns an observation");
+        assert_eq!(outcome, case.proof, "{}", case.label);
+        assert_eq!(
+            response.ok,
+            case.proof == EffectProof::Proved,
+            "{}",
+            case.label
+        );
+        assert!(response.retained.is_none(), "{}", case.label);
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn moneypath_invoice_success_uses_actual_typed_dahlia_fields_without_paid() {
     let invalid = [
         r#"{"id":"in_1","object":"invoice","status":"paid","currency":"usd","customer":"cus_1","livemode":false,"amount_remaining":0,"attempt_count":2}"#,
