@@ -68,8 +68,9 @@ or ask for raw credentials.
 the broker loaded, and a build vendors exactly the verbs it can serve — so an agent can never read
 standing authority for a verb it cannot find in the dictionary, and then execute it by name anyway.
 The two sets are one set: no surface may narrow either without narrowing the other. A sentence
-naming a verb this build does not hold resolves no contract, so it is refused where it is authored,
-and a request for it denies as an unknown verb rather than as an authority gap.
+naming a verb this build does not hold resolves no contract, so `doc check` and `doc apply` refuse
+the whole document (`unresolved verb <provider>.<action>`, with or without a `where` clause), and a
+request for it denies as an unknown verb rather than as an authority gap.
 
 ### 3. Sentence grammar
 
