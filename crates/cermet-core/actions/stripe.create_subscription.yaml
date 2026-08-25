@@ -1,0 +1,28 @@
+# Create ONE active subscription billing an exact customer's exact PaymentMethod for one exact
+# price. payment_behavior is frozen error_if_incomplete: a subscription that cannot collect fails
+# here rather than landing incomplete with an open invoice. Multi-item, trial, and proration are absent.
+provider: stripe
+action: create_subscription
+fields:
+  - { name: customer,       type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: payment_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: price,          type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [customer, payment_method, price]
+execution_targets: [customer, payment_method, price, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/subscriptions
+      body_encoding: form
+      body:
+        customer: "{customer}"
+        default_payment_method: "{payment_method}"
+        items: [{ price: "{price}" }]
+        collection_method: charge_automatically
+        payment_behavior: error_if_incomplete
+      success_statuses: [200]
+      require: [id, object, customer, status, items.data, livemode]
+      expect_eq: { customer: customer }
+      expect_literal: { object: subscription, status: active }

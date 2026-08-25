@@ -280,6 +280,17 @@ field_formats:
   - https_url
   - uint
 targetless_query_shapes:
+  - verb: stripe.read_account
+    method: GET
+    bodyless: true
+    retention: full
+    fields:
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
+    transforms: []
   - verb: stripe.search_customers
     method: GET
     bodyless: true
@@ -488,8 +499,9 @@ included in the frozen resource; sentence authors choose whether to constrain ea
    quoted `query_literal` — injected filter content must never rewrite the query's meaning; a
    placeholder that is the whole value has no DSL around it and rides plain.
 
-Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter) and
-`vercel.list_projects` (whole-value optional filter):
+Shipped `scope: account` verbs: `stripe.read_account` (no filter at all — the credential is the
+whole resource), `stripe.search_customers` (embedded quoted filter), and `vercel.list_projects`
+(whole-value optional filter):
 
 ```yaml
 fields:
@@ -690,7 +702,7 @@ unknown-field error, so the absence is enforced by the loader rather than merely
 | **success** | the provider's parsed JSON body, **unchanged** — array, object, or scalar |
 | **failure** | `{"status": <http status>, "error": <the provider's body>}` — the status is *added* evidence, never a narrowing |
 | **artifact** | the same bytes, stored under the step's `retention` (below) |
-| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a GraphQL step's `outcome`/`conflict` verdict, or a setup fixture's declared `result_captures` (fixtures are a test-build vocabulary and are absent from a shipped catalog). Absent for an ordinary verb |
+| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a GraphQL step's `outcome`/`conflict` verdict, or a step's declared retained headers. Absent for an ordinary verb |
 | **postcondition failure** | `{"outcome": ..., "provider_proof": <the provider's body>}` — a mismatch after the effect boundary is exactly when you need everything the provider said |
 
 This holds for **money** verbs too. A money success returns the verified object — its own provider
@@ -703,10 +715,10 @@ not payment-method detail. If response filtering is ever wanted it arrives as a 
 operator enables in a rule** — never a descriptor-buried list invisible to the rule author — and
 today **zero such classes exist**.
 
-**Where broker-authored metadata goes.** Two things legitimately need to reach the agent next to
-the body: a setup fixture's declared `result_captures` (values the broker observed on an EARLIER step,
-which are not in this body at all) and a GraphQL step's classified `outcome`/`conflict` verdict.
-They ride a **sibling `envelope` field on the receipt**, never inside the provider's JSON.
+**Where broker-authored metadata goes.** Some things legitimately need to reach the agent next to
+the body: a GraphQL step's classified `outcome`/`conflict` verdict, and a step's declared retained
+response headers. They ride a **sibling `envelope` field on the receipt**, never inside the
+provider's JSON.
 Writing them into the body would have made receipt result ≠ stored artifact ≠ wire body,
 which is exactly the divergence the wire tee exists to catch. Augmentation is still editing.
 

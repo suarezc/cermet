@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: attach_payment_method
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 09ad00e151204b3d395094ea74ea66616b89948b25d1b740f65303dce9677a8b
+semantics:
+  resource_family: payment_method
+  provider_operation: payment_method_attach
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: reversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Attach one exact PaymentMethod to one exact customer, making it chargeable for that customer.
+  cautions:
+    - Attaching is what makes a stored instrument usable by later off-session charges; it is an authority step, not bookkeeping.
+    - Both the instrument and the customer are exact pinned identities, so neither is provider-selected.
+    - Detaching, updating the instrument, and setting the customer's default are separate effects and are absent.
+    - The response carries the instrument's brand and last four digits, never a full number.
+sources:
+  - STRIPE-PAYMENT-METHOD-ATTACH
+  - STRIPE-PAYMENT-METHOD-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

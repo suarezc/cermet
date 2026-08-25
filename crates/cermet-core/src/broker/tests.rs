@@ -10230,7 +10230,7 @@ impl Provider for ModeStripe {
         "stripe"
     }
     fn supported_actions(&self) -> &'static [&'static str] {
-        &["refund"]
+        &["refund", "create_charge_from_source"]
     }
     fn action_contract(&self, action: &str) -> Option<&'static crate::contract::ActionContract> {
         self.templates.resolve("stripe", action)
@@ -10273,6 +10273,52 @@ fn mode_broker(dir: &std::path::Path, rules: &str) -> (Broker, Arc<std::sync::Mu
     );
     broker.set_now(1_700_000_000);
     (broker, calls)
+}
+
+/// The setup vocabulary is ordinary vocabulary, so it is judged by the same derived field. This is
+/// the leg that used to be a `prove_test_mode` step inside every fixture: the guard has moved from
+/// a per-verb preflight read to one decision the daemon makes about its own credential.
+#[test]
+fn the_new_creation_vocabulary_is_judged_by_the_same_derived_mode() {
+    let (_guard, dir) = fresh_broker_dir();
+    let mut parsed = crate::sentence::parse_rules(
+        "allow stripe.create_charge_from_source where source = \"tok_visa\" and currency = \"usd\" \
+         and amount <= 100 and mode = \"test\"",
+    )
+    .unwrap();
+    crate::sentence::pin_set_references(&mut parsed, &crate::sets::VendoredSetResolver).unwrap();
+    let source = Arc::new(V2M1SentenceAuthority::new(parsed));
+    let mut broker = open_broker_reuse_with_sentence_authority(&dir, "providers: {}", source);
+    let calls = Arc::new(std::sync::Mutex::new(0));
+    broker.providers.insert(
+        "stripe".into(),
+        Box::new(ModeStripe {
+            templates: broker.templates.clone(),
+            calls: calls.clone(),
+        }),
+    );
+    broker.set_now(1_700_000_000);
+    let charge = || CapabilityRequest {
+        provider: "stripe".into(),
+        action: "create_charge_from_source".into(),
+        resource: json!({"source": "tok_visa", "amount": 100, "currency": "usd"}),
+        environment: None,
+        justification: None,
+        model: None,
+    };
+
+    broker
+        .connect_credential("stripe", None, "sk_live_setup_vocabulary")
+        .unwrap();
+    let denied = broker.request_capability("s", charge()).unwrap();
+    assert_eq!(denied.decision, Decision::Deny, "{}", denied.reason);
+    assert_eq!(*calls.lock().unwrap(), 0, "no charge reached the provider");
+
+    broker
+        .connect_credential("stripe", None, "sk_test_setup_vocabulary")
+        .unwrap();
+    let allowed = broker.request_capability("s", charge()).unwrap();
+    assert_eq!(allowed.decision, Decision::Allow, "{}", allowed.reason);
 }
 
 const TEST_MODE_SENTENCE: &str =

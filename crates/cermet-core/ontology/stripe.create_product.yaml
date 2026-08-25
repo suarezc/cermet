@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_product
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 58bca930fedd7ea211e5e24d9bf6d5f879ec7ce1de33ba62afd04d63274efa4b
+semantics:
+  resource_family: product
+  provider_operation: product_create
+  risk_class: external_state_change
+  sensitivity: public_metadata
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one active product under an exact name, with no price attached.
+  cautions:
+    - Repeating the request creates a SECOND product; the name is not unique provider-side.
+    - Deletion is not authorized anywhere in the corpus; archive_product is the reversible exit.
+    - Prices, images, URLs, marketing features, and metadata are absent from the request.
+sources:
+  - STRIPE-PRODUCT-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

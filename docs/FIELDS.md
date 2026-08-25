@@ -64,7 +64,7 @@ When the verb executes in-core, the receipt is the execution result.
 | `effect_outcome` | The authenticated disposition of the effect (see §1.6). Derived only from chain-verified execution evidence; a caller can neither submit nor override it. |
 | `envelope` | The broker-authored half of the receipt, kept strictly outside the verbatim `result`. Always present. |
 | `envelope.request_id` | Stamped at the one broker seam that authors the envelope, so no verb can mint a receipt whose request cannot be chased with `cermet log <request_id>`. |
-| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a setup fixture's declared `result_captures` (values observed on an *earlier* step, which were never in this body; fixtures are a test-build vocabulary and are absent from a shipped catalog) and a GraphQL step's classified outcome/conflict verdict. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
+| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a GraphQL step's classified outcome/conflict verdict, and a step's declared retained response headers. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
 
 ### 1.3 The relay object
 

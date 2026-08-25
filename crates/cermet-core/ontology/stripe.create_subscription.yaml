@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_subscription
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: b41bcb6ef827e5983a04f8da78ad4a6e3cfec2122a2e0eab0a7d7a8c92c02b03
+semantics:
+  resource_family: subscription
+  provider_operation: subscription_create
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one active subscription billing an exact customer's exact PaymentMethod for one exact price.
+  cautions:
+    - This is recurring authority - it charges again every interval until cancelled, and the amount lives in the price, not in this request.
+    - payment_behavior is frozen error_if_incomplete, so a subscription that cannot collect immediately fails instead of landing incomplete with an open invoice.
+    - Exactly one item, no trial, no proration, no schedule; a second item is a second effect that does not exist.
+    - Cancelling is a separate grant (cancel_subscription or cancel_subscription_at_period_end).
+sources:
+  - STRIPE-SUBSCRIPTION-CREATE
+  - STRIPE-SUBSCRIPTION-UPDATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

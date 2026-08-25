@@ -1,0 +1,21 @@
+# Create one active product under an exact name. Prices, images, URLs, metadata, and the inactive
+# shape are absent; a price is a separate effect.
+provider: stripe
+action: create_product
+fields:
+  - { name: name, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [name]
+execution_targets: [name, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/products
+      body_encoding: form
+      body:
+        name: "{name}"
+      success_statuses: [200]
+      require: [id, object, name, active, livemode]
+      expect_eq: { name: name }
+      expect_literal: { object: product, active: true }

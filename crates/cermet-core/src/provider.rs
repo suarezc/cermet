@@ -74,13 +74,12 @@ pub struct ProviderResponse {
     pub result: Value,
     /// BROKER-AUTHORED metadata about this response, kept STRICTLY OUTSIDE `result`.
     ///
-    /// The response contract is verbatim: a template never edits the provider's JSON. Two things
-    /// nevertheless need to reach the agent alongside it — a setup verb's declared
-    /// `result_captures` (values the broker observed on an EARLIER step, which are not in this
-    /// body at all) and a GraphQL step's classified `outcome`/`conflict` verdict. Injecting either
-    /// into the body made receipt result != stored artifact != teed body, which is the exact
-    /// divergence the wire tee exists to catch. They ride here instead, the same way the money
-    /// evaluation rides alongside its response rather than inside it.
+    /// The response contract is verbatim: a template never edits the provider's JSON. Some things
+    /// nevertheless need to reach the agent alongside it — a GraphQL step's classified
+    /// `outcome`/`conflict` verdict, and a step's declared retained headers. Injecting either into
+    /// the body made receipt result != stored artifact != teed body, which is the exact divergence
+    /// the wire tee exists to catch. They ride here instead, the same way the money evaluation
+    /// rides alongside its response rather than inside it.
     ///
     /// Empty for the overwhelming majority of verbs, and omitted from the wire when empty.
     pub envelope: serde_json::Map<String, Value>,
@@ -1525,29 +1524,8 @@ fn render_body_string(
     Ok(Rendered::Present(Value::String(out)))
 }
 
-/// Build the sibling envelope's capture entries. Each declared output names a value the
-/// broker OBSERVED on an earlier step — it is not in the terminal body and never was, which is why
-/// inserting it there was always a fiction. There is no collision check to make any more: the
-/// envelope is broker-owned, so a provider field sharing a name with a capture output simply cannot
-/// clash with it.
-fn envelope_captures(
-    selected: &BTreeMap<String, String>,
-    captures: &BTreeMap<String, Value>,
-) -> Result<serde_json::Map<String, Value>> {
-    let mut out = serde_json::Map::new();
-    for (output, capture) in selected {
-        let value = captures.get(capture).ok_or_else(|| {
-            Error::Integrity(format!(
-                "result_captures references absent prior capture `{capture}`"
-            ))
-        })?;
-        out.insert(output.clone(), value.clone());
-    }
-    Ok(out)
-}
-
-/// The envelope is broker-authored, but a capture can carry a value the AGENT submitted (a setup
-/// verb echoing an id it was given), so it gets the same request-secret scrub the result does.
+/// The envelope is broker-authored, but an entry can carry a value the AGENT submitted, so it gets
+/// the same request-secret scrub the result does.
 fn scrub_envelope(
     envelope: serde_json::Map<String, Value>,
     scrub: &SecretScrub,
@@ -1698,7 +1676,6 @@ fn execute_template_steps(
 
         let method = Method::from_bytes(step.method.as_bytes())
             .map_err(|_| Error::Provider(format!("template step uses method `{}`", step.method)))?;
-        let mut poll_attempt = 0u8;
         // Label everything the tee records for this step with the verb that produced it, so the
         // sitting can pair a teed body with the receipt and artifact it became.
         let _tee = crate::wiretap::TeeScope::enter(
@@ -1707,15 +1684,10 @@ fn execute_template_steps(
             &step.id,
             &[idempotency_key],
         );
-        // What the step's declared `retain_headers` found on the response it acted on. Assigned by
-        // the loop below (a poll retry overwrites it, so it always describes the final attempt) and
-        // consumed once, at the terminal step, into the broker-authored envelope.
+        // What the step's declared `retain_headers` found on the response it acted on. Consumed
+        // once, at the terminal step, into the broker-authored envelope.
         let mut retained_headers: Vec<(String, Option<String>)> = Vec::new();
-        let (resp, money_evaluation) = loop {
-            if poll_attempt > 0 {
-                let delay_ms = step.poll.as_ref().map_or(0, |poll| poll.delay_ms);
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
+        let (resp, money_evaluation) = {
             let delivered = http_call_with_status(
                 eg,
                 method.clone(),
@@ -1728,7 +1700,7 @@ fn execute_template_steps(
                 step.body_encoding,
                 &step.retain_headers,
             )?;
-            let evaluated = match delivered {
+            match delivered {
                 DeliveredHttpResponse::Body {
                     status,
                     bytes,
@@ -1774,29 +1746,7 @@ fn execute_template_steps(
                     )
                 }
                 DeliveredHttpResponse::StatusOnly { response } => (response, EffectProof::Unproved),
-            };
-            let should_poll = step.poll.as_ref().is_some_and(|poll| {
-                evaluated.0.ok
-                    && poll_attempt + 1 < poll.attempts
-                    && step.expect_literal.iter().all(|(path, expected)| {
-                        dotted_lookup(&evaluated.0.result, path) == Some(expected)
-                    })
-                    && step.require.iter().all(|path| {
-                        dotted_lookup(&evaluated.0.result, path)
-                            .is_some_and(|value| !value.is_null())
-                    })
-                    && poll.until_nonempty.iter().any(|path| {
-                        matches!(
-                            dotted_lookup(&evaluated.0.result, path),
-                            Some(Value::Array(values)) if values.is_empty()
-                        )
-                    })
-            });
-            if should_poll {
-                poll_attempt += 1;
-                continue;
             }
-            break evaluated;
         };
 
         // GraphQL response semantics, declarative: classify a present nonempty or
@@ -2041,21 +1991,18 @@ fn execute_template_steps(
                 // credential; `scrub_result` below still removes agent-submitted secret values the
                 // provider echoed back, which is request-side custody, not response shaping.
                 let result = resp.result;
-                // These two are BROKER-AUTHORED and ride the sibling envelope, never the
-                // provider's object. `result_captures` are values observed on an EARLIER step (they
-                // are not in this body at all), and a graphql `outcome` is the step's own verdict.
-                // Writing either into `result` made receipt != artifact != wire, which is precisely
-                // what the tee comparison exists to catch.
-                let mut envelope = envelope_captures(&step.result_captures, &captures)?;
+                // What follows is BROKER-AUTHORED and rides the sibling envelope, never the
+                // provider's object: a graphql `outcome` is the step's own verdict, and a retained
+                // header is metadata about the response. Writing either into `result` made
+                // receipt != artifact != wire, which is precisely what the tee comparison catches.
+                let mut envelope = serde_json::Map::new();
                 // A graphql step's success is CLASSIFIED, not
                 // implied — reaching here means no errors and every `require` path resolved.
                 if step.graphql_query.is_some() {
                     envelope.insert("outcome".to_string(), json!("succeeded"));
                 }
-                // A declared retained header is broker-OBSERVED metadata about the response, not
-                // part of it, so it rides here for exactly the reason `result_captures` does —
-                // writing it into `result` would make receipt != artifact != teed body. Every entry
-                // is Some by now; the loop above already failed closed on any that was not.
+                // Every entry is Some by now; the loop above already failed closed on any that
+                // was not.
                 for (name, value) in retained_headers {
                     if let Some(value) = value {
                         envelope.insert(name, json!(value));

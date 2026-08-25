@@ -570,6 +570,46 @@ impl OntologyArtifacts {
             ("stripe", "create_standard_payout"),
             include_str!("../actions/stripe.create_standard_payout.yaml"),
         );
+        templates.insert(
+            ("stripe", "create_customer"),
+            include_str!("../actions/stripe.create_customer.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_product"),
+            include_str!("../actions/stripe.create_product.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_recurring_price"),
+            include_str!("../actions/stripe.create_recurring_price.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_draft_invoice"),
+            include_str!("../actions/stripe.create_draft_invoice.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_webhook_endpoint_fixed_bundle"),
+            include_str!("../actions/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+        );
+        templates.insert(
+            ("stripe", "attach_payment_method"),
+            include_str!("../actions/stripe.attach_payment_method.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_subscription"),
+            include_str!("../actions/stripe.create_subscription.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_charge_from_source"),
+            include_str!("../actions/stripe.create_charge_from_source.yaml"),
+        );
+        templates.insert(
+            ("stripe", "list_disputes"),
+            include_str!("../actions/stripe.list_disputes.yaml"),
+        );
+        templates.insert(
+            ("stripe", "read_account"),
+            include_str!("../actions/stripe.read_account.yaml"),
+        );
 
         Self {
             descriptors,
@@ -657,6 +697,16 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/stripe.retry_invoice_payment.yaml"),
     include_str!("../ontology/stripe.refund_charge_bounded.yaml"),
     include_str!("../ontology/stripe.create_standard_payout.yaml"),
+    include_str!("../ontology/stripe.create_customer.yaml"),
+    include_str!("../ontology/stripe.create_product.yaml"),
+    include_str!("../ontology/stripe.create_recurring_price.yaml"),
+    include_str!("../ontology/stripe.create_draft_invoice.yaml"),
+    include_str!("../ontology/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+    include_str!("../ontology/stripe.attach_payment_method.yaml"),
+    include_str!("../ontology/stripe.create_subscription.yaml"),
+    include_str!("../ontology/stripe.create_charge_from_source.yaml"),
+    include_str!("../ontology/stripe.list_disputes.yaml"),
+    include_str!("../ontology/stripe.read_account.yaml"),
     // Appended last: two hash-join tests index VENDORED_ONTOLOGY[0].
     include_str!("../ontology/vercel.deploy.yaml"),
     include_str!("../ontology/vercel.list_projects.yaml"),

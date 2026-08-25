@@ -229,7 +229,9 @@ fn money_contracts_have_one_bounded_amount_and_provider_fields_are_not_agent_inp
     let agent_inputs = [
         (
             "create_payment_intent_off_session",
-            &["amount", "customer", "payment_method"][..],
+            // `capture_method` is an OPTIONAL agent input: absent sends no key, so the account's
+            // own default decides, and a sentence that pins it decides instead.
+            &["amount", "capture_method", "customer", "payment_method"][..],
         ),
         (
             "confirm_payment_intent",
@@ -303,7 +305,7 @@ fn mutation_wires_freeze_the_reviewed_single_effect_shapes() {
         (
             "create_payment_intent_off_session",
             "/v1/payment_intents",
-            "{ amount: \"{amount}\", currency: \"{currency}\", customer: \"{customer}\", payment_method: \"{payment_method}\", confirm: false }",
+            "{ amount: \"{amount}\", currency: \"{currency}\", customer: \"{customer}\", payment_method: \"{payment_method}\", capture_method: \"{capture_method?}\", confirm: false }",
         ),
         (
             "confirm_payment_intent",

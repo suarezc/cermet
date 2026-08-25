@@ -1,0 +1,27 @@
+# Create one active recurring price at an exact interval for one exact product. A one-time price,
+# tiered or metered billing, and lookup keys are absent.
+provider: stripe
+action: create_recurring_price
+fields:
+  - { name: product,     type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: unit_amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: currency,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: interval,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [product, unit_amount, currency, interval]
+execution_targets: [product, currency, interval, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/prices
+      body_encoding: form
+      body:
+        product: "{product}"
+        unit_amount: "{unit_amount}"
+        currency: "{currency}"
+        recurring: { interval: "{interval}" }
+      success_statuses: [200]
+      require: [id, object, product, unit_amount, currency, active, type, recurring.interval, livemode]
+      expect_eq: { product: product, currency: currency, recurring.interval: interval }
+      expect_literal: { object: price, active: true, type: recurring }

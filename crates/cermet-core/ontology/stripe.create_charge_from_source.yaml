@@ -1,0 +1,28 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_charge_from_source
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: e5521721e18fe94d2bdf61f843319153235871c7832266873d3e87db025a5305
+semantics:
+  resource_family: charge
+  provider_operation: charge_create
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Charge one bounded amount in an exact currency against one exact already-tokenized source.
+  cautions:
+    - This moves money immediately; amount is the sole bounded quantity and a sentence must cap it.
+    - The source is a token or card id the sentence pins by value; no raw instrument detail rides the request.
+    - Stripe's documented test tokens are ordinary values of this field under a mode = "test" sentence, not a separate verb.
+    - Refunding is a separate grant; this verb has no reversal of its own.
+    - The success proof requires paid true and status succeeded, so a pending or failed charge is a terminal failure here, never a silent partial.
+sources:
+  - STRIPE-CHARGE-CREATE
+  - STRIPE-CHARGE-RETRIEVE
+  - STRIPE-TEST-TOKENS
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

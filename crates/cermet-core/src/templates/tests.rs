@@ -863,112 +863,13 @@ fn validator_requires_consumes_to_match_used_fields() {
 }
 
 #[test]
-fn fixture_named_template_refuses_money_metadata_before_other_money_validation() {
-    let doc = golden()
-        .replace("action: template_put_file", "action: fixture_put_file")
-        .replace(
-            "fields:",
-            "money:\n  preconditions: [not_a_real_precondition]\nfields:",
-        );
-    let error = TemplateRegistry::new()
-        .load(&doc)
-        .expect_err("setup-class actions may never carry money metadata");
-    assert!(
-        error.contains("setup-class action may not declare `money`"),
-        "{error}"
-    );
-}
-
-#[test]
-fn fixture_named_template_refuses_secret_fields_before_wire_validation() {
-    let doc = golden()
-        .replace("action: template_put_file", "action: fixture_put_file")
-        .replace(
-            "  - { name: message, type: str, required: true,  class: free_payload, binding: unbound }",
-            "  - { name: message, type: str, required: true,  class: secret, binding: unbound }",
-        );
-    let error = TemplateRegistry::new()
-        .load(&doc)
-        .expect_err("setup-class actions may never carry secret fields");
-    assert!(
-        error.contains("setup-class action may not declare secret field `message`"),
-        "{error}"
-    );
-}
-
-#[test]
-fn fixture_discovery_may_add_allowlisted_prior_step_captures() {
+fn a_read_after_a_mutation_is_refused_however_it_is_bound() {
+    // Verification reads are ONE LEADING PREFIX. A read placed after a mutation cannot be a
+    // preflight and cannot make the earlier effect safe, and there is no shape of it — capture-keyed
+    // or not — that the grammar admits.
     let doc = "\
 provider: stripe
-action: fixture_projection_probe_discover
-fields: []
-consumes: []
-execution_targets: []
-scope: account
-http:
-  steps:
-    - id: account
-      method: GET
-      path: /v1/account
-      success_statuses: [200]
-      require: [id]
-      capture: { account_id: \"$.id\" }
-      retention: none
-    - id: mode
-      method: GET
-      path: /v1/balance
-      success_statuses: [200]
-      require: [livemode]
-      expect_literal: { livemode: false }
-      result_captures: { account_id: account_id }
-      retention: none
-";
-    TemplateRegistry::new()
-        .load(doc)
-        .expect("setup discovery may ADD an explicitly allowlisted prior capture to the body");
-}
-
-#[test]
-fn fixture_setup_may_project_allowlisted_prior_mutation_capture() {
-    let doc = "\
-provider: stripe
-action: fixture_payment_intents_create
-fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
-consumes: [account, amount]
-execution_targets: [account]
-http:
-  steps:
-    - id: unconfirmed
-      method: POST
-      path: /v1/payment_intents
-      body_encoding: form
-      body: { amount: \"{amount}\", account: \"{account}\" }
-      success_statuses: [200]
-      require: [id]
-      capture: { confirmation_payment_intent: \"$.id\" }
-      retention: none
-    - id: manual
-      method: POST
-      path: /v1/payment_intents
-      body_encoding: form
-      body: { amount: \"{amount}\" }
-      success_statuses: [200]
-      require: [id]
-      result_captures: { confirmation_payment_intent: confirmation_payment_intent }
-      retention: none
-";
-    TemplateRegistry::new()
-        .load(doc)
-        .expect("setup may return one allowlisted earlier mutation identity");
-}
-
-#[test]
-fn fixture_setup_may_end_with_capture_bound_reconciliation_read() {
-    let doc = "\
-provider: stripe
-action: fixture_dispute_create
+action: dispute_create
 fields:
   - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
 consumes: [account]
@@ -992,80 +893,52 @@ http:
       expect_literal: { has_more: false }
       retention: none
 ";
-    TemplateRegistry::new()
+    let error = TemplateRegistry::new()
         .load(doc)
-        .expect("setup may reconcile its one captured mutation in a terminal bounded read");
+        .expect_err("a trailing reconciliation read must be refused");
+    assert!(error.contains("must form a leading prefix"), "{error}");
 }
 
 #[test]
-fn fixture_setup_may_bound_a_capture_reconciliation_poll() {
-    let doc = "\
+fn result_captures_and_poll_are_not_grammar() {
+    // Both existed only for the setup vocabulary that has left the tree. They are not keys the
+    // parser knows any more, so a document reaching for either is refused before any rule runs
+    // rather than admitted by a name.
+    let base = "\
 provider: stripe
-action: fixture_dispute_create
+action: probe_read
 fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-consumes: [account]
-execution_targets: [account]
+  - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [charge]
+execution_targets: [charge]
 http:
   steps:
-    - id: create
-      method: POST
-      path: /v1/charges
-      body: { account: \"{account}\" }
-      success_statuses: [200]
-      require: [id]
-      capture: { created_charge: \"$.id\" }
-      retention: none
-    - id: reconcile
+    - id: get
       method: GET
-      path: /v1/disputes
-      query: { charge: \"{created_charge}\", limit: \"10\" }
+      path: /v1/charges/{charge}
       success_statuses: [200]
-      require: [data, has_more]
-      expect_literal: { has_more: false }
-      poll: { attempts: 3, delay_ms: 1, until_nonempty: [data] }
-      result_captures: { created_charge: created_charge }
-      retention: none
 ";
     TemplateRegistry::new()
-        .load(doc)
-        .expect("setup may bound its final capture-keyed reconciliation read");
-    for invalid in [
-        doc.replace("attempts: 3", "attempts: 1"),
-        doc.replace("attempts: 3", "attempts: 6"),
-        doc.replace("delay_ms: 1", "delay_ms: 0"),
-        doc.replace("delay_ms: 1", "delay_ms: 1001"),
-        doc.replace("until_nonempty: [data]", "until_nonempty: [unretained]"),
-        doc.replace("action: fixture_dispute_create", "action: dispute_create"),
+        .load(base)
+        .expect("the base document loads");
+    for key in [
+        "      result_captures: { charge: charge }\n",
+        "      poll: { attempts: 3, delay_ms: 1, until_nonempty: [data] }\n",
     ] {
         TemplateRegistry::new()
-            .load(&invalid)
-            .expect_err("unbounded or non-setup polling must fail closed");
+            .load(&format!("{base}{key}"))
+            .expect_err("a retired grammar key is an unknown field, not a relaxation");
     }
 }
 
 #[test]
-fn fixture_discovery_may_filter_a_final_collection_by_a_frozen_prefix() {
-    let doc = "\
-provider: github
-action: fixture_prefix_probe_discover
-fields: []
-consumes: []
-execution_targets: []
-scope: account
-http:
-  steps:
-    - id: repositories
-      method: POST
-      path: /graphql
-      success_statuses: [200]
-      graphql_query: \"query fixturePrefixProbe { viewer { repositories(first: 20) { nodes { name } } } }\"
-      require: [data.viewer.repositories.nodes]
-      retention: none
-";
+fn a_name_no_longer_relaxes_any_rule() {
+    // The `fixture_` prefix used to gate four load rules. Nothing gates on a name now: a
+    // fixture-named document is an ordinary verb and is judged by the ordinary rules.
+    let doc = golden().replace("action: template_put_file", "action: fixture_put_file");
     TemplateRegistry::new()
-        .load(doc)
-        .expect("setup discovery may enforce one frozen response prefix before projection");
+        .load(&doc)
+        .expect("a fixture-named document is just a document");
 }
 
 // ---- The `{field|omit:<literal>}` body transform ----
@@ -1347,13 +1220,17 @@ fn retention_none_survives_only_where_a_stated_justification_does() {
         "refund_charge_bounded",
         "retry_invoice_payment",
     ];
-    // The two non-money survivors, each carrying a stated, still-valid reason rather than a
+    // The non-money survivors, each carrying a stated, still-valid reason rather than a
     // leftover (`github` is not product-enabled either way):
     //   - read_secret_scanning_alerts_open: its response space IS other people's leaked credentials,
     //     so keeping no durable copy is the point.
     //   - read_job_log: the minted-URL shape answers `302` with an EMPTY body, so there is no body
     //     to store. The mint itself rides the broker envelope into the receipt.
     const JUSTIFIED: &[&str] = &["read_secret_scanning_alerts_open", "read_job_log"];
+    //   - create_webhook_endpoint_fixed_bundle: Stripe returns the endpoint's signing secret in
+    //     this response and only in this one. The requester needs it; Cermet keeping a copy would
+    //     put it in an artifact nothing in the flow reads.
+    const JUSTIFIED_STRIPE: &[&str] = &["create_webhook_endpoint_fixed_bundle"];
 
     let mut declaring: Vec<String> = Vec::new();
     for doc in VENDORED_CATALOG {
@@ -1376,6 +1253,7 @@ fn retention_none_survives_only_where_a_stated_justification_does() {
 
     let mut expected: Vec<String> = MONEY_FLOOR
         .iter()
+        .chain(JUSTIFIED_STRIPE)
         .map(|action| format!("stripe.{action}"))
         .chain(JUSTIFIED.iter().map(|action| format!("github.{action}")))
         .collect();
@@ -3307,5 +3185,49 @@ fn every_stripe_verb_pins_the_credentials_own_mode() {
             template.action
         );
     }
-    assert_eq!(seen, 33, "every vendored stripe verb was checked");
+    assert_eq!(seen, 43, "every vendored stripe verb was checked");
+}
+
+/// One catalog, and the setup vocabulary that used to live beside it is now IN it. The verbs a
+/// harness drives to build a provider account into a known state are ordinary product verbs a
+/// sentence names and a receipt records — there is no second set, no name that relaxes a load
+/// rule, and no build flag that changes what a box can serve.
+#[test]
+fn the_catalog_is_one_set_with_no_setup_vocabulary_beside_it() {
+    let mut actions: Vec<(String, String)> = Vec::new();
+    for doc in VENDORED_CATALOG {
+        let template: ActionTemplate = serde_yaml::from_str(doc).unwrap();
+        assert!(
+            !template.action.starts_with("fixture_"),
+            "{}.{} is setup vocabulary in the product catalog",
+            template.provider,
+            template.action
+        );
+        actions.push((template.provider.clone(), template.action.clone()));
+    }
+    assert_eq!(
+        actions.len(),
+        vendored_action_templates().len(),
+        "the vendored set and the set a daemon boots on are the same set"
+    );
+    // The effects the setup fixtures performed, now named as verbs.
+    for action in [
+        "create_customer",
+        "create_product",
+        "create_recurring_price",
+        "create_draft_invoice",
+        "create_webhook_endpoint_fixed_bundle",
+        "attach_payment_method",
+        "create_subscription",
+        "create_charge_from_source",
+        "list_disputes",
+        "read_account",
+    ] {
+        assert!(
+            actions
+                .iter()
+                .any(|(provider, candidate)| provider == "stripe" && candidate == action),
+            "stripe.{action} is not vendored"
+        );
+    }
 }

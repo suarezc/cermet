@@ -33,8 +33,6 @@ const MAX_TOOL_NAME_LEN: usize = 51;
 const MAX_STEPS: usize = 8;
 const MAX_KEEP: usize = 32;
 const MAX_CAPTURES_PER_STEP: usize = 8;
-const MAX_POLL_ATTEMPTS: u8 = 5;
-const MAX_POLL_DELAY_MS: u64 = 1_000;
 const MAX_STRING_CHARS: usize = 256 * 1024;
 
 // ---- Relay-predicate caps (a predicate is human-reviewed; keep it small) ----
@@ -855,14 +853,6 @@ pub enum PathMode {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PollSpec {
-    pub(crate) attempts: u8,
-    pub(crate) delay_ms: u64,
-    pub(crate) until_nonempty: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct StepSpec {
     pub(crate) id: String,
     pub(crate) method: String,
@@ -878,16 +868,6 @@ pub struct StepSpec {
     /// Wire encoding for `body`. JSON remains the default; Stripe's v1 API uses form encoding.
     #[serde(default)]
     pub(crate) body_encoding: BodyEncoding,
-    /// Setup actions may ADD explicitly selected values captured from prior steps to the terminal
-    /// result. Keys are returned field names; values are prior capture names. This is augmentation,
-    /// never curation: the provider body itself is returned verbatim.
-    #[serde(default)]
-    pub(crate) result_captures: BTreeMap<String, String>,
-    /// Setup-only bounded reconciliation polling. The executor retries this one terminal,
-    /// capture-keyed GET while every selected collection is empty. The first call is immediate;
-    /// `delay_ms` applies only between attempts.
-    #[serde(default)]
-    pub(crate) poll: Option<PollSpec>,
     /// Whether the terminal provider body is retained as an artifact. `none` caps durable storage;
     /// it never narrows the returned response (a retention cap is not a projection).
     #[serde(default)]
@@ -1835,24 +1815,6 @@ impl ActionTemplate {
                 self.action
             ));
         }
-        if is_fixture_action(&self.action) {
-            if self.money.is_some() {
-                return Err(format!(
-                    "{ctx}: setup-class action may not declare `money`; fixture vocabulary is \
-                     excluded from the money corpus"
-                ));
-            }
-            if let Some(field) = self
-                .fields
-                .iter()
-                .find(|field| field.class == TemplateClass::Secret)
-            {
-                return Err(format!(
-                    "{ctx}: setup-class action may not declare secret field `{}`",
-                    field.name
-                ));
-            }
-        }
         // The generated MCP tool name is `provider-action`; refuse anything a model provider would
         // truncate/drop so an over-length verb can never reach the catalog (fail closed here, not in
         // the MCP layer).
@@ -2370,9 +2332,11 @@ impl ActionTemplate {
     }
 
     /// `scope: account` is EARNED by boundedness (rule 6): constructed `http` execution only, no
-    /// money, only `read_filter` fields (an identity/side_effect field on a verb nothing can pin
-    /// would be unpinned authority), and every step a statused read — a bodyless GET, or a POST
-    /// whose body is a frozen GraphQL `query` (fixture discoveries reconcile through those).
+    /// money, only `read_filter` and `source: credential` fields (an AGENT-supplied
+    /// identity/side_effect field on a verb nothing can pin would be unpinned authority; a
+    /// daemon-derived one describes the credential, which is what the claim says the resource is),
+    /// and every step a statused read — a bodyless GET, or a POST whose body is a frozen GraphQL
+    /// `query`.
     /// One injection rule survives from the shapes this replaced, on its true rationale: an unbound
     /// filter placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a
     /// `query_literal` flanked by literal quotes — filter content must never rewrite the query's
@@ -3213,34 +3177,13 @@ impl ActionTemplate {
         // GraphQL query cannot be a preflight and cannot make the earlier effect safe, regardless of
         // whether the read declares a response assertion. This also makes the final-step boundary
         // structural: only a final non-verification step can carry reconciliation evidence.
-        //
-        // Setup has one narrow exception: a FINAL bounded read may reconcile the identity captured
-        // from the setup's ONE mutation. It authorizes no later effect and does not make the earlier
-        // effect safe; it merely returns the child identity needed by the sitting runner.
         if let Some(first_mutating) = http.steps.iter().position(|s| !is_verification_read(s)) {
-            if let Some((_read_index, read)) = http.steps.iter().enumerate().find(|(i, step)| {
-                if *i <= first_mutating || !is_verification_read(step) {
-                    return false;
-                }
-                let prior_mutations: Vec<_> = http.steps[..*i]
-                    .iter()
-                    .filter(|prior| !is_verification_read(prior))
-                    .collect();
-                let captured: HashSet<&str> = prior_mutations
-                    .iter()
-                    .flat_map(|prior| prior.capture.keys().map(String::as_str))
-                    .collect();
-                let capture_bound = std::iter::once(step.path.as_str())
-                    .chain(step.query.values().map(String::as_str))
-                    .filter_map(|source| parse_placeholders(source).ok())
-                    .flatten()
-                    .any(|placeholder| captured.contains(placeholder.name.as_str()));
-                let terminal_setup_reconciliation = is_fixture_action(&self.action)
-                    && *i == last
-                    && prior_mutations.len() == 1
-                    && capture_bound;
-                !terminal_setup_reconciliation
-            }) {
+            if let Some((_read_index, read)) = http
+                .steps
+                .iter()
+                .enumerate()
+                .find(|(i, step)| *i > first_mutating && is_verification_read(step))
+            {
                 return Err(format!(
                     "{ctx}: verification read step `{}` follows mutation step `{}`; every GET or \
                      frozen GraphQL query must form a leading prefix and PRECEDE every mutation",
@@ -3302,66 +3245,6 @@ impl ActionTemplate {
         let mut used_fields: HashSet<String> = HashSet::new();
         for (i, step) in http.steps.iter().enumerate() {
             let is_final = i == last;
-
-            if !step.result_captures.is_empty() {
-                if !is_final {
-                    return Err(format!(
-                        "{ctx}: non-final step `{}` declares result_captures; only the terminal \
-                         result can project prior captures",
-                        step.id
-                    ));
-                }
-                if !is_fixture_action(&self.action) {
-                    return Err(format!(
-                        "{ctx}: step `{}` declares result_captures outside a fixture_* setup \
-                         action",
-                        step.id
-                    ));
-                }
-                if step.result_captures.len() > MAX_KEEP {
-                    return Err(format!(
-                        "{ctx}: step `{}` result_captures has {} entries, over the cap of {MAX_KEEP}",
-                        step.id,
-                        step.result_captures.len()
-                    ));
-                }
-                for (output, capture) in &step.result_captures {
-                    if !is_ident(output) || !is_ident(capture) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures `{output}: {capture}` must use \
-                             lowercase identifiers",
-                            step.id
-                        ));
-                    }
-                    if vendored_secret_field_names().contains(output.as_str()) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures output `{output}` names a secret field",
-                            step.id
-                        ));
-                    }
-                    if !captures_before[i].contains(capture) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures references `{capture}`, which is not \
-                             produced by a prior step",
-                            step.id
-                        ));
-                    }
-                    if let Some(pointer) = http.steps[..i]
-                        .iter()
-                        .find_map(|prior| prior.capture.get(capture))
-                    {
-                        for segment in pointer.trim_start_matches("$.").split('.') {
-                            if vendored_secret_field_names().contains(segment) {
-                                return Err(format!(
-                                    "{ctx}: step `{}` result_captures source `{capture}` captures \
-                                     secret field `{segment}`",
-                                    step.id
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
 
             if !matches!(
                 step.method.as_str(),
@@ -3477,67 +3360,6 @@ impl ActionTemplate {
                         {
                             return Err(format!(
                                 "{ctx}: require entry `{r}` names a secret field `{seg}`"
-                            ));
-                        }
-                    }
-                }
-            }
-            if let Some(poll) = &step.poll {
-                let capture_bound = step.query.values().any(|value| {
-                    parse_placeholders(value).is_ok_and(|placeholders| {
-                        placeholders
-                            .iter()
-                            .any(|placeholder| all_captures.contains(&placeholder.name))
-                    })
-                });
-                if !is_fixture_action(&self.action)
-                    || !is_final
-                    || step.method != "GET"
-                    || step.graphql_query.is_some()
-                    || !step.expect_eq.is_empty()
-                    || !capture_bound
-                {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll is legal only on a setup action's final \
-                         capture-keyed GET reconciliation read",
-                        step.id
-                    ));
-                }
-                if !(2..=MAX_POLL_ATTEMPTS).contains(&poll.attempts) {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll attempts {} is outside 2..={MAX_POLL_ATTEMPTS}",
-                        step.id, poll.attempts
-                    ));
-                }
-                if poll.delay_ms == 0 || poll.delay_ms > MAX_POLL_DELAY_MS {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll delay_ms {} is outside 1..={MAX_POLL_DELAY_MS}",
-                        step.id, poll.delay_ms
-                    ));
-                }
-                if poll.until_nonempty.is_empty() || poll.until_nonempty.len() > MAX_KEEP {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll until_nonempty must list 1..={MAX_KEEP} paths",
-                        step.id
-                    ));
-                }
-                let own_secrets = self.secret_field_names();
-                for path in &poll.until_nonempty {
-                    if !is_dotted_path(path)
-                        || !step.require.iter().any(|required| required == path)
-                    {
-                        return Err(format!(
-                            "{ctx}: step `{}` poll path `{path}` must be a required dotted path",
-                            step.id
-                        ));
-                    }
-                    for segment in path.split('.') {
-                        if own_secrets.iter().any(|secret| secret == segment)
-                            || vendored_secret_field_names().contains(segment)
-                        {
-                            return Err(format!(
-                                "{ctx}: step `{}` poll path `{path}` names secret field `{segment}`",
-                                step.id
                             ));
                         }
                     }
@@ -3700,24 +3522,9 @@ impl ActionTemplate {
                             step.id, ph.name
                         ));
                     }
-                    // A query param is authority-bearing (it can steer the executed
-                    // target). A capture in a query would normally let provider RESPONSE data steer
-                    // a later request. The sole exception mirrors rule 13d: a setup action's final
-                    // read may reconcile the child from its one prior mutation. No later effect can
-                    // consume that provider-selected value.
+                    // A query param is authority-bearing: it can steer the executed target. A
+                    // capture in a query would let provider RESPONSE data steer a later request.
                     if all_captures.contains(&ph.name) {
-                        let prior_mutations: Vec<_> = http.steps[..i]
-                            .iter()
-                            .filter(|prior| !is_verification_read(prior))
-                            .collect();
-                        let terminal_setup_reconciliation = is_fixture_action(&self.action)
-                            && is_final
-                            && is_verification_read(step)
-                            && prior_mutations.len() == 1
-                            && prior_mutations[0].capture.contains_key(&ph.name);
-                        if terminal_setup_reconciliation {
-                            continue;
-                        }
                         return Err(format!(
                             "{ctx}: step `{}` query placeholder `{}` names a capture; provider \
                              response data must never steer a query",
@@ -4487,58 +4294,13 @@ pub use cermet_lang::templates::vendored_response_contract;
 /// `crates/cermet-core/actions/`. This is the shipped default set: what every broker and the
 /// non-broker [`DefaultContractSource`](crate::policy::DefaultContractSource) resolve. Adding a
 /// vendored template is a one-line addition here.
-/// A SETUP FIXTURE verb, by the one naming rule the grammar recognises. Four load rules turn on it:
-/// a fixture may project prior captures out of its terminal step (`result_captures`), may end with
-/// a capture-keyed reconciliation read after its one mutation, and may `poll` that read — because a
-/// fixture's whole job is create-then-observe against a live provider account. A product verb may
-/// not, since letting provider response data steer a later query is how one approved effect grows a
-/// second target. Two rules run the other way: a fixture may declare neither `money` nor a secret
-/// field. The name is the gate deliberately — a template cannot declare its way into the
-/// relaxations, and the shipped catalog compiles no `fixture_` document at all.
-pub(crate) fn is_fixture_action(action: &str) -> bool {
-    action.starts_with("fixture_")
-}
-
 pub use cermet_lang::templates::VENDORED_CATALOG;
 
-/// The SETUP FIXTURES: the `fixture_*` verbs the sitting harness drives to build a provider account
-/// into a known state before it exercises the product vocabulary. They are NOT product vocabulary,
-/// so they are not in [`VENDORED_CATALOG`] and a release build does not compile them in at all —
-/// their documents live under `crates/cermet-core/fixtures/`, outside the shipped catalog. A build
-/// that wants them says so: this crate's own tests get them through `cfg(test)`, an external test
-/// crate or the sitting's tree build turns on the `fixtures` feature.
-#[cfg(any(test, feature = "fixtures"))]
-pub const FIXTURE_CATALOG: &[&str] = &[
-    include_str!("../fixtures/actions/github.fixture_repositories_discover.yaml"),
-    include_str!("../fixtures/actions/github.fixture_workflow_runs_discover.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_account_discover.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_customer_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_payment_method_attach.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_refundable_charge_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_bypass_pending_charge_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_product_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_price_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_subscription_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_draft_invoice_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_webhook_endpoint_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_manual_capture_payment_intent_create.yaml"),
-    include_str!("../fixtures/actions/stripe.fixture_dispute_charge_create.yaml"),
-];
-
-/// Empty on a build that did not ask for the fixtures, so every caller composes the same way and
-/// the release binary's catalog is exactly [`VENDORED_CATALOG`].
-#[cfg(not(any(test, feature = "fixtures")))]
-pub const FIXTURE_CATALOG: &[&str] = &[];
-
-/// Every action template THIS BUILD vendors, as owned documents: the product catalog, plus the
-/// setup fixtures when the build asked for them. This is the whole set a daemon boots on — there is
-/// no on-disk catalog — so what a build compiles in is exactly what its catalog can list.
+/// Every action template this build vendors, as owned documents. This is the whole set a daemon
+/// boots on — there is no on-disk catalog — so what a build compiles in is exactly what its catalog
+/// can list.
 pub fn vendored_action_templates() -> Vec<String> {
-    VENDORED_CATALOG
-        .iter()
-        .chain(FIXTURE_CATALOG)
-        .map(|doc| doc.to_string())
-        .collect()
+    VENDORED_CATALOG.iter().map(|doc| doc.to_string()).collect()
 }
 
 /// The `catalog` verb's per-verb schema, deduplicated by `(provider, action)`: every template LOADED

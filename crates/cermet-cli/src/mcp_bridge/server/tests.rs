@@ -691,7 +691,7 @@ fn moneypath_vendored_tools_expose_only_each_actions_real_agent_inputs() {
     let expected = [
         (
             "stripe-create_payment_intent_off_session",
-            &["amount", "customer", "payment_method"][..],
+            &["amount", "capture_method", "customer", "payment_method"][..],
         ),
         (
             "stripe-confirm_payment_intent",

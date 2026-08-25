@@ -3,7 +3,7 @@ provider: stripe
 action: create_payment_intent_off_session
 binds:
   provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
-  action_template_sha256: 32cda5a326150aa220128c058da2af89d19ed389afacd02e7b134c6567fc4bec
+  action_template_sha256: 20055c8c11384ff2ecf66856c0366ac89d0cb2b40a780b642c470bcb31de9194
 semantics:
   resource_family: payment_intent
   provider_operation: create_unconfirmed

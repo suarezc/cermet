@@ -1,0 +1,25 @@
+# Charge one bounded amount against one exact already-tokenized source. The source is a value a
+# sentence pins, never a raw instrument: no card, bank, or PAN detail rides this request.
+provider: stripe
+action: create_charge_from_source
+fields:
+  - { name: source,   type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: amount,   type: int, required: true, class: side_effect, binding: bounded }
+  - { name: currency, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [source, amount, currency]
+execution_targets: [source, currency, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/charges
+      body_encoding: form
+      body:
+        amount: "{amount}"
+        currency: "{currency}"
+        source: "{source}"
+      success_statuses: [200]
+      require: [id, object, amount, currency, paid, status, livemode]
+      expect_eq: { currency: currency }
+      expect_literal: { object: charge, paid: true, status: succeeded }

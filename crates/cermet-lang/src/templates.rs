@@ -176,6 +176,16 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/stripe.retry_invoice_payment.yaml"),
     include_str!("../../cermet-core/actions/stripe.refund_charge_bounded.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_standard_payout.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_customer.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_product.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_recurring_price.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_draft_invoice.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+    include_str!("../../cermet-core/actions/stripe.attach_payment_method.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_subscription.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_charge_from_source.yaml"),
+    include_str!("../../cermet-core/actions/stripe.list_disputes.yaml"),
+    include_str!("../../cermet-core/actions/stripe.read_account.yaml"),
 ];
 
 #[derive(Deserialize)]

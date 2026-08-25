@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_draft_invoice
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 5ddbacb8902da7f983566a9a0520a19f2ad3c6ca2f6fc463063f1279f3f06d8c
+semantics:
+  resource_family: invoice
+  provider_operation: invoice_create
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one draft invoice for an exact customer that never finalizes or collects on its own.
+  cautions:
+    - auto_advance is frozen false, so no email, finalization, or collection attempt follows from this effect.
+    - Finalizing, paying, and marking uncollectible are separate grants.
+    - The description is free text, audited verbatim, and reaches the customer if the invoice is later sent.
+sources:
+  - STRIPE-INVOICE-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS
