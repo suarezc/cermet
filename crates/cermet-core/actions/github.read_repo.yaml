@@ -1,10 +1,6 @@
-# Action template for github.read_repo. One GET against the frozen owner/name.
-#
-# Downstream reads/writes anchor on the STABLE repository IDs — the
-# database `id` and the GraphQL `node_id` — rather than the mutable `full_name`. The response itself
-# is GitHub's repository body VERBATIM, retained under the declared default;
-# those IDs are simply the fields callers bind on. owner/name remain frozen execution targets (GitHub
-# offers no numeric-id contents read; the repo IS addressed by owner/name, both exact-pinned).
+# owner/name stay the execution targets because GitHub offers no numeric-id contents read: the
+# repository IS addressed by owner/name. Downstream reads and writes anchor on the stable `id` and
+# `node_id` the response carries, never on the mutable `full_name`.
 provider: github
 action: read_repo
 fields:

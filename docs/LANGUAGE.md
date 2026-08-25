@@ -62,6 +62,16 @@ An agent may safely:
 An agent must never claim that a file edit is live, invoke operator authority commands as approval,
 or ask for raw credentials.
 
+### 2a. The corpus invariant
+
+**Every verb a sentence can name is a verb the catalog lists.** The catalog projection hides nothing
+the broker loaded, and a build vendors exactly the verbs it can serve — so an agent can never read
+standing authority for a verb it cannot find in the dictionary, and then execute it by name anyway.
+The two sets are one set: no surface may narrow either without narrowing the other. A sentence
+naming a verb this build does not hold resolves no contract, so `doc check` and `doc apply` refuse
+the whole document (`unresolved verb <provider>.<action>`, with or without a `where` clause), and a
+request for it denies as an unknown verb rather than as an authority gap.
+
 ### 3. Sentence grammar
 
 One non-comment line is one rule:
@@ -263,6 +273,7 @@ field_formats:
   - git_branch_name
   - git_branch_ref
   - git_oid
+  - git_tag_name
   - https_url
   - uint
 targetless_query_shapes:
@@ -377,8 +388,10 @@ One **optional** field key exists beyond those:
   no whitespace, controls, backslash, or fragment), `uint`, `git_branch_ref` (requires
   `refs/heads/<branch>`), or
   `git_branch_name` (requires a bare same-repository branch and rejects GitHub's cross-repository
-  `user:branch` syntax). It tightens what a field will accept at admission; it adds no authority and
-  is not a policy input.
+  `user:branch` syntax), or `git_tag_name` (the component after `refs/tags/`: git's refname rules are
+  one set for every namespace, so the predicate is `git_branch_name`'s — the shape is separate
+  because the field addresses a different namespace and a refusal must name the right one). It
+  tightens what a field will accept at admission; it adds no authority and is not a policy input.
 
 ### Field classes (the authority axis)
 
@@ -445,9 +458,8 @@ included in the frozen resource; sentence authors choose whether to constrain ea
    `query_literal` — injected filter content must never rewrite the query's meaning; a placeholder that
    is the whole value has no DSL around it and rides plain.
 
-Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter),
-`stripe.fixture_account_discover` (fieldless discovery), `vercel.list_projects` (whole-value
-optional filter):
+Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter) and
+`vercel.list_projects` (whole-value optional filter):
 
 ```yaml
 fields:
@@ -644,7 +656,7 @@ unknown-field error, so the absence is enforced by the loader rather than merely
 | **success** | the provider's parsed JSON body, **unchanged** — array, object, or scalar |
 | **failure** | `{"status": <http status>, "error": <the provider's body>}` — the status is *added* evidence, never a narrowing |
 | **artifact** | the same bytes, stored under the step's `retention` (below) |
-| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a setup verb's declared `result_captures`, a GraphQL step's `outcome`/`conflict` verdict. Absent for an ordinary verb |
+| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a GraphQL step's `outcome`/`conflict` verdict, or a setup fixture's declared `result_captures` (fixtures are a test-build vocabulary and are absent from a shipped catalog). Absent for an ordinary verb |
 | **postcondition failure** | `{"outcome": ..., "provider_proof": <the provider's body>}` — a mismatch after the effect boundary is exactly when you need everything the provider said |
 
 This holds for **money** verbs too. A money success returns the verified object — its own provider
@@ -658,7 +670,7 @@ operator enables in a rule** — never a descriptor-buried list invisible to the
 today **zero such classes exist**.
 
 **Where broker-authored metadata goes.** Two things legitimately need to reach the agent next to
-the body: a setup verb's declared `result_captures` (values the broker observed on an EARLIER step,
+the body: a setup fixture's declared `result_captures` (values the broker observed on an EARLIER step,
 which are not in this body at all) and a GraphQL step's classified `outcome`/`conflict` verdict.
 They ride a **sibling `envelope` field on the receipt**, never inside the provider's JSON.
 Writing them into the body would have made receipt result ≠ stored artifact ≠ wire body,
@@ -897,7 +909,7 @@ and names what to run instead.
 A `git:` template may extend only a provider whose ratified descriptor pins a git origin:
 
 ```yaml
-# providers.d/github.yaml
+# the vendored github provider descriptor
 git:
   origin: https://github.com          # a bare scheme+host[:port] https origin
   auth: basic:x-access-token          # how the vault credential is presented
@@ -912,7 +924,7 @@ so a read has something current to serve.
 git:
   push:
     remote_path: "/{owner}/{name}.git"   # a PATH under the descriptor's git origin, never an origin
-    branch:  branch                      # field naming the branch to advance
+    branch:  branch                      # field naming the branch to advance (or `tag:`, never both)
     new_oid: new_oid                     # field naming git's `new` from the hook tuple
     mirror_old_oid: mirror_old_oid       # OPTIONAL: git's `old` — the MIRROR's tip, not the upstream's
 ```
@@ -923,9 +935,17 @@ class/binding/format the validator enforces:
 | slot | required | type | class | binding | format |
 |---|---|---|---|---|---|
 | `remote_path` placeholders | yes | `str` | `identity` | `exact_resource_pin` | — |
-| `branch` | yes | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `branch` | one of | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `tag` | one of | `str` | `identity` | `exact_resource_pin` | `git_tag_name` |
 | `new_oid` | yes | `str` | `identity` | `exact_resource_pin` | `git_oid` |
 | `mirror_old_oid` | **no** | `str` | `identity` | `exact_resource_pin` | `git_oid` |
+
+A push step names EXACTLY ONE of `branch` and `tag` — the two ref namespaces that have vocabulary —
+and the validator refuses both or neither. They are separate because sentence bounds are conjunctive
+over a verb's own fields: a standing `allow github.push where owner = … and name = …` is a BRANCH
+authority, and if tags rode the same word that sentence would silently start admitting them. A
+release's tag therefore needs its own sentence, naming its own version. Every other ref namespace
+(`refs/notes/`, `refs/pull/`, …) has no vocabulary at all, and the update hook refuses it by name.
 
 A `fetch` step declares only `remote_path`:
 

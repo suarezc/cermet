@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: request_deployment
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: 63b2329dac15a43a230986fd1ff7ea27e5318adc9119c18542fb7d93c79d3a0b
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: e7c6873978d1c5a3027835d591757fd8edd49f584ea9aa76dda91cf83e680ed7
 semantics:
   resource_family: deployment
   provider_operation: deployment_request_create

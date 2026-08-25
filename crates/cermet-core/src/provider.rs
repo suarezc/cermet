@@ -2325,8 +2325,8 @@ pub use cermet_lang::provider::{
 };
 
 /// Every provider descriptor vendored with the core (one `include_str!` per file in
-/// `crates/cermet-core/providers/`). This is the shipped set `demo-up`/`dist` seed into the daemon's
-/// `providers.d`; github and vercel are ordinary ratified data here, no longer compiled-in structs.
+/// `crates/cermet-core/providers/`). This is the shipped set every daemon boots with; github and
+/// vercel are ordinary ratified data here, no longer compiled-in structs.
 pub const VENDORED_PROVIDERS: &[&str] = &[
     include_str!("../providers/github.yaml"),
     include_str!("../providers/vercel.yaml"),
@@ -2589,7 +2589,20 @@ impl GenericProvider {
                 "a git verb declares no step (the validator refuses this shape)".into(),
             ));
         };
-        let branch = call.resource.req_str(&step.branch)?;
+        // The verb's own namespace, from the slot it declared. The runner never guesses: a
+        // `branch:` verb moves `refs/heads/`, a `tag:` verb moves `refs/tags/`, and the fully
+        // qualified name is what both the hop and the receipt carry.
+        let refname = match (&step.branch, &step.tag) {
+            (Some(branch), None) => format!("refs/heads/{}", call.resource.req_str(branch)?),
+            (None, Some(tag)) => format!("refs/tags/{}", call.resource.req_str(tag)?),
+            _ => {
+                return Err(Error::Provider(
+                    "a git push step names exactly one ref namespace (the validator refuses this \
+                     shape)"
+                        .into(),
+                ));
+            }
+        };
         let new_oid = call.resource.req_str(&step.new_oid)?;
         let mirror_old_oid =
             step.mirror_old_oid
@@ -2605,7 +2618,7 @@ impl GenericProvider {
             &url,
             Some(&credential),
             new_oid,
-            branch,
+            &refname,
         )?;
 
         // The receipt is DERIVED from broker-held data — the hook's frozen tuple plus the
@@ -2618,10 +2631,10 @@ impl GenericProvider {
         // it is a different fact: the tip the daemon's mirror held. With no fetch refresh the two
         // legitimately differ (a third party's direct push; a re-created mirror after aging), and
         // conflating them made the receipt misstate the transition.
-        let transition = crate::git::parse_upstream_transition(&run.stdout, branch);
+        let transition = crate::git::parse_upstream_transition(&run.stdout, &refname);
         let result = json!({
             "repository": repository,
-            "ref": format!("refs/heads/{branch}"),
+            "ref": refname,
             "new_oid": new_oid,
             "upstream_old_oid": transition.as_ref().and_then(|t| t.from.clone()),
             "upstream_created_ref": transition.as_ref().map(|t| t.created),

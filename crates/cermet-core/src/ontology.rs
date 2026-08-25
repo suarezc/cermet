@@ -405,6 +405,10 @@ impl OntologyArtifacts {
             include_str!("../actions/github.push.yaml"),
         );
         templates.insert(
+            ("github", "push_tag"),
+            include_str!("../actions/github.push_tag.yaml"),
+        );
+        templates.insert(
             ("github", "fetch"),
             include_str!("../actions/github.fetch.yaml"),
         );
@@ -420,6 +424,18 @@ impl OntologyArtifacts {
         templates.insert(
             ("github", "read_job_log"),
             include_str!("../actions/github.read_job_log.yaml"),
+        );
+        templates.insert(
+            ("github", "read_releases"),
+            include_str!("../actions/github.read_releases.yaml"),
+        );
+        templates.insert(
+            ("github", "read_workflow_runs"),
+            include_str!("../actions/github.read_workflow_runs.yaml"),
+        );
+        templates.insert(
+            ("github", "publish_release"),
+            include_str!("../actions/github.publish_release.yaml"),
         );
         templates.insert(
             ("github", "create_issue"),
@@ -564,7 +580,7 @@ impl OntologyArtifacts {
 
 /// The V1 ontology records vendored with the core, one `include_str!` per file in
 /// `crates/cermet-core/ontology/`: six read GitHub records (repo/ref/tree/blob/thread/PR), the
-/// git-native `push`, the GitHub guarded-writes-and-automation set (two Actions reads —
+/// git-native `push` and `push_tag`, the GitHub guarded-writes-and-automation set (two Actions reads —
 /// `read_workflow_run` plus `read_workflow_run_jobs` —
 /// plus seven durable-broker-only writes — create_branch/create_issue/comment_thread/
 /// create_pull_request_review/request_workflow_cancel/dispatch_workflow/
@@ -589,6 +605,8 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/github.read_pull_request.yaml"),
     // the system-git carrier verb.
     include_str!("../ontology/github.push.yaml"),
+    // The tag namespace's own word: a branch sentence never widens onto it.
+    include_str!("../ontology/github.push_tag.yaml"),
     include_str!("../ontology/github.fetch.yaml"),
     // GitHub guarded writes and automation: the two Actions reads plus seven guarded
     // writes. All run on the durable daemon (there is no separate daemonless surface).
@@ -599,6 +617,10 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     // The minted-URL read that ends the diagnosis ladder — the broker spends the credential to mint
     // a ~60s log URL, native curl moves the bytes.
     include_str!("../ontology/github.read_job_log.yaml"),
+    // The release plane: find the run for a pushed commit, find the draft, publish it.
+    include_str!("../ontology/github.read_workflow_runs.yaml"),
+    include_str!("../ontology/github.read_releases.yaml"),
+    include_str!("../ontology/github.publish_release.yaml"),
     include_str!("../ontology/github.create_branch.yaml"),
     include_str!("../ontology/github.create_issue.yaml"),
     include_str!("../ontology/github.comment_thread.yaml"),

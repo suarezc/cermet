@@ -61,7 +61,8 @@ agent uid.
 **The socket dirs differ by platform**, and everything below that names one is showing the macOS
 arm: Linux uses `/run/cermetd` (operator + git) and `/run/cermetd-agents` (agent bridge); macOS uses
 `/var/cermetd` and `/var/cermetd-agents`. Substitute accordingly. The install prefix differs too —
-macOS publishes into `/opt/cermet/bin`, the Linux package into `/usr/bin`.
+macOS publishes into `/opt/cermet/bin`, the Linux package into `/usr/bin`. The verb catalog is
+compiled into the binary — there is no catalog directory on disk to seed, edit, or keep in sync.
 
 It also chooses this box's **vault-key custody**, and tells you which it chose. Cermet takes the
 strongest mechanism the machine can actually carry, and never one it cannot:

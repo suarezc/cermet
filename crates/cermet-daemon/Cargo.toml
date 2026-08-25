@@ -63,7 +63,7 @@ bytes = "1"
 [dev-dependencies]
 # `test-double`: the agent-socket tests drive a real broker over the offline mock providers.
 # Dev-deps are invisible to the production build, so no mock ships in cermetd.
-cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress"] }
+cermet-core = { path = "../cermet-core", features = ["test-double", "test-egress", "fixtures"] }
 tempfile = "3"
 wiremock = "0.6"
 # Read `state.db` directly to assert the session lifecycle. Test-only; matches the

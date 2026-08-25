@@ -64,7 +64,7 @@ When the verb executes in-core, the receipt is the execution result.
 | `effect_outcome` | The authenticated disposition of the effect (see §1.6). Derived only from chain-verified execution evidence; a caller can neither submit nor override it. |
 | `envelope` | The broker-authored half of the receipt, kept strictly outside the verbatim `result`. Always present. |
 | `envelope.request_id` | Stamped at the one broker seam that authors the envelope, so no verb can mint a receipt whose request cannot be chased with `cermet log <request_id>`. |
-| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a setup verb's declared `result_captures` (values observed on an *earlier* step, which were never in this body) and a GraphQL step's classified outcome/conflict verdict. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
+| `envelope.*` (other keys) | Per-verb broker metadata that deliberately does not live in `result`: a setup fixture's declared `result_captures` (values observed on an *earlier* step, which were never in this body; fixtures are a test-build vocabulary and are absent from a shipped catalog) and a GraphQL step's classified outcome/conflict verdict. Empty for most verbs. Injecting them into `result` would make the receipt disagree with the stored artifact. |
 
 ### 1.3 The relay object
 
@@ -441,14 +441,13 @@ Default zoom:
 `--all`:
 
 ```
-  <provider>.<action>  [<authority stamp>] class:<class> shape:<shape>
+  <provider>.<action>  [<authority stamp>] shape:<shape>
 ```
 
 | part | meaning |
 |---|---|
 | `provider.action` | The verb, dotted exactly as a sentence spells it. |
 | field list (default zoom) | Only the fields you actually supply on a request — provider-resolved fields are filtered out, because they are not yours to send. |
-| `class` | The verb's catalog class. `corpus` is the only value that reaches either surface: broker self-test plumbing is classified separately and stripped before rendering. |
 | `shape` | How the verb executes (§3.2). In the default zoom it is rendered bracketed and alone. |
 | authority stamp | What the live corpus says about this verb, in the `--all` zoom (§3.4). |
 
@@ -458,7 +457,7 @@ Default zoom:
 |---|---|
 | `http_api_call` | The daemon constructs and sends an outbound HTTP request itself, with the credential attached inside the trusted runtime. |
 | `http_inline_upload` | The same execution, where a declared `free_payload` field's bytes are embedded directly in the outbound body. |
-| `git_push` | Not reached through a request at all. The verb is exercised by running native `git push` / `git fetch` against a broker-wired remote; the daemon carries the stream to a pinned upstream. Every entry with this shape prints the wiring command beside it: `git remote set-url origin cermet::github/<owner>/<repo>`. |
+| `git_push` | Not reached through a request at all. The verb is exercised by running native `git push` / `git fetch` against a broker-wired remote; the daemon carries the stream to a pinned upstream. Branch pushes, tag pushes, and fetches all carry this shape — which ref namespace a verb moves is its own vocabulary, not a second shape. Every entry with this shape prints the wiring command beside it: `git remote set-url origin cermet::github/<owner>/<repo>`. |
 | `relay` | The verb mints a scoped session and credentials a native CLI's *own* outbound requests through a loopback relay. No provider call happens at request or execute time — the effect is the session (§1.3). |
 
 A verb whose shape the daemon did not report renders as `shape:unknown` in the default zoom, and
@@ -485,8 +484,7 @@ absence at request time; there is no execute-time fill.
 
 **`type`**: `str`, `int`, or `bool`.
 
-**`class`** — what kind of authority the field carries. Note this is a different axis from the
-verb-level `class:` above, which happens to share the word.
+**`class`** — what kind of authority the field carries.
 
 | value | meaning |
 |---|---|
@@ -1518,11 +1516,10 @@ At the moment it refuses, the relay already holds the frozen field map, the offe
 shape inventory. Disclosure is saying what it already holds: no new authority, no new state. Every
 value a refusal names is one of four things:
 
-- **Descriptor text** — the ratified verb's own `method`/`path` patterns, read out of the template
-  document the installer publishes world-readable under the shared catalog directory
-  (`.../share/cermet/catalog/actions.d/<provider>.<action>.yaml`). Anyone who can reach the loopback
-  door can already read it. (`cermet catalog` is *not* that surface: it projects a verb's fields and
-  bounds, not its relay predicate.)
+- **Descriptor text** — the ratified verb's own `method`/`path` patterns, vendored into the
+  world-readable `cermet` binary. Anyone who can reach the loopback door can already read it.
+  (`cermet catalog` is *not* that surface: it projects a verb's fields and bounds, not its relay
+  predicate.)
 - **A field *this* caller's own approval froze.**
 - **A value off the hop *this* caller just wrote.**
 - **A value *this* caller's own session already received** — a capture taken from the response to

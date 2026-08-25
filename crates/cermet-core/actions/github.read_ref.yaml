@@ -1,10 +1,5 @@
-# Action template for github.read_ref. Resolve one fully-qualified Git ref
-# on the frozen repository to its current object OID and type. Addressing is frozen identity: owner,
-# name, and the exact ref (e.g. `heads/main`, `tags/v1`). `ref` is slash-bearing URL authority, so it
-# is path-mode `path` AND an execution target — an allow must pin it, never leave it wildcard.
-#
-# The read returns the object OID and type only (plus node_id) — the immutable handle a later
-# read_tree/read_blob is addressed by.
+# `ref` is slash-bearing URL authority (`heads/main`, `tags/v1`), so it is path-mode AND an
+# execution target — an allow must pin it, never leave it wildcard.
 provider: github
 action: read_ref
 fields:

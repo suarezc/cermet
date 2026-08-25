@@ -549,7 +549,7 @@ fn the_hop_carries_the_mirrors_objects_to_a_local_upstream() {
         &format!("file://{}", upstream.display()),
         None,
         &oid,
-        "main",
+        "refs/heads/main",
     )
     .expect("the hop lands");
     assert_eq!(f.ref_of(&upstream, "main").as_deref(), Some(oid.as_str()));
@@ -564,7 +564,7 @@ fn the_upstreams_own_fast_forward_rule_is_the_concurrency_control() {
     let upstream = f.bare("upstream.git");
     let url = format!("file://{}", upstream.display());
     f.git(&src, &["push", "-q", mirror.to_str().unwrap(), "main"]);
-    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "main").unwrap();
+    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "refs/heads/main").unwrap();
 
     // Somebody else advanced the upstream out from under us.
     std::fs::write(src.join("README.md"), "theirs\n").unwrap();
@@ -590,7 +590,7 @@ fn the_upstreams_own_fast_forward_rule_is_the_concurrency_control() {
         ],
     );
 
-    let error = carry_to_upstream(&f.cfg, &mirror, &url, None, &ours, "main")
+    let error = carry_to_upstream(&f.cfg, &mirror, &url, None, &ours, "refs/heads/main")
         .expect_err("a non-fast-forward is the upstream's refusal, not ours");
     assert!(format!("{error}").contains("upstream refused"), "{error}");
     assert_eq!(
@@ -615,7 +615,7 @@ fn the_hop_creates_a_branch_that_does_not_exist_upstream_yet() {
         &format!("file://{}", upstream.display()),
         None,
         &oid,
-        "feature/brand-new",
+        "refs/heads/feature/brand-new",
     )
     .expect("creating is the same effect as advancing");
     assert_eq!(
@@ -632,7 +632,7 @@ fn the_hop_creates_a_branch_that_does_not_exist_upstream_yet() {
 fn the_upstream_transition_parser_reads_every_shape_git_emits() {
     let created = parse_upstream_transition(
         b"To file:///x\n*\t1111111111111111111111111111111111111111:refs/heads/main\t[new branch]\nDone\n",
-        "main",
+        "refs/heads/main",
     )
     .expect("a creation parses");
     assert!(created.created);
@@ -641,7 +641,8 @@ fn the_upstream_transition_parser_reads_every_shape_git_emits() {
     let from = "a".repeat(40);
     let to = "b".repeat(40);
     let line = format!("To file:///x\n \t{to}:refs/heads/main\t{from}..{to}\nDone\n");
-    let updated = parse_upstream_transition(line.as_bytes(), "main").expect("an update parses");
+    let updated =
+        parse_upstream_transition(line.as_bytes(), "refs/heads/main").expect("an update parses");
     assert!(!updated.created);
     assert_eq!(updated.from.as_deref(), Some(from.as_str()));
 
@@ -649,21 +650,28 @@ fn the_upstream_transition_parser_reads_every_shape_git_emits() {
     // `from` stays absent rather than borrowing the mirror's tip for it.
     let deleted = parse_upstream_transition(
         b"To file:///x\n-\t:refs/heads/main\t[deleted]\nDone\n",
-        "main",
+        "refs/heads/main",
     )
     .expect("a deletion parses");
     assert!(deleted.deleted);
     assert!(!deleted.created);
     assert_eq!(deleted.from, None);
 
-    // A different branch's line is not this branch's transition.
-    assert!(parse_upstream_transition(line.as_bytes(), "other").is_none());
+    // A different branch's line is not this branch's transition, and neither is a same-named TAG's:
+    // the refname is fully qualified, so the two namespaces can never be read for one another.
+    assert!(parse_upstream_transition(line.as_bytes(), "refs/heads/other").is_none());
+    assert!(parse_upstream_transition(line.as_bytes(), "refs/tags/main").is_none());
+    let tag_line = "To file:///x\n*\t1111111111111111111111111111111111111111:refs/tags/v1.0.0\t[new tag]\nDone\n";
+    let tagged = parse_upstream_transition(tag_line.as_bytes(), "refs/tags/v1.0.0")
+        .expect("a tag creation parses");
+    assert!(tagged.created);
+    assert_eq!(tagged.from, None);
     // An abbreviated oid is not an identity: refuse rather than record a partial value.
     let abbrev = "To file:///x\n \tb:refs/heads/main\t2069e9f..e77fabe\nDone\n";
-    assert!(parse_upstream_transition(abbrev.as_bytes(), "main").is_none());
+    assert!(parse_upstream_transition(abbrev.as_bytes(), "refs/heads/main").is_none());
     // Garbage yields None, never a fabricated oid.
-    assert!(parse_upstream_transition(b"", "main").is_none());
-    assert!(parse_upstream_transition(b"To x\nDone\n", "main").is_none());
+    assert!(parse_upstream_transition(b"", "refs/heads/main").is_none());
+    assert!(parse_upstream_transition(b"To x\nDone\n", "refs/heads/main").is_none());
 }
 
 #[test]
@@ -679,7 +687,7 @@ fn the_hop_reports_the_upstreams_from_oid_not_the_mirrors_tip() {
 
     // Both start at `first`; the mirror stops here (there is no fetch refresh).
     f.git(&src, &["push", "-q", mirror.to_str().unwrap(), "main"]);
-    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "main").unwrap();
+    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "refs/heads/main").unwrap();
 
     // A third party pushes `theirs` straight to the upstream.
     std::fs::write(src.join("theirs.txt"), "theirs\n").unwrap();
@@ -700,8 +708,8 @@ fn the_hop_reports_the_upstreams_from_oid_not_the_mirrors_tip() {
         "the mirror fast-forwards first..ours"
     );
 
-    let run = carry_to_upstream(&f.cfg, &mirror, &url, None, &ours, "main").unwrap();
-    let transition = parse_upstream_transition(&run.stdout, "main")
+    let run = carry_to_upstream(&f.cfg, &mirror, &url, None, &ours, "refs/heads/main").unwrap();
+    let transition = parse_upstream_transition(&run.stdout, "refs/heads/main")
         .expect("the porcelain line names the upstream's transition");
     assert_eq!(
         transition.from.as_deref(),
@@ -725,17 +733,17 @@ fn the_hop_carries_a_zero_oid_as_gits_own_delete_refspec() {
     let url = format!("file://{}", upstream.display());
 
     f.git(&src, &["push", "-q", mirror.to_str().unwrap(), "main"]);
-    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "main").unwrap();
+    carry_to_upstream(&f.cfg, &mirror, &url, None, &first, "refs/heads/main").unwrap();
     assert_eq!(f.ref_of(&upstream, "main").as_deref(), Some(first.as_str()));
 
     // The hook's `new` for a deletion IS the zero oid; the hop spells that as git spells it.
-    let run = carry_to_upstream(&f.cfg, &mirror, &url, None, NULL_OID, "main").unwrap();
+    let run = carry_to_upstream(&f.cfg, &mirror, &url, None, NULL_OID, "refs/heads/main").unwrap();
     assert_eq!(
         f.ref_of(&upstream, "main"),
         None,
         "the ref is gone from the upstream"
     );
-    let transition = parse_upstream_transition(&run.stdout, "main")
+    let transition = parse_upstream_transition(&run.stdout, "refs/heads/main")
         .expect("the porcelain line names the deletion it performed");
     assert!(transition.deleted);
 }
@@ -1218,7 +1226,7 @@ fn a_push_the_upstream_refuses_on_credentials_reads_the_same_way() {
         url,
         Some(&cred),
         &"a".repeat(40),
-        "main",
+        "refs/heads/main",
     )
     .expect_err("a refused push is a refusal");
     let text = format!("{error}");
@@ -1323,7 +1331,15 @@ fn every_upstream_invocation_carries_the_credential_scoped_to_that_url() {
     // The three ways this daemon ever touches an upstream. The first is the one a virgin mirror
     // runs — mirror creation and mirror refresh are the same call, so this covers both.
     refresh_from_upstream(&cfg, &mirror, url, Some(&cred)).expect("refresh");
-    carry_to_upstream(&cfg, &mirror, url, Some(&cred), &"a".repeat(40), "main").expect("push");
+    carry_to_upstream(
+        &cfg,
+        &mirror,
+        url,
+        Some(&cred),
+        &"a".repeat(40),
+        "refs/heads/main",
+    )
+    .expect("push");
     upstream_head_branch(&cfg, url, Some(&cred)).expect("ls-remote");
 
     let log = std::fs::read_to_string(mirror.join("invocations.log")).expect("the recorder ran");

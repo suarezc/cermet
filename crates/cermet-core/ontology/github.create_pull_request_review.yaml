@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: create_pull_request_review
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: 754fc386dccea6253b2ad47813f2d9c5ae25d4d9b448c61d79897c426a60653e
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 01cef259b63ce3996c2d1fbb553dac8505d7d40f14ae96fc738b00dde1b5846b
 semantics:
   resource_family: pull_request_review
   provider_operation: review_comment_submit

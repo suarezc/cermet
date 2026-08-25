@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: publish_release
+binds:
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 6b685d0d11248da29d05f5bc43dfd8f85ac3ca68a3b3b1d0629e89ef9b153d07
+semantics:
+  resource_family: release
+  provider_operation: release_publish
+  risk_class: external_state_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Publish one existing draft release on a pinned repository, proving first that it is the draft for the pinned tag.
+  cautions:
+    - The effect is externally visible the moment it lands - the release becomes public, feeds the repository's release feed, and is what an update client resolves.
+    - Compensatable, not reversible - the same endpoint can set draft back to true, but consumers that already fetched the published release are not recalled.
+    - release_id is agent-supplied; the tag is what a sentence pins, and step one refuses before the write if the id names a different tag or an already-published release.
+    - A repeat against an already-published release fails the draft precondition rather than publishing twice.
+    - The notes body is agent-authored free payload, frozen in the request and audited verbatim before approval.
+    - Assets are not vocabulary here; the published bytes are the ones the build attached to the draft.
+sources:
+  - GH-REST-RELEASES
+  - GH-REST-BEST-PRACTICES

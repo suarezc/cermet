@@ -1,15 +1,5 @@
-# Bind ONE exact repository before any sitting mutation: owner/name are exact-pinned identity
-# execution targets and the frozen GraphQL document reads that single repository, returning its
-# stable database id, canonical `nameWithOwner`, and default branch with the head OID a later
-# create_branch/push_commit is anchored to. `viewer { login }` rides along so the read also proves
-# which authenticated principal the credential is.
-#
-# This replaced an account-wide repository SEARCH for a `cermet-sitting-` name prefix. That search
-# could not address a designated sandbox whose name does not follow the convention, and an
-# inventory search is a strictly wider shape than a pinned read — it enumerated the principal's
-# repositories to answer a question about one of them. The action name is unchanged so the verb is
-# not retired and re-added; the read is now exact.
-# Retention follows the declared catalog default: the body is retained, verbatim.
+# `viewer { login }` rides along so the read also proves WHICH authenticated principal the
+# credential is, not merely that the pinned repository resolves.
 provider: github
 action: fixture_repositories_discover
 fields:

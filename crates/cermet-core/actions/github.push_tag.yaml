@@ -1,0 +1,28 @@
+# NOT requestable: the decision is git's own `update` hook running on the daemon's mirror, driven by
+# a plain `git push origin <tag>`. The request path refuses the verb and says so.
+# Tags get their OWN verb so a standing branch sentence never widens onto the namespace a forge's
+# release automation triggers on. There is no prefix match in the grammar, so the operator writes
+# one sentence per version and that sentence is the human act of the release.
+# `mirror_old_oid` is the MIRROR's tip and is normally absent here, because the refresh mirrors
+# branches only. It is not a compare-and-swap: the upstream refuses to move an existing tag under a
+# plain push, and that refusal is the concurrency control.
+# `new_oid` is the pushed object's own id — an annotated tag is never peeled, so its signature and
+# message ride byte-identical. Deleting a tag is this verb at the zero oid, under the same sentence.
+# The receipt is derived from `git push --porcelain`: the upstream's old oid rides beside the
+# mirror's, separately labelled, because they legitimately differ.
+provider: github
+action: push_tag
+fields:
+  - { name: owner,   type: str, required: true,  class: identity, binding: exact_resource_pin }
+  - { name: name,    type: str, required: true,  class: identity, binding: exact_resource_pin }
+  - { name: tag,     type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_tag_name }
+  - { name: new_oid, type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_oid }
+  - { name: mirror_old_oid, type: str, required: false, class: identity, binding: exact_resource_pin, format: git_oid }
+consumes: [owner, name, tag, new_oid, mirror_old_oid]
+execution_targets: [owner, name, tag]
+git:
+  push:
+    remote_path: "/{owner}/{name}.git"
+    tag: tag
+    new_oid: new_oid
+    mirror_old_oid: mirror_old_oid

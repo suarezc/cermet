@@ -1,8 +1,0 @@
-# Stripe v1 provider descriptor. The credential can ride only to Stripe's exact API origin and is
-# injected as a bearer token inside the core HTTP boundary.
-name: stripe
-egress:
-  - https://api.stripe.com
-auth: bearer
-headers:
-  Stripe-Version: 2026-06-24.dahlia

@@ -29,7 +29,8 @@ struct SessionActorRow {
 impl Broker {
     /// Fail-closed contract resolution for a grant READ view — the read-path companion to the
     /// execute gate. A grant whose frozen `template_hash` no longer matches the live
-    /// template (the actions.d file was removed OR edited) must NOT render its frozen resource, since
+    /// template (this build vendors different bytes than the one that minted the grant) must NOT
+    /// render its frozen resource, since
     /// a since-declassified field would otherwise leak raw.
     pub(super) fn frozen_contract(
         &self,

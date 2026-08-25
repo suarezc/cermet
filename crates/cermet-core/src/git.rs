@@ -843,18 +843,21 @@ pub struct UpstreamTransition {
     pub deleted: bool,
 }
 
-/// Parse the one `--porcelain` status line for `refs/heads/<branch>`.
+/// Parse the one `--porcelain` status line for `refname`, which is FULLY QUALIFIED
+/// (`refs/heads/main`, `refs/tags/v1.0.0`) — the same string the update hook reported, so a tag and
+/// a same-named branch can never be confused for one another.
 ///
-/// The three shapes git emits (verified against git 2.53, `core.abbrev=no` so the oids are full):
+/// The shapes git emits (verified against git 2.53, `core.abbrev=no` so the oids are full):
 ///   ` \t<src>:refs/heads/main\t<from>..<to>`   — an update
 ///   `*\t<src>:refs/heads/main\t[new branch]`   — a creation
+///   `*\t<src>:refs/tags/v1\t[new tag]`         — a creation in the tag namespace
 ///   `-\t:refs/heads/main\t[deleted]`           — a deletion
 /// Anything else yields `None` rather than a guess: an unparsed line means the receipt says
 /// "unknown", never a fabricated oid. A deletion's `from` is `None` because git's own line carries
 /// no oid for it — the tip the daemon held is a separate, separately-labelled fact.
-pub fn parse_upstream_transition(stdout: &[u8], branch: &str) -> Option<UpstreamTransition> {
+pub fn parse_upstream_transition(stdout: &[u8], refname: &str) -> Option<UpstreamTransition> {
     let text = String::from_utf8_lossy(stdout);
-    let want = format!("refs/heads/{branch}");
+    let want = refname;
     for line in text.lines() {
         // `To <url>` and `Done` have no tab-separated refspec; skip them rather than aborting the
         // scan (a `?` here would return None for the whole output).
@@ -863,7 +866,7 @@ pub fn parse_upstream_transition(stdout: &[u8], branch: &str) -> Option<Upstream
             continue;
         };
         let summary = fields.next().unwrap_or_default();
-        if refspec.split(':').nth(1) != Some(want.as_str()) {
+        if refspec.split(':').nth(1) != Some(want) {
             continue;
         }
         if summary.starts_with("[new") {
@@ -919,10 +922,10 @@ pub fn carry_to_upstream(
     upstream_url: &str,
     credential: Option<&GitCredential>,
     new_oid: &str,
-    branch: &str,
+    refname: &str,
 ) -> Result<GitRun> {
     let source = if new_oid == NULL_OID { "" } else { new_oid };
-    let refspec = format!("{source}:refs/heads/{branch}");
+    let refspec = format!("{source}:{refname}");
     let run = run(
         cfg,
         Some(mirror),

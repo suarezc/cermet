@@ -31,35 +31,18 @@ pub enum CatalogShape {
     HttpApiCall,
     /// The subprocess execution shape: the client's own packfile, arriving over the attested git
     /// stream, is carried to a pinned git remote by the hermetic system-git seam, advancing one
-    /// branch.
+    /// ref. Which ref NAMESPACE a verb moves (a branch, a tag) is the verb's own vocabulary; the
+    /// execution shape is the same.
     GitPush,
     /// The verb credentials a native client's own requests through the loopback relay instead of
     /// constructing any request itself.
     Relay,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CatalogClass {
-    Corpus,
-    Setup,
-}
-
-impl CatalogClass {
-    pub fn from_action(action: &str) -> Self {
-        if action.starts_with("fixture_") {
-            Self::Setup
-        } else {
-            Self::Corpus
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogEntry {
     pub provider: String,
     pub action: String,
-    pub class: CatalogClass,
     pub fields: Vec<CatalogField>,
     pub execution_targets: Vec<String>,
     pub requestable: bool,
@@ -140,7 +123,11 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/github.read_workflow_run.yaml"),
     include_str!("../../cermet-core/actions/github.read_workflow_run_jobs.yaml"),
     include_str!("../../cermet-core/actions/github.read_job_log.yaml"),
+    include_str!("../../cermet-core/actions/github.read_releases.yaml"),
+    include_str!("../../cermet-core/actions/github.read_workflow_runs.yaml"),
+    include_str!("../../cermet-core/actions/github.publish_release.yaml"),
     include_str!("../../cermet-core/actions/github.push.yaml"),
+    include_str!("../../cermet-core/actions/github.push_tag.yaml"),
     include_str!("../../cermet-core/actions/github.fetch.yaml"),
     include_str!("../../cermet-core/actions/github.create_issue.yaml"),
     include_str!("../../cermet-core/actions/github.comment_thread.yaml"),
@@ -153,8 +140,6 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/github.merge_pull_request.yaml"),
     include_str!("../../cermet-core/actions/github.update_pull_request.yaml"),
     include_str!("../../cermet-core/actions/github.read_secret_scanning_alerts_open.yaml"),
-    include_str!("../../cermet-core/actions/github.fixture_repositories_discover.yaml"),
-    include_str!("../../cermet-core/actions/github.fixture_workflow_runs_discover.yaml"),
     // The first `execution: relay` verb.
     include_str!("../../cermet-core/actions/vercel.deploy.yaml"),
     include_str!("../../cermet-core/actions/vercel.list_projects.yaml"),
@@ -191,20 +176,6 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/stripe.retry_invoice_payment.yaml"),
     include_str!("../../cermet-core/actions/stripe.refund_charge_bounded.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_standard_payout.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_account_discover.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_customer_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_payment_method_attach.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_refundable_charge_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_bypass_pending_charge_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_product_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_price_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_subscription_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_draft_invoice_create.yaml"),
-    include_str!("../../cermet-core/actions/stripe.fixture_webhook_endpoint_create.yaml"),
-    include_str!(
-        "../../cermet-core/actions/stripe.fixture_manual_capture_payment_intent_create.yaml"
-    ),
-    include_str!("../../cermet-core/actions/stripe.fixture_dispute_charge_create.yaml"),
 ];
 
 #[derive(Deserialize)]

@@ -205,12 +205,12 @@ impl<'de> Deserialize<'de> for ActionTemplate {
                     (Some(_), Some(_)) => {
                         return Err(Error::custom(
                             "a template declares exactly ONE execution kind; `http:` and `git:` are mutually exclusive",
-                        ))
+                        ));
                     }
                     (None, None) => {
                         return Err(Error::custom(
                             "a template must declare `http:` or `git:` (the supported execution kinds)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -579,6 +579,11 @@ pub enum FieldFormat {
     /// `git_branch_ref`, but without the `refs/heads/` prefix. In particular `:` is refused, so a
     /// GitHub `user:branch` cross-repository address cannot enter a same-repository verb.
     GitBranchName,
+    /// A bare Git TAG name — the component after `refs/tags/`. Git's refname rules are one set for
+    /// every namespace, so the predicate is the same one `git_branch_name` uses; the shape exists
+    /// separately because the field it admits addresses a different namespace, and a refusal that
+    /// says "branch" about a tag sends the reader to the wrong place.
+    GitTagName,
     /// An absolute HTTPS URL with a host and no userinfo or fragment. Query strings, paths, and
     /// explicit ports are legal. Pure predicate: the approved bytes are never normalized.
     HttpsUrl,
@@ -673,7 +678,7 @@ impl FieldFormat {
             FieldFormat::GitBranchRef => value
                 .strip_prefix("refs/heads/")
                 .is_some_and(is_valid_branch_name),
-            FieldFormat::GitBranchName => {
+            FieldFormat::GitBranchName | FieldFormat::GitTagName => {
                 !value.starts_with("refs/") && is_valid_branch_name(value)
             }
             FieldFormat::HttpsUrl => {
@@ -709,6 +714,9 @@ impl FieldFormat {
             }
             FieldFormat::GitBranchName => {
                 "a valid bare Git branch name, not a qualified ref or cross-repository `user:branch`"
+            }
+            FieldFormat::GitTagName => {
+                "a valid bare Git tag name, not a qualified `refs/tags/` ref"
             }
             FieldFormat::HttpsUrl => {
                 "an exact lowercase `https://` ASCII URL with a nonempty host authority and no whitespace, controls, backslash, userinfo, password, or fragment"
@@ -797,9 +805,16 @@ pub struct GitPushStep {
     /// `/{owner}/{name}.git`. A template carries PATHS only; the origin is descriptor data
     /// (the same rule the HTTP kind obeys).
     pub(crate) remote_path: String,
-    /// The field naming the branch to advance.
-    pub(crate) branch: String,
-    /// The field naming the object the branch must end up at — git's `new` in the update hook's
+    /// The field naming the branch to advance, for a verb in the `refs/heads/` namespace. Exactly
+    /// one of `branch` and `tag` is declared: they are the two ref namespaces that have vocabulary,
+    /// and a verb that named both would be two effects under one sentence.
+    #[serde(default)]
+    pub(crate) branch: Option<String>,
+    /// The field naming the tag to move, for a verb in the `refs/tags/` namespace. The alternative
+    /// to `branch`, never its companion.
+    #[serde(default)]
+    pub(crate) tag: Option<String>,
+    /// The field naming the object the ref must end up at — git's `new` in the update hook's
     /// `(ref, old, new)`.
     pub(crate) new_oid: String,
     /// The field naming the MIRROR's tip for this ref — git's `old` in the update hook's
@@ -1075,9 +1090,7 @@ impl TemplateBinding {
     }
 }
 
-pub use cermet_lang::templates::{
-    CatalogClass, CatalogEntry, CatalogField, CatalogShape, ResponseContract,
-};
+pub use cermet_lang::templates::{CatalogEntry, CatalogField, CatalogShape, ResponseContract};
 
 // ---------------------------------------------------------------------------
 // Placeholder grammar
@@ -1466,7 +1479,6 @@ impl ActionTemplate {
         CatalogEntry {
             provider: self.provider.clone(),
             action: self.action.clone(),
-            class: CatalogClass::from_action(&self.action),
             fields: self
                 .fields
                 .iter()
@@ -1798,7 +1810,7 @@ impl ActionTemplate {
                 self.action
             ));
         }
-        if CatalogClass::from_action(&self.action) == CatalogClass::Setup {
+        if is_fixture_action(&self.action) {
             if self.money.is_some() {
                 return Err(format!(
                     "{ctx}: setup-class action may not declare `money`; fixture vocabulary is \
@@ -2903,6 +2915,7 @@ impl ActionTemplate {
                     match format {
                         FieldFormat::GitOid => "git_oid",
                         FieldFormat::GitBranchName => "git_branch_name",
+                        FieldFormat::GitTagName => "git_tag_name",
                         _ => "…",
                     }
                 ));
@@ -2911,13 +2924,25 @@ impl ActionTemplate {
             Ok(())
         };
         if let Some(step) = &git.push {
+            // ONE ref namespace per verb. Sentence bounds are conjunctive over a verb's own fields,
+            // so a branch authority can only widen onto branches — the tag namespace needs its own
+            // word, and a step declaring both would let one sentence move either.
+            let (slot, field, format) = match (&step.branch, &step.tag) {
+                (Some(branch), None) => ("branch", branch, FieldFormat::GitBranchName),
+                (None, Some(tag)) => ("tag", tag, FieldFormat::GitTagName),
+                _ => {
+                    return Err(format!(
+                        "{ctx}: git.push must name exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+                    ));
+                }
+            };
             check(
-                "branch",
-                &step.branch,
+                slot,
+                field,
                 true,
                 TemplateClass::Identity,
                 TemplateBinding::ExactResourcePin,
-                FieldFormat::GitBranchName,
+                format,
             )?;
             check(
                 "new_oid",
@@ -3116,8 +3141,7 @@ impl ActionTemplate {
                     .filter_map(|source| parse_placeholders(source).ok())
                     .flatten()
                     .any(|placeholder| captured.contains(placeholder.name.as_str()));
-                let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                    == CatalogClass::Setup
+                let terminal_setup_reconciliation = is_fixture_action(&self.action)
                     && *i == last
                     && prior_mutations.len() == 1
                     && capture_bound;
@@ -3193,7 +3217,7 @@ impl ActionTemplate {
                         step.id
                     ));
                 }
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup {
+                if !is_fixture_action(&self.action) {
                     return Err(format!(
                         "{ctx}: step `{}` declares result_captures outside a fixture_* setup \
                          action",
@@ -3372,7 +3396,7 @@ impl ActionTemplate {
                             .any(|placeholder| all_captures.contains(&placeholder.name))
                     })
                 });
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup
+                if !is_fixture_action(&self.action)
                     || !is_final
                     || step.method != "GET"
                     || step.graphql_query.is_some()
@@ -3592,8 +3616,7 @@ impl ActionTemplate {
                             .iter()
                             .filter(|prior| !is_verification_read(prior))
                             .collect();
-                        let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                            == CatalogClass::Setup
+                        let terminal_setup_reconciliation = is_fixture_action(&self.action)
                             && is_final
                             && is_verification_read(step)
                             && prior_mutations.len() == 1
@@ -4370,7 +4393,59 @@ pub use cermet_lang::templates::vendored_response_contract;
 /// `crates/cermet-core/actions/`. This is the shipped default set: what every broker and the
 /// non-broker [`DefaultContractSource`](crate::policy::DefaultContractSource) resolve. Adding a
 /// vendored template is a one-line addition here.
+/// A SETUP FIXTURE verb, by the one naming rule the grammar recognises. Four load rules turn on it:
+/// a fixture may project prior captures out of its terminal step (`result_captures`), may end with
+/// a capture-keyed reconciliation read after its one mutation, and may `poll` that read — because a
+/// fixture's whole job is create-then-observe against a live provider account. A product verb may
+/// not, since letting provider response data steer a later query is how one approved effect grows a
+/// second target. Two rules run the other way: a fixture may declare neither `money` nor a secret
+/// field. The name is the gate deliberately — a template cannot declare its way into the
+/// relaxations, and the shipped catalog compiles no `fixture_` document at all.
+pub(crate) fn is_fixture_action(action: &str) -> bool {
+    action.starts_with("fixture_")
+}
+
 pub use cermet_lang::templates::VENDORED_CATALOG;
+
+/// The SETUP FIXTURES: the `fixture_*` verbs the sitting harness drives to build a provider account
+/// into a known state before it exercises the product vocabulary. They are NOT product vocabulary,
+/// so they are not in [`VENDORED_CATALOG`] and a release build does not compile them in at all —
+/// their documents live under `crates/cermet-core/fixtures/`, outside the shipped catalog. A build
+/// that wants them says so: this crate's own tests get them through `cfg(test)`, an external test
+/// crate or the sitting's tree build turns on the `fixtures` feature.
+#[cfg(any(test, feature = "fixtures"))]
+pub const FIXTURE_CATALOG: &[&str] = &[
+    include_str!("../fixtures/actions/github.fixture_repositories_discover.yaml"),
+    include_str!("../fixtures/actions/github.fixture_workflow_runs_discover.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_account_discover.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_customer_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_payment_method_attach.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_refundable_charge_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_bypass_pending_charge_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_product_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_price_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_subscription_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_draft_invoice_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_webhook_endpoint_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_manual_capture_payment_intent_create.yaml"),
+    include_str!("../fixtures/actions/stripe.fixture_dispute_charge_create.yaml"),
+];
+
+/// Empty on a build that did not ask for the fixtures, so every caller composes the same way and
+/// the release binary's catalog is exactly [`VENDORED_CATALOG`].
+#[cfg(not(any(test, feature = "fixtures")))]
+pub const FIXTURE_CATALOG: &[&str] = &[];
+
+/// Every action template THIS BUILD vendors, as owned documents: the product catalog, plus the
+/// setup fixtures when the build asked for them. This is the whole set a daemon boots on — there is
+/// no on-disk catalog — so what a build compiles in is exactly what its catalog can list.
+pub fn vendored_action_templates() -> Vec<String> {
+    VENDORED_CATALOG
+        .iter()
+        .chain(FIXTURE_CATALOG)
+        .map(|doc| doc.to_string())
+        .collect()
+}
 
 /// The `catalog` verb's per-verb schema, deduplicated by `(provider, action)`: every template LOADED
 /// in `reg` (marked `requestable: true`) UNIONed with the vendored stdlib catalog (a vendored verb

@@ -17,105 +17,17 @@ use crate::{
     config, ctl, doctor, lock, log, master_key, runtime, sentence_record, serve, startup, supervise,
 };
 
-// Ratified action templates ARE authority (they define new executable actions), so `actions.d/`
-// gets the same hardened-read posture as `policy.yaml`: each `*.yaml` is read through the hardened
-// owner-checked reader; an ABSENT dir means no templates (fail closed to less authority), but a
-// PRESENT dir with any unreadable/foreign/symlinked/non-UTF-8 file REFUSES BOOT rather than
-// loading it or silently skipping it. Filenames are sorted for a deterministic load order.
-fn resolve_action_templates(home: &std::path::Path) -> Result<Vec<String>, String> {
-    let dir = home.join("actions.d");
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(format!(
-                "cannot read the actions.d dir at {} (refusing, fail-closed): {e}",
-                dir.display()
-            ))
-        }
-    };
-    let mut names: Vec<std::path::PathBuf> = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            format!(
-                "cannot enumerate the actions.d dir at {} (refusing, fail-closed): {e}",
-                dir.display()
-            )
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            names.push(path);
-        }
-    }
-    names.sort();
-    let mut docs = Vec::with_capacity(names.len());
-    for path in names {
-        let bytes = cermet_broker_actor::host_lock::read_authority_file(&path).map_err(|e| {
-            format!(
-                "action template at {} is not a regular owner-owned file (refusing, fail-closed): {e}",
-                path.display()
-            )
-        })?;
-        let doc = String::from_utf8(bytes).map_err(|_| {
-            format!(
-                "action template at {} is not valid UTF-8 — refusing",
-                path.display()
-            )
-        })?;
-        docs.push(doc);
-    }
-    Ok(docs)
-}
-
-// Ratified provider descriptors ARE authority (a descriptor is the ONLY way a token may ride to an
-// origin, and it defines a provider the language can extend), so `providers.d/` gets the same
-// hardened-read posture as `actions.d/`: each `*.yaml` is read through the hardened owner-checked
-// reader; an ABSENT dir means no providers (fail closed — every real request DENIES at the
-// registry wall), but a PRESENT dir with any unreadable/foreign/symlinked/non-UTF-8 file REFUSES
-// BOOT. Sorted for a deterministic load order.
-fn resolve_provider_descriptors(home: &std::path::Path) -> Result<Vec<String>, String> {
-    let dir = home.join("providers.d");
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(format!(
-                "cannot read the providers.d dir at {} (refusing, fail-closed): {e}",
-                dir.display()
-            ))
-        }
-    };
-    let mut names: Vec<std::path::PathBuf> = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            format!(
-                "cannot enumerate the providers.d dir at {} (refusing, fail-closed): {e}",
-                dir.display()
-            )
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            names.push(path);
-        }
-    }
-    names.sort();
-    let mut docs = Vec::with_capacity(names.len());
-    for path in names {
-        let bytes = cermet_broker_actor::host_lock::read_authority_file(&path).map_err(|e| {
-            format!(
-                "provider descriptor at {} is not a regular owner-owned file (refusing, fail-closed): {e}",
-                path.display()
-            )
-        })?;
-        let doc = String::from_utf8(bytes).map_err(|_| {
-            format!(
-                "provider descriptor at {} is not valid UTF-8 — refusing",
-                path.display()
-            )
-        })?;
-        docs.push(doc);
-    }
-    Ok(docs)
+/// The catalog this daemon boots with: the action templates and provider descriptors VENDORED into
+/// this binary, which are the same bytes the ontology hash join pins. The catalog is therefore a
+/// property of the build, not of a directory the daemon walks — there is no on-disk copy to read,
+/// diverge from, or plant a document in, and an installed box's leftover catalog directory from an
+/// earlier build is simply never opened. Which verbs a caller may actually reach is decided by the
+/// sentence corpus, as it always was; loading is vocabulary, not authority.
+pub fn vendored_catalog() -> (Vec<String>, Vec<String>) {
+    (
+        cermet_core::templates::vendored_action_templates(),
+        BrokerConfig::vendored_descriptors(),
+    )
 }
 
 // Key custody (CUSTODY-LADDER): service mode reads ONLY the source the DECLARED custody rung
@@ -414,20 +326,7 @@ async fn serve_daemon() -> ExitCode {
         eprintln!("cermetd: {banner}");
     }
 
-    let action_templates = match resolve_action_templates(&home) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("cermetd: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let provider_descriptors = match resolve_provider_descriptors(&home) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("cermetd: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let (action_templates, provider_descriptors) = vendored_catalog();
     let broker_config = BrokerConfig {
         git: cfg.git.clone(),
         dir: home.clone(),
@@ -845,10 +744,7 @@ async fn serve_daemon() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        harden_secret_inodes, resolve_action_templates, resolve_agent_gate_uid,
-        resolve_provider_descriptors,
-    };
+    use super::{harden_secret_inodes, resolve_agent_gate_uid};
     use std::os::unix::fs::PermissionsExt;
 
     // Pin the SERVICE-MODE agent-gate uid resolution so a regression to
@@ -886,137 +782,6 @@ mod tests {
             resolve_agent_gate_uid(false, T_AGENT_UID, T_DEV_UID),
             Some(T_DEV_UID),
             "dev-mode agent.sock gate resolves to the daemon's own uid"
-        );
-    }
-
-    /// Write an authority-file fixture (policy / provider descriptor / action template) with an
-    /// explicit 0600 mode, umask-independent — the boot authority reader refuses a group/other-
-    /// writable file, and Ubuntu's default 0002 umask would otherwise leave a plain write group-
-    /// writable and rightly refused. Production writes these docs 0600 already.
-    fn write_authority_0600(path: impl AsRef<std::path::Path>, contents: &str) {
-        let path = path.as_ref();
-        std::fs::write(path, contents).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-
-    #[test]
-    fn daemon_providers_dir_owner_check_refuses_like_actions_d() {
-        // A descriptor is authority (the only thing that lets a token ride to an origin), so
-        // providers.d gets the SAME hardened-read posture as actions.d. Absent dir ⇒ no providers.
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(
-            resolve_provider_descriptors(dir.path()).unwrap(),
-            Vec::<String>::new()
-        );
-
-        let providers = dir.path().join("providers.d");
-        std::fs::create_dir_all(&providers).unwrap();
-
-        // (a) a symlinked descriptor must REFUSE boot (never followed, never silently skipped).
-        let attacker = dir.path().join("attacker.yaml");
-        std::fs::write(&attacker, "name: github\n").unwrap();
-        std::os::unix::fs::symlink(&attacker, providers.join("github.yaml")).unwrap();
-        assert!(
-            resolve_provider_descriptors(dir.path())
-                .expect_err("a symlinked descriptor must fail closed")
-                .contains("refusing"),
-            "the error signals a fail-closed refusal"
-        );
-        std::fs::remove_file(providers.join("github.yaml")).unwrap();
-
-        // (b) a group/other-writable descriptor refuses boot.
-        let p = providers.join("loose.yaml");
-        std::fs::write(&p, "name: vercel\n").unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
-        assert!(
-            resolve_provider_descriptors(dir.path()).is_err(),
-            "a group/other-writable descriptor must refuse boot"
-        );
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
-        std::fs::remove_file(&p).unwrap();
-
-        // (c) only *.yaml load, in deterministic order; a staged file is ignored.
-        write_authority_0600(providers.join("b.yaml"), "doc-b");
-        write_authority_0600(providers.join("a.yaml"), "doc-a");
-        std::fs::write(providers.join("acme.yaml.staged"), "doc-staged").unwrap();
-        std::fs::write(providers.join("notes.txt"), "nope").unwrap();
-        assert_eq!(
-            resolve_provider_descriptors(dir.path()).unwrap(),
-            vec!["doc-a".to_string(), "doc-b".to_string()],
-            "only *.yaml descriptors load, in filename order; staged/other ignored"
-        );
-    }
-
-    #[test]
-    fn daemon_actions_dir_foreign_file_refuses_boot() {
-        // An ABSENT actions.d dir is simply "no templates" (fail closed to LESS authority).
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(
-            resolve_action_templates(dir.path()).unwrap(),
-            Vec::<String>::new()
-        );
-
-        // A symlinked template doc must REFUSE boot (the hardened-read posture) — never be followed,
-        // never silently skipped.
-        let actions = dir.path().join("actions.d");
-        std::fs::create_dir_all(&actions).unwrap();
-        let attacker = dir.path().join("attacker.yaml");
-        std::fs::write(&attacker, "provider: github\n").unwrap();
-        std::os::unix::fs::symlink(&attacker, actions.join("github.attacker_planted.yaml"))
-            .unwrap();
-        let err = resolve_action_templates(dir.path())
-            .expect_err("a symlinked action template must fail closed");
-        assert!(
-            err.contains("refusing"),
-            "the error signals a fail-closed refusal: {err}"
-        );
-    }
-
-    #[test]
-    fn daemon_actions_dir_group_writable_doc_refuses_boot() {
-        // Templates ARE authority: a group/other-writable doc (another uid could rewrite it into a
-        // new executable action) refuses boot, same as policy.yaml.
-        let dir = tempfile::tempdir().unwrap();
-        let actions = dir.path().join("actions.d");
-        std::fs::create_dir_all(&actions).unwrap();
-        let p = actions.join("loose.yaml");
-        std::fs::write(&p, "provider: github\n").unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
-        assert!(
-            resolve_action_templates(dir.path()).is_err(),
-            "a group/other-writable template doc must refuse boot"
-        );
-    }
-
-    #[test]
-    fn daemon_actions_dir_loads_owned_docs_in_sorted_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let actions = dir.path().join("actions.d");
-        std::fs::create_dir_all(&actions).unwrap();
-        write_authority_0600(actions.join("b.yaml"), "doc-b");
-        write_authority_0600(actions.join("a.yaml"), "doc-a");
-        std::fs::write(actions.join("notes.txt"), "not a template").unwrap();
-        assert_eq!(
-            resolve_action_templates(dir.path()).unwrap(),
-            vec!["doc-a".to_string(), "doc-b".to_string()],
-            "only *.yaml docs load, in deterministic filename order"
-        );
-    }
-
-    #[test]
-    fn staged_file_in_actions_d_neither_loads_nor_blocks_boot() {
-        // ratify STAGES an install as `<p>.<a>.yaml.staged`, whose extension is `staged`,
-        // NOT `yaml`. The daemon's `*.yaml` boot filter must therefore ignore it — a mid-publish crash
-        // must never boot-load unratified authority, and a stray staged file must not fail the boot.
-        let dir = tempfile::tempdir().unwrap();
-        let actions = dir.path().join("actions.d");
-        std::fs::create_dir_all(&actions).unwrap();
-        write_authority_0600(actions.join("github.attacker_planted.yaml"), "doc-live");
-        std::fs::write(actions.join("github.e2e_probe.yaml.staged"), "doc-staged").unwrap();
-        assert_eq!(
-            resolve_action_templates(dir.path()).unwrap(),
-            vec!["doc-live".to_string()],
-            "only the `.yaml` file is returned; the `.yaml.staged` file is neither loaded nor fatal"
         );
     }
 
@@ -1060,44 +825,69 @@ mod tests {
         assert_eq!(mode, 0o600, "the loose DB is retightened to 0600");
     }
 
+    /// The boot catalog is the binary's own vendored bytes, not a directory the daemon walks. With
+    /// NOTHING seeded under the home, a broker built from the boot catalog still serves the shipped
+    /// verbs and their pinned-egress providers — the same bytes the ontology hash join checks.
     #[test]
-    fn unseeded_home_makes_the_boot_doctor_warn_but_still_serve() {
-        // The zero-capability boot signal: an unseeded home loads zero templates, and the boot
-        // doctor (whose warnings main() prints to stderr) must surface that as a loud WARN — never a
-        // refusal (a fresh install legitimately has no actions.d).
-        let dir = tempfile::tempdir().unwrap();
+    fn the_boot_catalog_is_vendored_with_no_catalog_dir_on_disk() {
+        let home = tempfile::tempdir().unwrap();
         assert!(
-            resolve_action_templates(dir.path()).unwrap().is_empty(),
-            "an unseeded home loads zero templates"
+            !home.path().join("actions.d").exists() && !home.path().join("providers.d").exists(),
+            "the fixture home is unseeded: the daemon has no on-disk catalog to read"
         );
-        let runtime = dir.path().join("run");
-        std::fs::create_dir_all(&runtime).unwrap();
-        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o2711)).unwrap();
-        let report = crate::doctor::run(
-            dir.path(),
-            &runtime,
-            &runtime,
-            501,
-            502,
-            501,
-            Some(502),
-            None,
-            None,
-            false,
+
+        let (action_templates, provider_descriptors) = super::vendored_catalog();
+        let vendored = cermet_core::templates::VENDORED_CATALOG;
+        let fixtures = cermet_core::templates::FIXTURE_CATALOG;
+        assert_eq!(
+            action_templates.len(),
+            vendored.len() + fixtures.len(),
+            "every verb this build vendors boots"
         );
-        let at = report
-            .checks
-            .iter()
-            .find(|c| c.name == "action_templates")
-            .expect("the boot doctor carries an action_templates check");
-        assert_eq!(at.status, "warn", "an unseeded boot warns: {at:?}");
+        // The RELEASE claim, and it holds under every cfg: the PRODUCT catalog is the 62 shipped
+        // verbs and carries no setup fixture. A release build compiles no `FIXTURE_CATALOG` at all,
+        // so what an installed box can serve — and therefore what a sentence can name — is exactly
+        // this set.
+        assert_eq!(vendored.len(), 62, "the shipped product catalog");
         assert!(
-            at.detail.contains("actions.d"),
-            "the warn names the actions.d path: {at:?}"
+            !vendored.iter().any(|doc| doc.contains("action: fixture_")),
+            "a setup fixture must never enter the product catalog"
         );
-        assert!(
-            report.serving,
-            "a zero-template boot is a warn, never a refusal"
+
+        let broker = cermet_core::Broker::open(cermet_core::BrokerConfig {
+            git: cermet_core::git::GitConfig::at(home.path().join("mirrors")),
+            dir: home.path().to_path_buf(),
+            master_key: vec![7u8; 32],
+            action_templates,
+            provider_descriptors,
+            artifacts: cermet_core::ArtifactConfig::default(),
+        })
+        .expect("a broker opens on the vendored catalog");
+
+        let served: Vec<(String, String)> = broker
+            .catalog()
+            .expect("the catalog renders")
+            .into_iter()
+            .filter(|entry| entry.requestable)
+            .map(|entry| (entry.provider, entry.action))
+            .collect();
+        assert_eq!(
+            served.len(),
+            vendored.len() + fixtures.len(),
+            "every verb this build vendors is served requestable"
         );
+        for pair in [
+            ("github", "read_repo"),
+            ("github", "publish_release"),
+            ("stripe", "get_invoice"),
+            ("vercel", "deploy"),
+        ] {
+            assert!(
+                served.iter().any(|(p, a)| (p.as_str(), a.as_str()) == pair),
+                "{}.{} is served from the vendored catalog",
+                pair.0,
+                pair.1
+            );
+        }
     }
 }

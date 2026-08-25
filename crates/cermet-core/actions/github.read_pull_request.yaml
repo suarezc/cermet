@@ -1,13 +1,6 @@
-# Action template for github.read_pull_request (sensitive_observation). Read
-# ONE pull request on the frozen repository, selected by its EXACT `number` (an exact-pinned identity
-# execution target). The response is GitHub's pull-request body VERBATIM and is retained
-# as an artifact under the declared default — stable PR IDs, `state`, `draft`/`merged`,
-# the base/head identity the envelope names, the author, and the free-text body alike. What
-# bounds this read is the REQUEST: one exact `number` on the frozen repository, so an allow scopes
-# to one pull request and an agent can never enumerate the tracker.
-#
-# `number` carries `format: uint` — a canonical bare positive decimal, so "1" and "01" can
-# never be two distinct pins for the same pull request.
+# The response is GitHub's pull-request body VERBATIM, free-text body included. What bounds this
+# read is the REQUEST: one exact `number` on the frozen repository, so an allow scopes to one pull
+# request and an agent can never enumerate the tracker.
 provider: github
 action: read_pull_request
 fields:

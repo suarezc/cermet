@@ -8,6 +8,9 @@ use cermet_core::{
 };
 use serde_yaml::Value;
 
+mod common;
+use common::VENDORED_ONTOLOGY_RECORDS;
+
 const M1_ACTIONS: [&str; 7] = [
     "get_invoice",
     "list_invoices_for_customer",
@@ -665,10 +668,10 @@ fn credit_note_shape_has_no_caller_selected_combined_effect_channel() {
 
 #[test]
 fn six_m2_sidecars_hash_join_and_classify_credit_note_ambiguity() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 48);
+    assert_eq!(VENDORED_ONTOLOGY.len(), VENDORED_ONTOLOGY_RECORDS);
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), VENDORED_ONTOLOGY_RECORDS);
     catalog.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     for action in M2_ACTIONS {
@@ -703,10 +706,10 @@ fn six_m2_sidecars_hash_join_and_classify_credit_note_ambiguity() {
 
 #[test]
 fn seven_stripe_records_are_vendored_hash_bound_observations() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 48);
+    assert_eq!(VENDORED_ONTOLOGY.len(), VENDORED_ONTOLOGY_RECORDS);
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), VENDORED_ONTOLOGY_RECORDS);
     catalog.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     for action in M1_ACTIONS {
@@ -723,10 +726,10 @@ fn seven_stripe_records_are_vendored_hash_bound_observations() {
 
 #[test]
 fn three_m3_sidecars_hash_join_and_record_loaded_sandbox_limitations() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 48);
+    assert_eq!(VENDORED_ONTOLOGY.len(), VENDORED_ONTOLOGY_RECORDS);
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), VENDORED_ONTOLOGY_RECORDS);
     catalog.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     let stage = catalog.get("stripe", "stage_dispute_evidence").unwrap();

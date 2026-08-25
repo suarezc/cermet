@@ -1666,10 +1666,13 @@ impl Broker {
         let loaded = self.templates.loaded(provider, action)?;
         let spec = loaded.template.git_spec()?;
         let wiring = cermet_lang::provider::GIT_WIRING_COMMAND;
-        Some(if spec.push.is_some() {
+        Some(if let Some(push) = spec.push.as_ref() {
+            // Name the ref namespace the verb actually moves: sending a tag verb's caller to
+            // `git push <remote> <branch>` points at the wrong command.
+            let ref_kind = if push.tag.is_some() { "tag" } else { "branch" };
             format!(
                 "{provider}.{action} is not requestable: a git push is decided by git's update \
-                 hook. Run `git push <remote> <branch>` in a repository whose remote is a \
+                 hook. Run `git push <remote> <{ref_kind}>` in a repository whose remote is a \
                  `cermet::` URL — wire one with `{wiring}` (or `git remote add origin \
                  cermet::github/<owner>/<repo>` in a fresh repo). The refusal, if any, arrives in \
                  git's own output."

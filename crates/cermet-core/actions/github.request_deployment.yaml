@@ -1,18 +1,9 @@
-# Action template for github.request_deployment (provider_control_change).
-# Create ONE deployment REQUEST on the frozen repository at an EXACT immutable commit. The
-# envelope: owner/name, the commit SHA as `ref` (NOT a branch name — `format: git_oid` refuses a
-# ref), and the `environment` — all exact-pinned identity execution targets. HTTP 201 proves the
-# deployment REQUEST was created, NOT that anything deployed.
-#
-# Every consequential field is a FROZEN LITERAL the agent cannot steer:
-#   - `task` is the literal `deploy` (never a SHA);
-#   - `auto_merge` is fixed `false` (no implicit merge commit — so a commit `ref` always yields 201,
-#     never a 202 merge-commit case);
-#   - `required_contexts` is the literal `[]` (disclosed: NO status checks are required to gate the
-#     request — the request is created regardless of CI state);
-#   - `production_environment` and `transient_environment` are fixed `false` exact side effects;
-#   - arbitrary `payload` is OMITTED entirely (no free-form deployment payload channel).
-# The human pins WHICH environment via `environment`; the booleans above are never agent-fillable.
+# HTTP 201 proves the deployment REQUEST was created, NOT that anything deployed.
+# The consequential body values are frozen literals the agent cannot steer: `task: deploy`;
+# `auto_merge: false`, so a commit `ref` always yields 201 and never the 202 merge-commit case;
+# `required_contexts: []`, disclosed here because it means NO status check gates the request; both
+# environment booleans false; and no free-form `payload` channel at all. The human pins WHICH
+# environment.
 provider: github
 action: request_deployment
 fields:
@@ -27,9 +18,8 @@ http:
     - id: create
       method: POST
       path: /repos/{owner}/{name}/deployments
-      success_statuses: [201]        # 201 = request CREATED (not deployed). auto_merge:false means
-                                     # a commit ref never yields the 202 merge-commit case; any non-201 fails closed.
-      require: [id]                  # the created deployment id must be present, never null.
+      success_statuses: [201]
+      require: [id]
       body:
         ref: "{ref}"
         task: "deploy"

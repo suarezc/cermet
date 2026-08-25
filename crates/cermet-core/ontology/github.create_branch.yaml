@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: create_branch
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: d06f0f3f0c4446170775df7cd5f0fbfceeb14d16c4cad4df7f45950d119360e8
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 5f15d64b8876a94fba96c5a8cdd9c8820468b90626205d441aa3e80838ea8aa2
 semantics:
   resource_family: git_reference
   provider_operation: ref_create

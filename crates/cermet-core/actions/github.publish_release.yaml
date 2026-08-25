@@ -1,0 +1,39 @@
+# VERIFY-THEN-ACT. Step 1 proves the agent-supplied `release_id` names a DRAFT whose tag is the one
+# the sentence pinned; a different tag, or a release already published, stops before the PATCH. The
+# id is agent-supplied and the tag is what authority names, so the id alone is never trusted (T1: a
+# steered agent publishing the wrong thing; T2: a stale id left from an earlier draft).
+# Step 2 re-proves the same tag plus `draft: false` as a POSTcondition, so a 200 that did not
+# actually publish is a failure rather than a hollow success.
+# Why an id and not the tag alone: GitHub's by-tag endpoint answers 404 for a draft, and the
+# engine's response pointers do not index arrays, so the agent reads the list and chooses the row.
+# The verb neither creates the release nor touches assets — the published bytes are the ones the
+# build attached — and the title and `make_latest` are not vocabulary here, so neither is steerable.
+provider: github
+action: publish_release
+fields:
+  - { name: owner,      type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: name,       type: str, required: true, class: identity,     binding: exact_resource_pin }
+  - { name: release_id, type: str, required: true, class: identity,     binding: exact_resource_pin, format: uint }
+  - { name: tag,        type: str, required: true, class: identity,     binding: exact_resource_pin, format: git_tag_name }
+  - { name: notes,      type: str, required: true, class: free_payload, binding: unbound }
+consumes: [owner, name, release_id, tag, notes]
+execution_targets: [owner, name, release_id, tag]
+http:
+  steps:
+    - id: prove_draft
+      method: GET
+      path: /repos/{owner}/{name}/releases/{release_id}
+      success_statuses: [200]
+      require: [id, tag_name]
+      expect_eq: { tag_name: tag }
+      expect_literal: { draft: true }
+    - id: publish
+      method: PATCH
+      path: /repos/{owner}/{name}/releases/{release_id}
+      success_statuses: [200]
+      require: [id, tag_name, html_url, published_at]
+      expect_eq: { tag_name: tag }
+      expect_literal: { draft: false }
+      body:
+        draft: false
+        body: "{notes}"
