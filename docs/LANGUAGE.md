@@ -280,6 +280,17 @@ field_formats:
   - https_url
   - uint
 targetless_query_shapes:
+  - verb: stripe.list_webhook_endpoints
+    method: GET
+    bodyless: true
+    retention: full
+    fields:
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
+    transforms: []
   - verb: stripe.read_account
     method: GET
     bodyless: true

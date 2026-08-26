@@ -20,6 +20,13 @@ const STRIPE_SETUP_SOURCES: &[&str] = &[
     "STRIPE-DISPUTE-LIST",
     "STRIPE-TEST-TOKENS",
 ];
+/// The invoice-finalize and webhook list/delete references, read the day those verbs landed.
+const STRIPE_LIFECYCLE_RECHECKED_AT: &str = "2026-08-26";
+const STRIPE_LIFECYCLE_SOURCES: &[&str] = &[
+    "STRIPE-INVOICE-FINALIZE",
+    "STRIPE-WEBHOOK-DELETE",
+    "STRIPE-WEBHOOK-LIST",
+];
 /// A source added after its batch keeps its OWN review date — the date means "these docs were read
 /// on this day", so back-dating a later addition into the batch date would be a small lie.
 const GIT_COMMITS_RECHECKED_AT: &str = "2026-07-28";
@@ -308,6 +315,18 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
         "VERCEL-API-LIST-PROJECTS",
         "https://vercel.com/docs/rest-api/reference/endpoints/projects/retrieve-a-list-of-projects",
     ),
+    (
+        "STRIPE-INVOICE-FINALIZE",
+        "https://docs.stripe.com/api/invoices/finalize",
+    ),
+    (
+        "STRIPE-WEBHOOK-DELETE",
+        "https://docs.stripe.com/api/webhook_endpoints/delete",
+    ),
+    (
+        "STRIPE-WEBHOOK-LIST",
+        "https://docs.stripe.com/api/webhook_endpoints/list",
+    ),
 ];
 
 fn document(id: &str, url: &str, rechecked_at: &str) -> String {
@@ -325,6 +344,8 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
             // Later corpus/provider batches retain their own exact source-review date.
             let expected_date = if STRIPE_SETUP_SOURCES.contains(&source.id.as_str()) {
                 STRIPE_SETUP_RECHECKED_AT
+            } else if STRIPE_LIFECYCLE_SOURCES.contains(&source.id.as_str()) {
+                STRIPE_LIFECYCLE_RECHECKED_AT
             } else if source.id.starts_with("STRIPE-") {
                 STRIPE_RECHECKED_AT
             } else if source.id == "VERCEL-API-LIST-PROJECTS" {
@@ -350,7 +371,7 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
         .collect::<BTreeMap<_, _>>();
     let expected = PLAN_SOURCES.iter().copied().collect::<BTreeMap<_, _>>();
 
-    assert_eq!(PLAN_SOURCES.len(), 69);
+    assert_eq!(PLAN_SOURCES.len(), 72);
     assert_eq!(actual, expected);
     assert_eq!(registry.len(), PLAN_SOURCES.len());
     assert!(!registry.is_empty());

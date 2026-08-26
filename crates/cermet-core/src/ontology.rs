@@ -610,6 +610,18 @@ impl OntologyArtifacts {
             ("stripe", "read_account"),
             include_str!("../actions/stripe.read_account.yaml"),
         );
+        templates.insert(
+            ("stripe", "finalize_invoice"),
+            include_str!("../actions/stripe.finalize_invoice.yaml"),
+        );
+        templates.insert(
+            ("stripe", "delete_webhook_endpoint"),
+            include_str!("../actions/stripe.delete_webhook_endpoint.yaml"),
+        );
+        templates.insert(
+            ("stripe", "list_webhook_endpoints"),
+            include_str!("../actions/stripe.list_webhook_endpoints.yaml"),
+        );
 
         Self {
             descriptors,
@@ -707,6 +719,9 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/stripe.create_charge_from_source.yaml"),
     include_str!("../ontology/stripe.list_disputes.yaml"),
     include_str!("../ontology/stripe.read_account.yaml"),
+    include_str!("../ontology/stripe.finalize_invoice.yaml"),
+    include_str!("../ontology/stripe.delete_webhook_endpoint.yaml"),
+    include_str!("../ontology/stripe.list_webhook_endpoints.yaml"),
     // Appended last: two hash-join tests index VENDORED_ONTOLOGY[0].
     include_str!("../ontology/vercel.deploy.yaml"),
     include_str!("../ontology/vercel.list_projects.yaml"),

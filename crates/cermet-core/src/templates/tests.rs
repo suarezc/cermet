@@ -3185,7 +3185,7 @@ fn every_stripe_verb_pins_the_credentials_own_mode() {
             template.action
         );
     }
-    assert_eq!(seen, 43, "every vendored stripe verb was checked");
+    assert_eq!(seen, 46, "every vendored stripe verb was checked");
 }
 
 /// One catalog, and the setup vocabulary that used to live beside it is now IN it. The verbs a

@@ -1,0 +1,21 @@
+# Delete one exact webhook endpoint. Stripe destroys its signing secret with it and reissues
+# nothing, so no compensating create restores the endpoint the operator had.
+# T1: a steered agent aimed at the operator's production receiver is stopped by the sentence, which
+# pins both the endpoint id and the credential's own book — a live-book delete under a test-book
+# sentence is refused before any request is built.
+provider: stripe
+action: delete_webhook_endpoint
+fields:
+  - { name: endpoint, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [endpoint]
+execution_targets: [endpoint, mode]
+http:
+  steps:
+    - id: delete
+      method: DELETE
+      path: /v1/webhook_endpoints/{endpoint}
+      success_statuses: [200]
+      require: [id, object, deleted]
+      expect_eq: { id: endpoint }
+      expect_literal: { object: webhook_endpoint, deleted: true }

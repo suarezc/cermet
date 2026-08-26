@@ -7267,3 +7267,131 @@ fn stripe_setup_reads_are_one_bounded_get_each() {
         assert!(response.ok, "stripe.{action}: {:?}", response.result);
     }
 }
+
+/// The three lifecycle verbs, each driven through the mock harness for the exact wire it sends.
+/// `finalize_invoice` freezes `auto_advance: false`, so the request that issues the invoice is also
+/// the request that declines to collect it; the delete carries no body at all; and the endpoint
+/// list is one bounded, targetless GET whose only pin is the credential's own book.
+#[test]
+fn stripe_lifecycle_vocabulary_sends_only_its_reviewed_wire() {
+    for (action, resource, request_line, expected_body, response_body) in [
+        (
+            "finalize_invoice",
+            json!({"invoice": "in_1", "mode": "test"}),
+            "POST /v1/invoices/in_1/finalize HTTP/1.1",
+            "auto_advance=false",
+            r#"{"id":"in_1","object":"invoice","status":"open","auto_advance":false}"#,
+        ),
+        (
+            "delete_webhook_endpoint",
+            json!({"endpoint": "we_1", "mode": "test"}),
+            "DELETE /v1/webhook_endpoints/we_1 HTTP/1.1",
+            "",
+            r#"{"id":"we_1","object":"webhook_endpoint","deleted":true}"#,
+        ),
+        (
+            "list_webhook_endpoints",
+            json!({"mode": "test"}),
+            "GET /v1/webhook_endpoints?limit=100 HTTP/1.1",
+            "",
+            r#"{"object":"list","data":[],"has_more":false}"#,
+        ),
+    ] {
+        let (base, server) = one_shot_full("200 OK", response_body);
+        let stripe = stripe_action(base, action);
+        let canonical = stripe.canonicalize(action, &resource).unwrap();
+        let response = stripe
+            .execute(ProviderCall {
+                discipline: Default::default(),
+                git_mirror: None,
+                request_id: "",
+                action,
+                token: "sk_test_lifecycle_vocabulary",
+                resource: &canonical,
+            })
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with(request_line),
+            "stripe.{action}: {request}"
+        );
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        assert_eq!(body, expected_body, "stripe.{action}");
+        assert!(
+            !request.contains("mode="),
+            "stripe.{action} sent the daemon-derived field to the provider: {request}"
+        );
+        assert!(response.ok, "stripe.{action}: {:?}", response.result);
+        assert_eq!(
+            response.result,
+            serde_json::from_str::<Value>(response_body).unwrap(),
+            "stripe.{action}: the response is the provider body, verbatim"
+        );
+    }
+}
+
+/// Both halves of the lifecycle batch's success proof, against a provider that answered 200 anyway.
+/// A finalize Stripe answered for a DIFFERENT invoice stops on `expect_eq` naming the frozen field;
+/// a delete whose own body says `deleted: false` stops on the frozen literal, and the observation
+/// is UNPROVED — the request crossed the effect boundary, so nobody knows what the endpoint is now.
+#[test]
+fn stripe_lifecycle_postconditions_stop_a_substituted_or_undone_effect() {
+    let substituted = r#"{"id":"in_other","object":"invoice","status":"open"}"#;
+    let (base, server) = one_shot_full("200 OK", substituted);
+    let stripe = stripe_action(base, "finalize_invoice");
+    let resource = stripe
+        .canonicalize("finalize_invoice", &json!({"invoice": "in_1"}))
+        .unwrap();
+    let response = stripe
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "finalize_invoice",
+            token: "sk_test_lifecycle_vocabulary",
+            resource: &resource,
+        })
+        .unwrap();
+    server.join().unwrap();
+    assert!(!response.ok);
+    assert_eq!(response.result["outcome"], "postcondition_failed");
+    assert_eq!(response.result["field"], "invoice");
+    assert_eq!(
+        response.result["provider_proof"],
+        serde_json::from_str::<Value>(substituted).unwrap(),
+        "the reconciliation proof is the body the provider sent, verbatim"
+    );
+
+    let undone = r#"{"id":"we_1","object":"webhook_endpoint","deleted":false}"#;
+    let (base, server) = one_shot_full("200 OK", undone);
+    let stripe = stripe_action(base, "delete_webhook_endpoint");
+    let resource = stripe
+        .canonicalize("delete_webhook_endpoint", &json!({"endpoint": "we_1"}))
+        .unwrap();
+    let response = stripe
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "delete_webhook_endpoint",
+            token: "sk_test_lifecycle_vocabulary",
+            resource: &resource,
+        })
+        .unwrap();
+    server.join().unwrap();
+    assert!(!response.ok);
+    assert_eq!(response.result["outcome"], "postcondition_failed");
+    assert_eq!(response.result["path"], "deleted");
+    assert_eq!(
+        response.result["provider_proof"],
+        serde_json::from_str::<Value>(undone).unwrap()
+    );
+    // The effect crossed the boundary and contradicted the approval, so the observation proves
+    // nothing about the endpoint: this is the UNPROVED arm, not a refusal the caller may retry.
+    assert_eq!(
+        response.failure_class,
+        Some(EffectFailureClass::of(
+            FailureSignal::ApprovedOutcomeContradicted
+        ))
+    );
+}

@@ -186,6 +186,9 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/stripe.create_charge_from_source.yaml"),
     include_str!("../../cermet-core/actions/stripe.list_disputes.yaml"),
     include_str!("../../cermet-core/actions/stripe.read_account.yaml"),
+    include_str!("../../cermet-core/actions/stripe.finalize_invoice.yaml"),
+    include_str!("../../cermet-core/actions/stripe.delete_webhook_endpoint.yaml"),
+    include_str!("../../cermet-core/actions/stripe.list_webhook_endpoints.yaml"),
 ];
 
 #[derive(Deserialize)]
