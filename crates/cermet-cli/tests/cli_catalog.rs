@@ -122,7 +122,8 @@ async fn the_all_zoom_is_the_dictionary_and_stamps_unadmitted_verbs_as_not_allow
     // The stamp on an unadmitted verb must not read as permission. `requestable` did — it reads
     // as "currently permitted" — so it is gone from every stamp.
     assert!(
-        out.text.contains("no standing sentence — propose one"),
+        out.text
+            .contains("no standing sentence — ask the operator for one"),
         "an unruled verb must be stamped not-currently-allowed:\n{}",
         out.text
     );

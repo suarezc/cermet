@@ -458,7 +458,7 @@ Default zoom:
 | `http_api_call` | The daemon constructs and sends an outbound HTTP request itself, with the credential attached inside the trusted runtime. |
 | `http_inline_upload` | The same execution, where a declared `free_payload` field's bytes are embedded directly in the outbound body. |
 | `git_push` | Not reached through a request at all. The verb is exercised by running native `git push` / `git fetch` against a broker-wired remote; the daemon carries the stream to a pinned upstream. Branch pushes, tag pushes, and fetches all carry this shape — which ref namespace a verb moves is its own vocabulary, not a second shape. Every entry with this shape prints the wiring command beside it: `git remote set-url origin cermet::github/<owner>/<repo>`. |
-| `relay` | The verb mints a scoped session and credentials a native CLI's *own* outbound requests through a loopback relay. No provider call happens at request or execute time — the effect is the session (§1.3). |
+| `relay` | The verb mints a scoped session and credentials a native CLI's *own* outbound requests through a loopback relay. No provider call happens at request or execute time — the effect is the session (§1.3). Every entry with this shape prints how it is exercised beside it: `exercised by running the native <cli> CLI against the invocation this request prints; the broker supplies the credential, you supply the tool`. |
 
 A verb whose shape the daemon did not report renders as `shape:unknown` in the default zoom, and
 omits the token entirely in `--all`. That is version tolerance, not a value.
@@ -526,7 +526,7 @@ Four values, and only the first may be read as permission.
 | `allowed now` | The broker has the verb loaded *and* the live corpus admits at least one concrete completion of it right now. This is a real evaluation, not a text match: it asks whether some exact, contract-valid request shape evaluates to allow. |
 | `denied — not requestable` | A standing `deny` sentence explicitly selects this verb. Settled — an explicit deny is not a widening candidate, so there is nothing to propose. |
 | `not available on this broker — a request denies` | A standing `allow` sentence selects the verb, but this broker does not have its template loaded. A request would still deny — for lack of the verb, not for lack of authority. |
-| `no standing sentence — propose one` | The true authority gap: nothing admits it and nothing denies it. This is the one case where relaying a widening ask to whoever holds authority is the right move. |
+| `no standing sentence — ask the operator for one` | The true authority gap: nothing admits it and nothing denies it. This is the one case where relaying a widening ask to whoever holds authority is the right move. There is no agent-facing proposal channel: the sentence is authored by the operator. |
 
 In the `--all` zoom the same four cases also render as prose beneath the verb:
 
