@@ -10,9 +10,9 @@ pub(super) struct SuggestionShape {
 
 /// Redact every `FieldClass::Secret` field of `resource` to the fixed marker. `contract` is resolved
 /// by the CALLER through the broker's registry (the ratified template that owns the action) — so a
-/// template Secret field is always redacted. The contract is non-optional: an unresolved contract can
-/// never reach here (it becomes `Vanished`, a full suppression), so redaction never silently falls
-/// through to the raw resource.
+/// template Secret field is always redacted. The contract is non-optional: it is applied only on the
+/// `Live` path, where the live template still matches the grant's frozen hash; a drifted or
+/// unresolved template renders the record verbatim (`Raw`) rather than reaching here.
 pub(super) fn redact_secret_fields(contract: &ActionContract, mut resource: Value) -> Value {
     if let Some(obj) = resource.as_object_mut() {
         for (k, v) in obj.iter_mut() {
@@ -104,53 +104,16 @@ pub(super) fn summarize_large_payloads(contract: &ActionContract, mut resource: 
     resource
 }
 
-/// The marker every field value of a frozen grant is replaced with when its ratified template is no
-/// longer live. Full-resource suppression: the field VALUES are dropped (keys survive — they carry
-/// no data) because with the template gone or edited we no longer know which fields were Secret, so
-/// selective redaction is impossible and the honest fail-closed answer is to render none.
-pub(super) const FROZEN_TEMPLATE_GONE: &str =
-    "[redacted: authorized under a template that is no longer live]";
-
-/// How a grant READ view renders its frozen resource. `Live` carries a resolved contract by
-/// construction — a NULL-hash grant for a template-extensible action with no live contract (e.g. a
-/// legacy set_env_var row now that the built-in is retired) can only be `Vanished`, never a `Live`
-/// with nothing to redact against, so the unredacted-secret path is unrepresentable.
+/// How a grant READ view renders its frozen resource. There is no suppression variant: a receipt is
+/// an immutable record rendered as recorded, and a later template edit never changes it.
 pub(super) enum FrozenContract {
     /// Redact Secret fields with this contract: a template grant whose frozen content hash still
     /// equals the live template's, or (historically) a built-in grant with a compiled-in contract.
     Live(&'static ActionContract),
-    /// No contract, but the resource is safe to render raw: a provider the template system cannot
-    /// extend (files/mock) has no Secret fields.
+    /// No live contract to redact against — the frozen template drifted or resolves to none — so the
+    /// stored resource is rendered verbatim. Today's request vocabulary has no Secret-class field, so
+    /// this leaks nothing; the `Live` guard keeps the invariant enforceable if one is ever added.
     Raw,
-    /// The grant froze a template that is gone or edited, or is a legacy template-extensible action
-    /// whose contract is now retired — suppress the whole resource, fail closed.
-    Vanished,
-}
-
-impl FrozenContract {
-    /// Funnel a template-extensible lookup: a resolved contract redacts; an unresolved one (`None`)
-    /// suppresses. Used where a NULL / matching-hash row MUST have a live contract — so absence is a
-    /// fail-closed `Vanished`, never a raw render.
-    pub(super) fn redact_or_suppress(contract: Option<&'static ActionContract>) -> Self {
-        match contract {
-            Some(c) => FrozenContract::Live(c),
-            None => FrozenContract::Vanished,
-        }
-    }
-}
-
-pub(super) fn suppress_resource(mut resource: Value) -> Value {
-    match &mut resource {
-        Value::Object(obj) => {
-            for v in obj.values_mut() {
-                *v = Value::String(FROZEN_TEMPLATE_GONE.to_string());
-            }
-            resource
-        }
-        // A null resource carries nothing; anything else non-object is suppressed whole.
-        Value::Null => resource,
-        _ => Value::String(FROZEN_TEMPLATE_GONE.to_string()),
-    }
 }
 
 /// `contract` is resolved by the caller through the broker's registry (the ratified template that

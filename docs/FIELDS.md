@@ -137,7 +137,7 @@ request and print a suggestion the decision never made.
 |---|---|
 | `request_id` | The one public id; `run --resume` and `log` both take it. No `grant_id` — a grant exists, but nothing anywhere takes the other id. |
 | `provider`, `action` | The verb. |
-| `resource` | The frozen fields, rendered through the same fail-closed redaction every grant view uses. These are what execution will use. |
+| `resource` | The frozen fields, rendered as recorded — a Secret-class field carries its marker while the grant's template is still live, and a later template edit never changes how a past receipt renders. These are what execution will use. |
 | `decision` | `allow`, as recorded. |
 | `status` | The grant's lifecycle status: decided, not yet terminal (typically `approved`). |
 | `matched_rule` | The canonical text of the sentence that admitted the request. |

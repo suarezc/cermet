@@ -5597,6 +5597,46 @@ fn grant_digest_binds_template_hash() {
     );
 }
 
+#[test]
+fn a_receipt_renders_its_frozen_resource_even_after_the_template_drifts() {
+    // A receipt is an immutable record. A grant frozen under one template hash still renders its
+    // resource verbatim when the live template's bytes have since changed (e.g. a comment-only
+    // edit): the durable record is the evidence, and a later vocabulary edit cannot change what was
+    // approved. There is no "authorized under a template that is no longer live" suppression.
+    let b =
+        open_broker_with_templates("providers: {}", vec![TWO_STEP_TEMPLATE.to_string()]).unwrap();
+    let resource = r#"{"owner":"acme","name":"website","branch":"main"}"#;
+
+    // The live template's own hash resolves through its contract (Live path): renders as recorded,
+    // no Secret field to redact in this vocabulary.
+    let live_hash = b
+        .templates
+        .content_hash("github", "test_two_step_write")
+        .expect("the template is loaded");
+    let rendered_live =
+        b.render_grant_resource("github", "test_two_step_write", Some(&live_hash), resource);
+    assert_eq!(rendered_live["owner"], json!("acme"));
+
+    // A drifted hash no longer matches the live template. The OLD behavior suppressed every value;
+    // the record must now render verbatim instead.
+    let rendered_drift = b.render_grant_resource(
+        "github",
+        "test_two_step_write",
+        Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        resource,
+    );
+    assert_eq!(
+        rendered_drift["owner"],
+        json!("acme"),
+        "a drifted template must not suppress the recorded resource"
+    );
+    assert_eq!(rendered_drift["branch"], json!("main"));
+    assert!(
+        !rendered_drift.to_string().contains("no longer live"),
+        "no suppression marker may appear: {rendered_drift}"
+    );
+}
+
 // ---- W2: the extra-provider registration hook + the credential-free execute path ----
 //
 // The daemon-owned `files` provider holds no secret and is registered onto the live broker after

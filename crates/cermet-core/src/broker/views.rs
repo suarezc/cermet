@@ -27,47 +27,39 @@ struct SessionActorRow {
 }
 
 impl Broker {
-    /// Fail-closed contract resolution for a grant READ view — the read-path companion to the
-    /// execute gate. A grant whose frozen `template_hash` no longer matches the live
-    /// template (this build vendors different bytes than the one that minted the grant) must NOT
-    /// render its frozen resource, since
-    /// a since-declassified field would otherwise leak raw.
+    /// Contract resolution for a grant READ view. A receipt renders its frozen resource AS
+    /// RECORDED: the durable record is the evidence, and a later vocabulary edit cannot change what
+    /// was approved. When the live template still matches the grant's frozen `template_hash` we
+    /// render THROUGH its contract, so a Secret-class field (structurally absent from today's
+    /// request vocabulary, but the guard stays enforceable) is never shown raw. When the template
+    /// has drifted, or no contract resolves, there is nothing to redact against and the resource is
+    /// rendered verbatim — never suppressed.
     pub(super) fn frozen_contract(
         &self,
         provider: &str,
         action: &str,
         frozen: Option<&str>,
     ) -> FrozenContract {
-        match frozen {
-            // A NULL frozen hash means a built-in action (template actions always freeze
-            // `Some(hash)`). On a template-extensible / pinned-egress provider there is nothing to
-            // redact the resource against, so suppress rather than leak. On a provider the template
-            // system cannot extend (files/mock) render the resource when there is no contract, else
-            // redact through it.
-            None => {
-                if self.templates.provider_extensible(provider) {
-                    FrozenContract::Vanished
-                } else {
-                    match self.templates.resolve(provider, action) {
-                        Some(c) => FrozenContract::Live(c),
-                        None => FrozenContract::Raw,
-                    }
-                }
-            }
-            Some(h) => {
-                if self.templates.content_hash(provider, action).as_deref() == Some(h) {
-                    FrozenContract::redact_or_suppress(self.templates.resolve(provider, action))
-                } else {
-                    FrozenContract::Vanished
-                }
-            }
+        // A NULL frozen hash is a built-in action (template actions always freeze `Some(hash)`) and
+        // has no template bytes to drift from; a `Some(hash)` matches only while the live template's
+        // bytes still hash equal.
+        let matches = match frozen {
+            None => true,
+            Some(h) => self.templates.content_hash(provider, action).as_deref() == Some(h),
+        };
+        match matches
+            .then(|| self.templates.resolve(provider, action))
+            .flatten()
+        {
+            Some(c) => FrozenContract::Live(c),
+            None => FrozenContract::Raw,
         }
     }
 
     /// Render a grant's stored `resource_json` for a view: redact Secret fields when the template is
-    /// live, fully suppress the resource when the frozen template is gone/edited. Every
-    /// view path routes through here so none can drift from the fail-closed rule.
-    fn render_grant_resource(
+    /// live, render the record verbatim when the frozen template has drifted or resolves to no
+    /// contract. Every view path routes through here so none can drift from the rule.
+    pub(super) fn render_grant_resource(
         &self,
         provider: &str,
         action: &str,
@@ -80,7 +72,6 @@ impl Broker {
                 summarize_large_payloads(contract, redact_secret_fields(contract, resource))
             }
             FrozenContract::Raw => resource,
-            FrozenContract::Vanished => suppress_resource(resource),
         }
     }
 
@@ -162,7 +153,6 @@ impl Broker {
         let environment = match self.frozen_contract(&provider, &action, template_hash.as_deref()) {
             FrozenContract::Live(contract) => projected_environment(Some(contract), &frozen_value),
             FrozenContract::Raw => projected_environment(None, &frozen_value),
-            FrozenContract::Vanished => None,
         };
         let resource = self.render_grant_resource(
             &provider,
