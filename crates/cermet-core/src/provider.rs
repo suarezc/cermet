@@ -74,13 +74,12 @@ pub struct ProviderResponse {
     pub result: Value,
     /// BROKER-AUTHORED metadata about this response, kept STRICTLY OUTSIDE `result`.
     ///
-    /// The response contract is verbatim: a template never edits the provider's JSON. Two things
-    /// nevertheless need to reach the agent alongside it — a setup verb's declared
-    /// `result_captures` (values the broker observed on an EARLIER step, which are not in this
-    /// body at all) and a GraphQL step's classified `outcome`/`conflict` verdict. Injecting either
-    /// into the body made receipt result != stored artifact != teed body, which is the exact
-    /// divergence the wire tee exists to catch. They ride here instead, the same way the money
-    /// evaluation rides alongside its response rather than inside it.
+    /// The response contract is verbatim: a template never edits the provider's JSON. Some things
+    /// nevertheless need to reach the agent alongside it — a GraphQL step's classified
+    /// `outcome`/`conflict` verdict, and a step's declared retained headers. Injecting either into
+    /// the body made receipt result != stored artifact != teed body, which is the exact divergence
+    /// the wire tee exists to catch. They ride here instead, the same way the money evaluation
+    /// rides alongside its response rather than inside it.
     ///
     /// Empty for the overwhelming majority of verbs, and omitted from the wire when empty.
     pub envelope: serde_json::Map<String, Value>,
@@ -359,6 +358,20 @@ pub trait Provider: Send + Sync {
         _partial: &CanonicalResource,
     ) -> std::result::Result<ResolvedEvidence, EvidenceFailure> {
         Err(EvidenceFailure::new(EvidenceFailureClass::Integrity))
+    }
+
+    /// The field this provider's own credential decides, if its descriptor declared one. The
+    /// daemon populates it at request freeze and re-derives it at execution; an agent may never
+    /// supply it.
+    fn credential_mode_field(&self) -> Option<&str> {
+        None
+    }
+
+    /// Derive the credential-decided value from the plaintext token. `None` means no declared
+    /// prefix matched — unresolved, never a guess. The token is read here and nowhere else; only
+    /// the derived value (a plain `"test"`/`"live"` string) leaves.
+    fn credential_mode(&self, _token: &str) -> Option<&str> {
+        None
     }
 
     /// Rewrite ONE request-supplied field to the provider's own canonical identifier,
@@ -1511,29 +1524,8 @@ fn render_body_string(
     Ok(Rendered::Present(Value::String(out)))
 }
 
-/// Build the sibling envelope's capture entries. Each declared output names a value the
-/// broker OBSERVED on an earlier step — it is not in the terminal body and never was, which is why
-/// inserting it there was always a fiction. There is no collision check to make any more: the
-/// envelope is broker-owned, so a provider field sharing a name with a capture output simply cannot
-/// clash with it.
-fn envelope_captures(
-    selected: &BTreeMap<String, String>,
-    captures: &BTreeMap<String, Value>,
-) -> Result<serde_json::Map<String, Value>> {
-    let mut out = serde_json::Map::new();
-    for (output, capture) in selected {
-        let value = captures.get(capture).ok_or_else(|| {
-            Error::Integrity(format!(
-                "result_captures references absent prior capture `{capture}`"
-            ))
-        })?;
-        out.insert(output.clone(), value.clone());
-    }
-    Ok(out)
-}
-
-/// The envelope is broker-authored, but a capture can carry a value the AGENT submitted (a setup
-/// verb echoing an id it was given), so it gets the same request-secret scrub the result does.
+/// The envelope is broker-authored, but an entry can carry a value the AGENT submitted, so it gets
+/// the same request-secret scrub the result does.
 fn scrub_envelope(
     envelope: serde_json::Map<String, Value>,
     scrub: &SecretScrub,
@@ -1684,7 +1676,6 @@ fn execute_template_steps(
 
         let method = Method::from_bytes(step.method.as_bytes())
             .map_err(|_| Error::Provider(format!("template step uses method `{}`", step.method)))?;
-        let mut poll_attempt = 0u8;
         // Label everything the tee records for this step with the verb that produced it, so the
         // sitting can pair a teed body with the receipt and artifact it became.
         let _tee = crate::wiretap::TeeScope::enter(
@@ -1693,15 +1684,10 @@ fn execute_template_steps(
             &step.id,
             &[idempotency_key],
         );
-        // What the step's declared `retain_headers` found on the response it acted on. Assigned by
-        // the loop below (a poll retry overwrites it, so it always describes the final attempt) and
-        // consumed once, at the terminal step, into the broker-authored envelope.
+        // What the step's declared `retain_headers` found on the response it acted on. Consumed
+        // once, at the terminal step, into the broker-authored envelope.
         let mut retained_headers: Vec<(String, Option<String>)> = Vec::new();
-        let (resp, money_evaluation) = loop {
-            if poll_attempt > 0 {
-                let delay_ms = step.poll.as_ref().map_or(0, |poll| poll.delay_ms);
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
+        let (resp, money_evaluation) = {
             let delivered = http_call_with_status(
                 eg,
                 method.clone(),
@@ -1714,7 +1700,7 @@ fn execute_template_steps(
                 step.body_encoding,
                 &step.retain_headers,
             )?;
-            let evaluated = match delivered {
+            match delivered {
                 DeliveredHttpResponse::Body {
                     status,
                     bytes,
@@ -1760,29 +1746,7 @@ fn execute_template_steps(
                     )
                 }
                 DeliveredHttpResponse::StatusOnly { response } => (response, EffectProof::Unproved),
-            };
-            let should_poll = step.poll.as_ref().is_some_and(|poll| {
-                evaluated.0.ok
-                    && poll_attempt + 1 < poll.attempts
-                    && step.expect_literal.iter().all(|(path, expected)| {
-                        dotted_lookup(&evaluated.0.result, path) == Some(expected)
-                    })
-                    && step.require.iter().all(|path| {
-                        dotted_lookup(&evaluated.0.result, path)
-                            .is_some_and(|value| !value.is_null())
-                    })
-                    && poll.until_nonempty.iter().any(|path| {
-                        matches!(
-                            dotted_lookup(&evaluated.0.result, path),
-                            Some(Value::Array(values)) if values.is_empty()
-                        )
-                    })
-            });
-            if should_poll {
-                poll_attempt += 1;
-                continue;
             }
-            break evaluated;
         };
 
         // GraphQL response semantics, declarative: classify a present nonempty or
@@ -2027,21 +1991,18 @@ fn execute_template_steps(
                 // credential; `scrub_result` below still removes agent-submitted secret values the
                 // provider echoed back, which is request-side custody, not response shaping.
                 let result = resp.result;
-                // These two are BROKER-AUTHORED and ride the sibling envelope, never the
-                // provider's object. `result_captures` are values observed on an EARLIER step (they
-                // are not in this body at all), and a graphql `outcome` is the step's own verdict.
-                // Writing either into `result` made receipt != artifact != wire, which is precisely
-                // what the tee comparison exists to catch.
-                let mut envelope = envelope_captures(&step.result_captures, &captures)?;
+                // What follows is BROKER-AUTHORED and rides the sibling envelope, never the
+                // provider's object: a graphql `outcome` is the step's own verdict, and a retained
+                // header is metadata about the response. Writing either into `result` made
+                // receipt != artifact != wire, which is precisely what the tee comparison catches.
+                let mut envelope = serde_json::Map::new();
                 // A graphql step's success is CLASSIFIED, not
                 // implied — reaching here means no errors and every `require` path resolved.
                 if step.graphql_query.is_some() {
                     envelope.insert("outcome".to_string(), json!("succeeded"));
                 }
-                // A declared retained header is broker-OBSERVED metadata about the response, not
-                // part of it, so it rides here for exactly the reason `result_captures` does —
-                // writing it into `result` would make receipt != artifact != teed body. Every entry
-                // is Some by now; the loop above already failed closed on any that was not.
+                // Every entry is Some by now; the loop above already failed closed on any that
+                // was not.
                 for (name, value) in retained_headers {
                     if let Some(value) = value {
                         envelope.insert(name, json!(value));
@@ -2165,6 +2126,36 @@ pub struct ProviderDescriptor {
     /// origin, and a template carries paths under it, never an origin of its own.
     #[serde(default)]
     pub git: Option<GitTransport>,
+    /// The field this provider's own credential decides, if its keys carry the answer. Absent means
+    /// the provider has no such field and no template of its may declare one.
+    #[serde(default)]
+    pub credential_mode: Option<CredentialMode>,
+}
+
+/// A provider whose credential itself says which BOOK it operates on. Stripe issues one key per
+/// mode and spells the mode in the key's prefix, so the daemon can name the mode of the credential
+/// it holds without asking the provider — the derived value is a plain `"test"`/`"live"` string,
+/// never a secret. The plaintext is matched inside the trusted runtime and dropped.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialMode {
+    /// The request field the derived value populates. A template that wants it declares the field
+    /// with `source: credential`; the agent may never supply it.
+    pub field: String,
+    /// Credential prefix → the value the field freezes to. Validation refuses a table where one
+    /// prefix extends another, so a match is unambiguous without longest-prefix arbitration.
+    pub by_prefix: BTreeMap<String, String>,
+}
+
+impl CredentialMode {
+    /// The value this credential decides, or `None` when no declared prefix matches. Unrecognized
+    /// is never a guess: the caller fails closed.
+    pub fn of(&self, token: &str) -> Option<&str> {
+        self.by_prefix
+            .iter()
+            .find(|(prefix, _)| token.starts_with(prefix.as_str()))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// A provider's git transport pin: the exact origin `git push` may reach, and how the credential is
@@ -2203,6 +2194,14 @@ pub struct SplitRewrite {
 
 fn default_auth() -> String {
     "bearer".to_string()
+}
+
+/// A non-empty `[a-z0-9_]` token — the shape every descriptor-declared name uses.
+fn is_lower_ident(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 fn default_sep() -> String {
     "/".to_string()
@@ -2298,6 +2297,49 @@ impl ProviderDescriptor {
             AuthShape::parse(&git.auth)
                 .map_err(|e| format!("provider `{}`: git.{e}", self.name))?;
         }
+        if let Some(mode) = &self.credential_mode {
+            if !is_lower_ident(&mode.field) {
+                return Err(format!(
+                    "provider `{}`: credential_mode.field `{}` must be a lowercase [a-z0-9_] \
+                     identifier",
+                    self.name, mode.field
+                ));
+            }
+            if mode.by_prefix.is_empty() {
+                return Err(format!(
+                    "provider `{}`: credential_mode.by_prefix must name at least one prefix (an \
+                     empty table can never resolve, so every request would refuse)",
+                    self.name
+                ));
+            }
+            for (prefix, value) in &mode.by_prefix {
+                if prefix.is_empty() {
+                    return Err(format!(
+                        "provider `{}`: credential_mode.by_prefix has an empty prefix, which \
+                         matches every credential",
+                        self.name
+                    ));
+                }
+                if !is_lower_ident(value) {
+                    return Err(format!(
+                        "provider `{}`: credential_mode value `{value}` must be a lowercase \
+                         [a-z0-9_] identifier",
+                        self.name
+                    ));
+                }
+                // One prefix extending another would make the match order-dependent, and the
+                // derived value decides which book a credential is allowed to touch.
+                for (other, other_value) in &mode.by_prefix {
+                    if other != prefix && other.starts_with(prefix.as_str()) {
+                        return Err(format!(
+                            "provider `{}`: credential_mode prefix `{other}` ({other_value}) \
+                             extends `{prefix}` ({value}); the match must be unambiguous",
+                            self.name
+                        ));
+                    }
+                }
+            }
+        }
         for sp in &self.split {
             if sp.into.len() < 2 {
                 return Err(format!(
@@ -2325,13 +2367,33 @@ pub use cermet_lang::provider::{
 };
 
 /// Every provider descriptor vendored with the core (one `include_str!` per file in
-/// `crates/cermet-core/providers/`). This is the shipped set `demo-up`/`dist` seed into the daemon's
-/// `providers.d`; github and vercel are ordinary ratified data here, no longer compiled-in structs.
+/// `crates/cermet-core/providers/`). This is the shipped set every daemon boots with; github and
+/// vercel are ordinary ratified data here, no longer compiled-in structs.
 pub const VENDORED_PROVIDERS: &[&str] = &[
     include_str!("../providers/github.yaml"),
     include_str!("../providers/vercel.yaml"),
     include_str!("../providers/stripe.yaml"),
 ];
+
+/// The vendored descriptor's credential-mode table for one provider name. Test doubles that stand
+/// in for a real provider carry no descriptor of their own; this is how they model the same
+/// credential-decided field the shipped descriptor declares, instead of inventing a second table.
+#[cfg(any(test, feature = "test-double"))]
+pub fn vendored_credential_mode(name: &str) -> Option<&'static CredentialMode> {
+    static TABLES: OnceLock<HashMap<String, CredentialMode>> = OnceLock::new();
+    TABLES
+        .get_or_init(|| {
+            VENDORED_PROVIDERS
+                .iter()
+                .filter_map(|doc| {
+                    let d = ProviderDescriptor::parse(doc)
+                        .expect("vendored provider descriptor must parse (packaging bug)");
+                    d.credential_mode.map(|mode| (d.name, mode))
+                })
+                .collect()
+        })
+        .get(name)
+}
 
 /// The names of the vendored (shipped) providers — the fallback "is this an egress-pinned, real
 /// provider?" set for a `DefaultContractSource` with no broker in hand. Derived by pure parse.
@@ -2420,6 +2482,9 @@ pub struct GenericProvider {
     git_transport: Option<(String, AuthShape)>,
     /// The hermetic git runner's settings — pinned binary, quarantine root, timeout, retention.
     git: crate::git::GitConfig,
+    /// The descriptor's credential-mode table, if it declared one: the field this provider's own
+    /// key decides, and the prefixes that decide it.
+    credential_mode: Option<CredentialMode>,
     templates: Arc<TemplateRegistry>,
 }
 
@@ -2445,6 +2510,7 @@ impl GenericProvider {
             brokers_credential,
             git_transport,
             git,
+            credential_mode: d.credential_mode,
             templates,
         }
     }
@@ -2468,6 +2534,7 @@ impl GenericProvider {
             brokers_credential,
             git_transport,
             git: crate::git::GitConfig::at(std::env::temp_dir()),
+            credential_mode: d.credential_mode,
             templates,
         }
     }
@@ -2589,7 +2656,20 @@ impl GenericProvider {
                 "a git verb declares no step (the validator refuses this shape)".into(),
             ));
         };
-        let branch = call.resource.req_str(&step.branch)?;
+        // The verb's own namespace, from the slot it declared. The runner never guesses: a
+        // `branch:` verb moves `refs/heads/`, a `tag:` verb moves `refs/tags/`, and the fully
+        // qualified name is what both the hop and the receipt carry.
+        let refname = match (&step.branch, &step.tag) {
+            (Some(branch), None) => format!("refs/heads/{}", call.resource.req_str(branch)?),
+            (None, Some(tag)) => format!("refs/tags/{}", call.resource.req_str(tag)?),
+            _ => {
+                return Err(Error::Provider(
+                    "a git push step names exactly one ref namespace (the validator refuses this \
+                     shape)"
+                        .into(),
+                ));
+            }
+        };
         let new_oid = call.resource.req_str(&step.new_oid)?;
         let mirror_old_oid =
             step.mirror_old_oid
@@ -2605,7 +2685,7 @@ impl GenericProvider {
             &url,
             Some(&credential),
             new_oid,
-            branch,
+            &refname,
         )?;
 
         // The receipt is DERIVED from broker-held data — the hook's frozen tuple plus the
@@ -2618,10 +2698,10 @@ impl GenericProvider {
         // it is a different fact: the tip the daemon's mirror held. With no fetch refresh the two
         // legitimately differ (a third party's direct push; a re-created mirror after aging), and
         // conflating them made the receipt misstate the transition.
-        let transition = crate::git::parse_upstream_transition(&run.stdout, branch);
+        let transition = crate::git::parse_upstream_transition(&run.stdout, &refname);
         let result = json!({
             "repository": repository,
-            "ref": format!("refs/heads/{branch}"),
+            "ref": refname,
             "new_oid": new_oid,
             "upstream_old_oid": transition.as_ref().and_then(|t| t.from.clone()),
             "upstream_created_ref": transition.as_ref().map(|t| t.created),
@@ -2756,6 +2836,16 @@ impl Provider for GenericProvider {
         } else {
             Err(EvidenceFailure::new(EvidenceFailureClass::Integrity))
         }
+    }
+    fn credential_mode_field(&self) -> Option<&str> {
+        self.credential_mode
+            .as_ref()
+            .map(|mode| mode.field.as_str())
+    }
+    fn credential_mode(&self, token: &str) -> Option<&str> {
+        self.credential_mode
+            .as_ref()
+            .and_then(|mode| mode.of(token))
     }
     fn canonicalize_request_field(
         &self,

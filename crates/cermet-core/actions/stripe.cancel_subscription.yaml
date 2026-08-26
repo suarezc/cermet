@@ -2,8 +2,9 @@ provider: stripe
 action: cancel_subscription
 fields:
   - { name: subscription, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [subscription]
-execution_targets: [subscription]
+execution_targets: [subscription, mode]
 http:
   steps:
     - id: cancel

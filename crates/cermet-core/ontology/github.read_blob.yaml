@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: github
 action: read_blob
 binds:
-  provider_descriptor_sha256: bb8e4e3d90f653cded216743122ba7a03b8dfa4eaca6c8907f381f01e4475fbf
-  action_template_sha256: 79573eb520daeeeadaba3b74f0cb1ac350b04cc9011c5620c559235bc9e89673
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 0e37dda6afbea807df1447cc2878b4756954cf0e2364ee68e7ffe755a74cf528
 semantics:
   resource_family: git_blob
   provider_operation: blob_read

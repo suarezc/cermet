@@ -405,6 +405,10 @@ impl OntologyArtifacts {
             include_str!("../actions/github.push.yaml"),
         );
         templates.insert(
+            ("github", "push_tag"),
+            include_str!("../actions/github.push_tag.yaml"),
+        );
+        templates.insert(
             ("github", "fetch"),
             include_str!("../actions/github.fetch.yaml"),
         );
@@ -420,6 +424,18 @@ impl OntologyArtifacts {
         templates.insert(
             ("github", "read_job_log"),
             include_str!("../actions/github.read_job_log.yaml"),
+        );
+        templates.insert(
+            ("github", "read_releases"),
+            include_str!("../actions/github.read_releases.yaml"),
+        );
+        templates.insert(
+            ("github", "read_workflow_runs"),
+            include_str!("../actions/github.read_workflow_runs.yaml"),
+        );
+        templates.insert(
+            ("github", "publish_release"),
+            include_str!("../actions/github.publish_release.yaml"),
         );
         templates.insert(
             ("github", "create_issue"),
@@ -554,6 +570,58 @@ impl OntologyArtifacts {
             ("stripe", "create_standard_payout"),
             include_str!("../actions/stripe.create_standard_payout.yaml"),
         );
+        templates.insert(
+            ("stripe", "create_customer"),
+            include_str!("../actions/stripe.create_customer.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_product"),
+            include_str!("../actions/stripe.create_product.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_recurring_price"),
+            include_str!("../actions/stripe.create_recurring_price.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_draft_invoice"),
+            include_str!("../actions/stripe.create_draft_invoice.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_webhook_endpoint_fixed_bundle"),
+            include_str!("../actions/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+        );
+        templates.insert(
+            ("stripe", "attach_payment_method"),
+            include_str!("../actions/stripe.attach_payment_method.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_subscription"),
+            include_str!("../actions/stripe.create_subscription.yaml"),
+        );
+        templates.insert(
+            ("stripe", "create_charge_from_source"),
+            include_str!("../actions/stripe.create_charge_from_source.yaml"),
+        );
+        templates.insert(
+            ("stripe", "list_disputes"),
+            include_str!("../actions/stripe.list_disputes.yaml"),
+        );
+        templates.insert(
+            ("stripe", "read_account"),
+            include_str!("../actions/stripe.read_account.yaml"),
+        );
+        templates.insert(
+            ("stripe", "finalize_invoice"),
+            include_str!("../actions/stripe.finalize_invoice.yaml"),
+        );
+        templates.insert(
+            ("stripe", "delete_webhook_endpoint"),
+            include_str!("../actions/stripe.delete_webhook_endpoint.yaml"),
+        );
+        templates.insert(
+            ("stripe", "list_webhook_endpoints"),
+            include_str!("../actions/stripe.list_webhook_endpoints.yaml"),
+        );
 
         Self {
             descriptors,
@@ -564,7 +632,7 @@ impl OntologyArtifacts {
 
 /// The V1 ontology records vendored with the core, one `include_str!` per file in
 /// `crates/cermet-core/ontology/`: six read GitHub records (repo/ref/tree/blob/thread/PR), the
-/// git-native `push`, the GitHub guarded-writes-and-automation set (two Actions reads —
+/// git-native `push` and `push_tag`, the GitHub guarded-writes-and-automation set (two Actions reads —
 /// `read_workflow_run` plus `read_workflow_run_jobs` —
 /// plus seven durable-broker-only writes — create_branch/create_issue/comment_thread/
 /// create_pull_request_review/request_workflow_cancel/dispatch_workflow/
@@ -589,6 +657,8 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/github.read_pull_request.yaml"),
     // the system-git carrier verb.
     include_str!("../ontology/github.push.yaml"),
+    // The tag namespace's own word: a branch sentence never widens onto it.
+    include_str!("../ontology/github.push_tag.yaml"),
     include_str!("../ontology/github.fetch.yaml"),
     // GitHub guarded writes and automation: the two Actions reads plus seven guarded
     // writes. All run on the durable daemon (there is no separate daemonless surface).
@@ -599,6 +669,10 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     // The minted-URL read that ends the diagnosis ladder — the broker spends the credential to mint
     // a ~60s log URL, native curl moves the bytes.
     include_str!("../ontology/github.read_job_log.yaml"),
+    // The release plane: find the run for a pushed commit, find the draft, publish it.
+    include_str!("../ontology/github.read_workflow_runs.yaml"),
+    include_str!("../ontology/github.read_releases.yaml"),
+    include_str!("../ontology/github.publish_release.yaml"),
     include_str!("../ontology/github.create_branch.yaml"),
     include_str!("../ontology/github.create_issue.yaml"),
     include_str!("../ontology/github.comment_thread.yaml"),
@@ -635,6 +709,19 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/stripe.retry_invoice_payment.yaml"),
     include_str!("../ontology/stripe.refund_charge_bounded.yaml"),
     include_str!("../ontology/stripe.create_standard_payout.yaml"),
+    include_str!("../ontology/stripe.create_customer.yaml"),
+    include_str!("../ontology/stripe.create_product.yaml"),
+    include_str!("../ontology/stripe.create_recurring_price.yaml"),
+    include_str!("../ontology/stripe.create_draft_invoice.yaml"),
+    include_str!("../ontology/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+    include_str!("../ontology/stripe.attach_payment_method.yaml"),
+    include_str!("../ontology/stripe.create_subscription.yaml"),
+    include_str!("../ontology/stripe.create_charge_from_source.yaml"),
+    include_str!("../ontology/stripe.list_disputes.yaml"),
+    include_str!("../ontology/stripe.read_account.yaml"),
+    include_str!("../ontology/stripe.finalize_invoice.yaml"),
+    include_str!("../ontology/stripe.delete_webhook_endpoint.yaml"),
+    include_str!("../ontology/stripe.list_webhook_endpoints.yaml"),
     // Appended last: two hash-join tests index VENDORED_ONTOLOGY[0].
     include_str!("../ontology/vercel.deploy.yaml"),
     include_str!("../ontology/vercel.list_projects.yaml"),

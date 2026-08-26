@@ -1,0 +1,24 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: list_webhook_endpoints
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 74b0d197da9d0f80fcff4642837e4ed411e5fad908321f4a562766ca14aff53b
+semantics:
+  resource_family: webhook_endpoint
+  provider_operation: webhook_endpoint_list
+  risk_class: observation
+  sensitivity: operational
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: List the webhook endpoints the credential's own account delivers events to, up to Stripe's page maximum.
+  cautions:
+    - The credential IS the account, so the only thing a sentence can pin is the book the key names.
+    - Each row carries the delivery URL, enabled events, and status - the account's event-egress configuration - and none of them carries the endpoint's signing secret, which Stripe returns only on creation.
+    - The page is capped at Stripe's maximum of 100 with no cursor, so an account holding more endpoints than that is read partially and has_more says so.
+sources:
+  - STRIPE-WEBHOOK-LIST
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

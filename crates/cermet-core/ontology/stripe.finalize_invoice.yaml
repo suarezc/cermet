@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: finalize_invoice
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 37decef84c2b1d11bc496001dc3f852c67d90962db58fcc0a534737e1ebbb804
+semantics:
+  resource_family: invoice
+  provider_operation: invoice_finalize
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: irreversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Finalize one exact draft invoice into an open, uncollected invoice without attempting collection.
+  cautions:
+    - A finalized invoice can never return to draft; voiding, paying, and marking uncollectible are separate grants and none of them undoes the finalization.
+    - Finalizing issues the invoice number and the hosted and PDF documents, so the customer-facing artifacts exist from this moment on.
+    - auto_advance is frozen false, so Stripe attempts no payment and sends no dunning email of its own after this effect.
+    - Stripe settles a zero-amount invoice at finalization rather than opening it, so the open postcondition does not hold and the effect is reported unproved.
+    - The LIKELY native ceiling is RAK Invoices Write or App invoice_write; sandbox proof remains deferred.
+sources:
+  - STRIPE-INVOICE-FINALIZE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

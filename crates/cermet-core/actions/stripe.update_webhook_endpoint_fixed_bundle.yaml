@@ -4,8 +4,9 @@ action: update_webhook_endpoint_fixed_bundle
 fields:
   - { name: endpoint, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: url, type: str, required: true, class: identity, binding: exact_resource_pin, format: https_url }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [endpoint, url]
-execution_targets: [endpoint, url]
+execution_targets: [endpoint, url, mode]
 http:
   steps:
     - id: update

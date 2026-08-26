@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: get_dispute_summary
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 51f217c3d66d731f4a2d25e745c12725cf3fbe743838be633e0ade6344af1773
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 33fedc6dd82d02a2c81c033747494f7e00eed9e4ecabfcee8adb79b5da198bda
 semantics:
   resource_family: dispute
   provider_operation: dispute_retrieve_summary

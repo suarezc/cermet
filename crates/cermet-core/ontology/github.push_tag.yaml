@@ -1,0 +1,27 @@
+schema: cermet.grounded-ontology/v1
+provider: github
+action: push_tag
+binds:
+  provider_descriptor_sha256: 38fd952acd1a1f5b4b58667e86a31a9a70fb9079ebc3c5c7502af8f05ce08204
+  action_template_sha256: 6f3ca15edd00c1e679f2cd61df71ea2f6c025b25331d32fc454d39f626924605
+semantics:
+  resource_family: repository
+  provider_operation: ref_update
+  risk_class: external_state_change
+  sensitivity: source_code
+  reversibility: compensatable
+  completion: terminal
+  idempotency: provider_cas
+review:
+  summary: Move one tag on a pinned repository, decided by git's update hook on the mirror.
+  cautions:
+    - Not requestable; the decision is git's update hook, driven by an ordinary git push of a tag.
+    - A branch sentence does not admit a tag — this is a separate verb, and each release names its own version.
+    - A tag push is usually what a forge's release automation triggers on; the effect reaches past the repository.
+    - The upstream refuses to move an existing tag under a plain push, so a re-tag is a refusal rather than a silent rewrite.
+    - mirror_old_oid is the daemon mirror's tip and is normally absent for a tag; the receipt carries the upstream's own transition beside it.
+    - Deleting a tag is this verb with new_oid at the zero oid, under the same sentence.
+    - An annotated tag's new_oid is the tag OBJECT's id; nothing peels it to a commit.
+sources:
+  - GH-GIT-HTTPS-REMOTES
+  - GH-PERSONAL-ACCESS-TOKENS

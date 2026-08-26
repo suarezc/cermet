@@ -97,7 +97,7 @@ package: build-release
 	test -n "$(DEB_ARCH)"; \
 	rm -rf "$(PACKAGE_ROOT)"; \
 	mkdir -p "$(PACKAGE_ROOT)/DEBIAN" "$(PACKAGE_ROOT)/usr/bin" \
-		"$(PACKAGE_ROOT)/usr/share/cermet/linux" "$(PACKAGE_ROOT)/usr/share/cermet/catalog"; \
+		"$(PACKAGE_ROOT)/usr/share/cermet/linux"; \
 	install -m 0755 "$(REPO_DIR)/target/release/cermet" "$(PACKAGE_ROOT)/usr/bin/cermet"; \
 	ln -sfn cermet "$(PACKAGE_ROOT)/usr/bin/cermetd"; \
 	ln -sfn cermet "$(PACKAGE_ROOT)/usr/bin/git-remote-cermet"; \
@@ -109,8 +109,6 @@ package: build-release
 	install -m 0644 "$(DIST_DIR)linux/cermet-update-check.timer" "$(PACKAGE_ROOT)/usr/share/cermet/linux/cermet-update-check.timer"; \
 	install -m 0644 "$(DIST_DIR)linux/config.toml" "$(PACKAGE_ROOT)/usr/share/cermet/linux/config.toml"; \
 	install -m 0644 "$(DIST_DIR)linux/pam.cermet" "$(PACKAGE_ROOT)/usr/share/cermet/linux/pam.cermet"; \
-	cp -a "$(DIST_DIR)catalog/actions.d" "$(PACKAGE_ROOT)/usr/share/cermet/catalog/"; \
-	cp -a "$(DIST_DIR)catalog/providers.d" "$(PACKAGE_ROOT)/usr/share/cermet/catalog/"; \
 	find "$(PACKAGE_ROOT)" -type d -exec chmod 0755 {} +; \
 	find "$(PACKAGE_ROOT)/usr/share" -type f -exec chmod 0644 {} +; \
 	install -m 0755 "$(DIST_DIR)package/postinstall.sh" "$(PACKAGE_ROOT)/DEBIAN/postinst"; \
@@ -185,8 +183,6 @@ verify:
 	test -f "$(DIST_DIR)macos/dev.cermet.update-check.plist"; \
 	grep -q 'daily-check' "$(DIST_DIR)macos/dev.cermet.update-check.plist"; \
 	test -f "$(DIST_DIR)macos/config.toml"; \
-	test -d "$(DIST_DIR)catalog/actions.d"; \
-	test -d "$(DIST_DIR)catalog/providers.d"; \
 	test ! -e "$(DIST_DIR)install.sh"; \
 	test ! -e "$(DIST_DIR)macos/install.sh"; \
 	test ! -e "$(DIST_DIR)macos/provision-runtime-dir.sh"; \

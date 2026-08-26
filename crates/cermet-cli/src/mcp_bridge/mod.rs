@@ -249,7 +249,6 @@ struct CatalogFieldView {
 struct CatalogEntryView {
     provider: String,
     action: String,
-    class: String,
     fields: Vec<CatalogFieldView>,
     execution_targets: Vec<String>,
     requestable: bool,
@@ -977,7 +976,7 @@ fn authority_stamp(e: &CatalogEntryView) -> &'static str {
         // A sentence selects it, but this broker does not hold the verb.
         "not available on this broker — a request denies"
     } else {
-        "no standing sentence — propose one"
+        "no standing sentence — ask the operator for one"
     }
 }
 
@@ -996,6 +995,20 @@ fn git_plane_hint(e: &CatalogEntryView, indent: &str) -> Option<String> {
     })
 }
 
+/// A relay verb is not reached by a request either: the broker authorizes a scoped session and
+/// credentials a native client's OWN outbound calls, so the request answers with an invocation
+/// rather than an effect. The entry says which tool runs it, the same way the git-plane entry says
+/// which command wires the repository. `None` for every other execution shape.
+fn relay_hint(e: &CatalogEntryView, indent: &str) -> Option<String> {
+    (e.shape.as_deref() == Some("relay")).then(|| {
+        format!(
+            "{indent}exercised by running the native `{}` CLI against the invocation this request \
+             prints; the broker supplies the credential, you supply the tool",
+            e.provider
+        )
+    })
+}
+
 /// The compact CONTRACT view: one line per admitted verb — the fields the agent supplies, the
 /// execution shape, and every sentence that admits it with its bounds. The point: an agent that
 /// must otherwise cross-join a 69-verb dictionary against a terse rule list reads its standing
@@ -1007,7 +1020,8 @@ fn render_allowed_catalog(c: &CatalogView, surface: CatalogSurface) -> String {
         return format!(
             "allowed now (0 verbs): no standing sentence admits any loaded verb on this box.\n\
              Nothing can be requested until your operator authors one. {} is the dictionary of \
-             verbs that EXIST — propose the sentence you need from it, and note that {}.",
+             verbs that EXIST — ask the operator for the sentence you need from it, and note that \
+             {}.",
             surface.all_zoom(),
             surface.unruled_path()
         );
@@ -1039,6 +1053,7 @@ fn render_allowed_catalog(c: &CatalogView, surface: CatalogSurface) -> String {
             fields.join(", ")
         ));
         lines.extend(git_plane_hint(e, "      "));
+        lines.extend(relay_hint(e, "      "));
         // A carve-out deny narrows this allow. It gets its own line even in the compact
         // zoom — a contract that shows the allow and hides the exception overstates capability,
         // which is the one thing this view exists to stop.
@@ -1108,13 +1123,7 @@ pub(crate) fn render_catalog_zoom(
     zoom: CatalogZoom,
     surface: CatalogSurface,
 ) -> Result<AgentOutput, AgentError> {
-    let (mut c, _): (CatalogView, Value) = parse_view("catalog", resp)?;
-    // Setup-class verbs (the `fixture_*` test fixtures) are broker plumbing,
-    // never capability. The runtime providers' `supports_action` does not carry them, so a `run`
-    // refuses them as nonexistent — and a projection that advertises them invites a proposed and
-    // ratified sentence for a verb that can never execute. Dropped HERE, in the one projection both
-    // surfaces share, so the daemon's ctl frame keeps the full set.
-    c.catalog.retain(|e| e.class != "setup");
+    let (c, _): (CatalogView, Value) = parse_view("catalog", resp)?;
     let json = serde_json::to_value(&c).map_err(|e| AgentError::Malformed(e.to_string()))?;
     if zoom == CatalogZoom::Allowed {
         return Ok(AgentOutput {
@@ -1134,10 +1143,7 @@ pub(crate) fn render_catalog_zoom(
                 .as_deref()
                 .map(|s| format!(" shape:{s}"))
                 .unwrap_or_default();
-            lines.push(format!(
-                "  {}.{}  [{tag}] class:{}{shape}",
-                e.provider, e.action, e.class
-            ));
+            lines.push(format!("  {}.{}  [{tag}]{shape}", e.provider, e.action));
             let fields: Vec<String> = e
                 .fields
                 .iter()
@@ -1169,6 +1175,7 @@ pub(crate) fn render_catalog_zoom(
                 e.response.returns, e.response.retention, e.response.errors
             ));
             lines.extend(git_plane_hint(e, "    "));
+            lines.extend(relay_hint(e, "    "));
             // The dictionary is for PROPOSING, so every entry states its authority —
             // an entry that only says "requestable" overstates what the agent may actually do.
             lines.push(admission_line(e));
@@ -1647,11 +1654,11 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "get_charge", "class": "corpus",
+                { "provider": "stripe", "action": "get_charge",
                   "fields": [], "execution_targets": ["charge"], "requestable": true, "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"},
                   "response": { "returns": "verbatim", "retention": "full",
                                 "errors": "status_and_body" } },
-                { "provider": "stripe", "action": "refund_charge_bounded", "class": "corpus",
+                { "provider": "stripe", "action": "refund_charge_bounded",
                   "fields": [], "execution_targets": ["charge"], "requestable": true, "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"},
                   "response": { "returns": "verbatim", "retention": "none",
                                 "errors": "status_and_body" } }
@@ -1685,7 +1692,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "vercel", "action": "deploy", "class": "corpus",
+                { "provider": "vercel", "action": "deploy",
                   "fields": [], "execution_targets": ["project"], "requestable": true }
             ]
         });
@@ -2040,14 +2047,14 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [
                     { "name": "owner", "type": "str", "required": true, "class": "identity", "binding": "exact_resource_pin", "origin": "agent_request", "forms": ["=", "in"] }
                   ],
                   "execution_targets": ["owner"], "requestable": true, "shape": "http_api_call",
                   "admitted_by": ["allow github.read_repo"],
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                { "provider": "stripe", "action": "get_charge", "class": "corpus",
+                { "provider": "stripe", "action": "get_charge",
                   "fields": [], "execution_targets": ["charge"], "requestable": false, "shape": "http_api_call",
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
             ]
@@ -2058,7 +2065,9 @@ mod tests {
         assert!(out.text.contains("[allowed now]"));
         assert!(out.text.contains("agent_request"));
         assert!(out.text.contains("stripe.get_charge"));
-        assert!(out.text.contains("[no standing sentence — propose one]"));
+        assert!(out
+            .text
+            .contains("[no standing sentence — ask the operator for one]"));
         assert!(out.text.contains("shape:http_api_call"));
     }
 
@@ -2071,7 +2080,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "push", "class": "corpus",
+                { "provider": "github", "action": "push",
                   "fields": [
                     { "name": "owner", "type": "str", "required": true, "class": "identity", "binding": "exact_resource_pin", "origin": "agent_request", "forms": ["=", "in"] }
                   ],
@@ -2095,7 +2104,7 @@ mod tests {
         let http = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [], "execution_targets": ["owner"], "requestable": true, "shape": "http_api_call",
                   "admitted_by": ["allow github.read_repo"],
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
@@ -2103,6 +2112,48 @@ mod tests {
         });
         let out = render_catalog_zoom(&http, CatalogZoom::All, CatalogSurface::Cli).unwrap();
         assert!(!out.text.contains("git remote set-url"), "{}", out.text);
+    }
+
+    /// The same gap on the OTHER shape nothing reaches through a request: a relay entry named
+    /// `shape:relay` and left "so how do I run it?" to be inferred. It states the tool, and the
+    /// division of labour, in both zooms.
+    #[test]
+    fn a_relay_verb_states_how_it_is_exercised_in_both_zooms() {
+        let resp = json!({
+            "kind": "catalog",
+            "catalog": [
+                { "provider": "vercel", "action": "deploy",
+                  "fields": [
+                    { "name": "project", "type": "str", "required": true, "class": "identity", "binding": "exact_resource_pin", "origin": "agent_request", "forms": ["=", "in"] }
+                  ],
+                  "execution_targets": ["project"], "requestable": true, "shape": "relay",
+                  "admitted_by": ["allow vercel.deploy where project = \"site\""],
+                  "response": {"returns": "receipt", "retention": "none", "errors": "receipt"} }
+            ]
+        });
+        for zoom in [CatalogZoom::All, CatalogZoom::Allowed] {
+            let out = render_catalog_zoom(&resp, zoom, CatalogSurface::Cli).unwrap();
+            assert!(
+                out.text.contains(
+                    "exercised by running the native `vercel` CLI against the invocation this \
+                     request prints; the broker supplies the credential, you supply the tool"
+                ),
+                "{zoom:?}: {}",
+                out.text
+            );
+        }
+        // Keyed on the execution shape, exactly like the git-plane line: an HTTP verb has none.
+        let http = json!({
+            "kind": "catalog",
+            "catalog": [
+                { "provider": "github", "action": "read_repo",
+                  "fields": [], "execution_targets": ["owner"], "requestable": true, "shape": "http_api_call",
+                  "admitted_by": ["allow github.read_repo"],
+                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
+            ]
+        });
+        let out = render_catalog_zoom(&http, CatalogZoom::All, CatalogSurface::Cli).unwrap();
+        assert!(!out.text.contains("exercised by running"), "{}", out.text);
     }
 
     /// A field line stopped one inference short of "what can I WHERE on" — it printed
@@ -2116,7 +2167,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "refund", "class": "corpus",
+                { "provider": "stripe", "action": "refund",
                   "fields": [
                     { "name": "charge", "type": "str", "required": true, "class": "identity",
                       "binding": "exact_resource_pin", "origin": "agent_request",
@@ -2168,7 +2219,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "stripe", "action": "refund", "class": "corpus",
+                { "provider": "stripe", "action": "refund",
                   "fields": [
                     { "name": "amount", "type": "int", "required": true, "class": "side_effect",
                       "binding": "bounded", "origin": "agent_request",
@@ -2198,7 +2249,7 @@ mod tests {
     fn no_dictionary_stamp_reads_as_permission_unless_a_sentence_admits_the_verb() {
         let entry = |extra: serde_json::Value| -> serde_json::Value {
             let mut e = json!({
-                "provider": "stripe", "action": "get_charge", "class": "corpus",
+                "provider": "stripe", "action": "get_charge",
                 "fields": [], "execution_targets": ["charge"], "requestable": true,
                 "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"}
             });
@@ -2248,7 +2299,7 @@ mod tests {
         // Nothing rules it: the widening candidate, and the only "propose one" case.
         assert_eq!(
             stamp_of(entry(json!({"sentence_denied": true}))),
-            "[no standing sentence — propose one]"
+            "[no standing sentence — ask the operator for one]"
         );
         // The retired stamps are gone entirely.
         for retired in ["[requestable]", "[needs ratify]"] {
@@ -2261,51 +2312,36 @@ mod tests {
         }
     }
 
-    /// The `fixture_*` verbs are setup plumbing, not capability. They
-    /// rendered in the dictionary as real verbs stamped "no standing sentence — propose one" while
-    /// `cermet run` refused them as *nonexistent* ("no verb matches this intent", no widening hint),
-    /// because the runtime provider's `supports_action` never lists them. Two surfaces contradicting
-    /// each other is how a model proposes — and a human ratifies — a sentence for a verb that can
-    /// never execute. The shared projection drops the whole class, in both zooms and in `--json`.
+    /// THE CORPUS INVARIANT: every verb a sentence can name is a verb the catalog lists. A verb the
+    /// projection dropped was still nameable in a sentence and still executable by name, so an agent
+    /// could read authority for a verb it could not find — and could run anyway. The projection
+    /// therefore hides nothing: it renders every verb the daemon's frame carries.
     #[test]
-    fn setup_class_verbs_never_reach_either_catalog_projection() {
-        let resp = json!({
-            "kind": "catalog",
-            "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
-                  "fields": [], "execution_targets": ["owner"], "requestable": true,
-                  "admitted_by": ["allow github.read_repo"],
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                { "provider": "github", "action": "fixture_repositories_discover", "class": "setup",
-                  "fields": [], "execution_targets": ["owner"], "requestable": true,
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} },
-                // Even an ADMITTED setup verb stays off the surface: a standing sentence on one is
-                // exactly the mistake this filter exists to stop propagating.
-                { "provider": "stripe", "action": "fixture_customer_create", "class": "setup",
-                  "fields": [], "execution_targets": ["customer"], "requestable": true,
-                  "admitted_by": ["allow stripe.fixture_customer_create"],
-                  "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
-            ]
-        });
-        for zoom in [CatalogZoom::All, CatalogZoom::Allowed] {
-            for surface in [CatalogSurface::Cli, CatalogSurface::Mcp] {
-                let out = render_catalog_zoom(&resp, zoom, surface).expect("renders");
-                assert!(
-                    !out.text.contains("fixture_"),
-                    "{zoom:?}/{surface:?} rendered a setup verb: {}",
-                    out.text
-                );
-                assert!(
-                    !out.json.to_string().contains("fixture_"),
-                    "{zoom:?}/{surface:?} json carried a setup verb"
-                );
-                assert!(out.text.contains("github.read_repo"));
-            }
-        }
-        // The count the dictionary prints is the count it shows.
-        let all =
-            render_catalog_zoom(&resp, CatalogZoom::All, CatalogSurface::Cli).expect("renders");
-        assert!(all.text.contains("verbs (1):"), "{}", all.text);
+    fn the_projection_hides_no_vendored_verb() {
+        let entries: Vec<Value> = cermet_core::templates::vendored_action_templates()
+            .iter()
+            .map(|doc| {
+                let parsed: Value = serde_yaml::from_str(doc).expect("vendored document parses");
+                json!({
+                    "provider": parsed["provider"],
+                    "action": parsed["action"],
+                    "fields": [],
+                    "execution_targets": [],
+                    "requestable": true,
+                    "response": {"returns": "verbatim", "retention": "full",
+                                 "errors": "status_and_body"},
+                })
+            })
+            .collect();
+        let expected = entries.len();
+        let resp = json!({ "kind": "catalog", "catalog": entries });
+        let out =
+            render_catalog_zoom(&resp, CatalogZoom::All, CatalogSurface::Mcp).expect("renders");
+        assert!(
+            out.text.contains(&format!("verbs ({expected}):")),
+            "the projection dropped a vendored verb; it must render all {expected}:\n{}",
+            out.text
+        );
     }
 
     #[test]
@@ -2313,7 +2349,7 @@ mod tests {
         let resp = json!({
             "kind": "catalog",
             "catalog": [
-                { "provider": "github", "action": "read_repo", "class": "corpus",
+                { "provider": "github", "action": "read_repo",
                   "fields": [], "execution_targets": ["owner"], "requestable": true,
                   "response": {"returns": "verbatim", "retention": "full", "errors": "status_and_body"} }
             ]

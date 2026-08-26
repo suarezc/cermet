@@ -3,7 +3,7 @@ provider: vercel
 action: deploy
 binds:
   provider_descriptor_sha256: 117444101b16b5b8dc83be5e1b894fed9316457312fac1e380e7aad3296f4382
-  action_template_sha256: 2037a6222a1ee5e7c012c1ba1e49486b1da95bfe93177c91dabeaaebae93079d
+  action_template_sha256: 99504d4aa7d58dd9546669df1d019fc1e395b92c44dbddd87271e4298f5847c1
 semantics:
   resource_family: deployment
   provider_operation: relay_deploy

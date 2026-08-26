@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_recurring_price
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 90bcec8440ec464198c043471d042e2261cf1903e73a6ef219547e265647bce2
+semantics:
+  resource_family: price
+  provider_operation: price_create
+  risk_class: external_state_change
+  sensitivity: public_metadata
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one active recurring price at an exact interval and currency for one exact product.
+  cautions:
+    - unit_amount is the sole bounded quantity; a sentence caps what any single price may charge per period.
+    - The interval is a pinned input, so a sentence may admit monthly and refuse yearly.
+    - A one-time price, tiered and metered billing, lookup keys, and currency options are absent.
+    - Deletion is not authorized; archive_price is the reversible exit.
+sources:
+  - STRIPE-PRICE-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

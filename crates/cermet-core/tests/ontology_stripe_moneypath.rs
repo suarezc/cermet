@@ -5,9 +5,13 @@ use std::collections::BTreeSet;
 use cermet_core::contract::{AllowBinding, FieldClass, ScalarKind};
 use cermet_core::evidence;
 use cermet_core::sets::{vendored_set_actions, SetResolver, VendoredSetResolver};
-use cermet_core::templates::{catalog_of, CatalogClass, TemplateRegistry, VENDORED_CATALOG};
+use cermet_core::templates::{catalog_of, TemplateRegistry, VENDORED_CATALOG};
 use cermet_core::{OntologyArtifacts, OntologyCatalog, SourceRegistry, VENDORED_ONTOLOGY};
 use serde_yaml::Value;
+
+mod common;
+use common::PRODUCT_VERBS;
+use common::VENDORED_ONTOLOGY_RECORDS;
 
 const ACTIONS: [&str; 7] = [
     "create_payment_intent_off_session",
@@ -49,20 +53,14 @@ fn yaml_strings(value: &Value) -> Vec<&str> {
 
 #[test]
 fn seven_moneypath_actions_and_sidecars_are_vendored_with_catalog_parity() {
-    assert_eq!(VENDORED_ONTOLOGY.len(), 48);
+    assert_eq!(VENDORED_ONTOLOGY.len(), VENDORED_ONTOLOGY_RECORDS);
 
     let templates = vendored_registry();
     let catalog = catalog_of(&templates, true);
-    assert_eq!(
-        catalog
-            .iter()
-            .filter(|entry| entry.class == CatalogClass::Corpus)
-            .count(),
-        58
-    );
+    assert_eq!(catalog.len(), PRODUCT_VERBS);
     let sources = SourceRegistry::official().unwrap();
     let ontology = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources).unwrap();
-    assert_eq!(ontology.len(), 48);
+    assert_eq!(ontology.len(), VENDORED_ONTOLOGY_RECORDS);
     ontology.join_all(&OntologyArtifacts::vendored()).unwrap();
 
     for action in ACTIONS {
@@ -231,7 +229,9 @@ fn money_contracts_have_one_bounded_amount_and_provider_fields_are_not_agent_inp
     let agent_inputs = [
         (
             "create_payment_intent_off_session",
-            &["amount", "customer", "payment_method"][..],
+            // `capture_method` is an OPTIONAL agent input: absent sends no key, so the account's
+            // own default decides, and a sentence that pins it decides instead.
+            &["amount", "capture_method", "customer", "payment_method"][..],
         ),
         (
             "confirm_payment_intent",
@@ -305,7 +305,7 @@ fn mutation_wires_freeze_the_reviewed_single_effect_shapes() {
         (
             "create_payment_intent_off_session",
             "/v1/payment_intents",
-            "{ amount: \"{amount}\", currency: \"{currency}\", customer: \"{customer}\", payment_method: \"{payment_method}\", confirm: false }",
+            "{ amount: \"{amount}\", currency: \"{currency}\", customer: \"{customer}\", payment_method: \"{payment_method}\", capture_method: \"{capture_method?}\", confirm: false }",
         ),
         (
             "confirm_payment_intent",

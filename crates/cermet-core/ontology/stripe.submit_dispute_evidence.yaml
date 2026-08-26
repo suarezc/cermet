@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: submit_dispute_evidence
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 342deb59f650e5e99dd16c175c323fb454fd205832524c5340c70e3d137d39eb
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 7c7a47b834a4034cc3df779cbca1447cac6c5e6a518d8e489e3b256e1f1fda2e
 semantics:
   resource_family: dispute
   provider_operation: dispute_evidence_submit

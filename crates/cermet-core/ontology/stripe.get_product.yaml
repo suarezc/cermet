@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: get_product
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 6ad6c7f0fdd34775c0fe0a1d40cbbcc90e246f6239199a93869991401451c0c8
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 4266718dc8f706975e693dee932d2a6f056dcf0446aa2c5345ffc8c02679ef55
 semantics:
   resource_family: product
   provider_operation: product_retrieve

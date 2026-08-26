@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: create_payment_intent_off_session
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 32cda5a326150aa220128c058da2af89d19ed389afacd02e7b134c6567fc4bec
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 20055c8c11384ff2ecf66856c0366ac89d0cb2b40a780b642c470bcb31de9194
 semantics:
   resource_family: payment_intent
   provider_operation: create_unconfirmed
@@ -18,6 +18,7 @@ review:
     - Provider evidence requires the exact PaymentMethod to belong to the exact Customer in one account and mode before mint.
     - Currency is the authenticated account default_currency; the request cannot supply currency, account, or mode.
     - off_session is absent at create and confirm is false, so this grant cannot confirm or collect funds by itself.
+    - capture_method is optional (automatic or manual); a sentence that does not pin it admits both, and manual capture still needs a separate capture grant.
     - Client secret, next action, bearer URLs, platform routing, and future-use controls are structurally absent from output and inputs.
     - The broker-generated idempotency key is hidden, HMAC-bound, and reused only through authenticated ambiguous-effect lineage.
     - Sandbox proof must confirm restricted-key access, account default-currency shape, relationship fields, and requires_confirmation response status.

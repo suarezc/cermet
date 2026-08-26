@@ -2144,7 +2144,10 @@ fn generated_verb_tools(frame: &Value) -> Vec<Value> {
         let mut reserved_collision = false;
         for f in e.get("fields").and_then(Value::as_array).unwrap_or(&empty) {
             match f.get("origin").and_then(Value::as_str) {
-                Some("provider_resolved") => continue,
+                // Neither is an input an agent can offer: one the daemon reads back from the
+                // provider, the other it derives from the vaulted credential. Both are omitted from
+                // the tool schema so the model is never shown a field it may not fill.
+                Some("provider_resolved" | "credential_derived") => continue,
                 Some("agent_request") => {}
                 _ => {
                     reserved_collision = true;

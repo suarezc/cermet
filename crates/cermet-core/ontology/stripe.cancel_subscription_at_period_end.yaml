@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: cancel_subscription_at_period_end
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 4361badac81606c7ddb54e65c7f15598fb1ba71efa82dc0d16f69597f7d2ddb7
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 5d8158d22bf1943f200fc8daac4c3b63fe525b47791c6ed4f7d5773a1b786910
 semantics:
   resource_family: subscription
   provider_operation: subscription_cancel_at_period_end

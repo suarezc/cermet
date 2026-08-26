@@ -6,6 +6,27 @@ use cermet_core::{
 
 const RECHECKED_AT: &str = "2026-07-19";
 const STRIPE_RECHECKED_AT: &str = "2026-07-23";
+/// The creation vocabulary reviewed with the setup-verb batch.
+const STRIPE_SETUP_RECHECKED_AT: &str = "2026-08-25";
+const STRIPE_SETUP_SOURCES: &[&str] = &[
+    "STRIPE-CUSTOMER-CREATE",
+    "STRIPE-PRODUCT-CREATE",
+    "STRIPE-PRICE-CREATE",
+    "STRIPE-INVOICE-CREATE",
+    "STRIPE-WEBHOOK-CREATE",
+    "STRIPE-PAYMENT-METHOD-ATTACH",
+    "STRIPE-SUBSCRIPTION-CREATE",
+    "STRIPE-CHARGE-CREATE",
+    "STRIPE-DISPUTE-LIST",
+    "STRIPE-TEST-TOKENS",
+];
+/// The invoice-finalize and webhook list/delete references, read the day those verbs landed.
+const STRIPE_LIFECYCLE_RECHECKED_AT: &str = "2026-08-26";
+const STRIPE_LIFECYCLE_SOURCES: &[&str] = &[
+    "STRIPE-INVOICE-FINALIZE",
+    "STRIPE-WEBHOOK-DELETE",
+    "STRIPE-WEBHOOK-LIST",
+];
 /// A source added after its batch keeps its OWN review date — the date means "these docs were read
 /// on this day", so back-dating a later addition into the batch date would be a small lie.
 const GIT_COMMITS_RECHECKED_AT: &str = "2026-07-28";
@@ -22,6 +43,9 @@ const WORKFLOWS_RECHECKED_AT: &str = "2026-08-17";
 /// and per-step conclusions are that page's subject, not the workflow-runs page's — read the day
 /// the diagnosis verb landed.
 const WORKFLOW_JOBS_RECHECKED_AT: &str = "2026-08-17";
+/// The release verbs (`read_releases`, `publish_release`) cite the REST releases reference — read
+/// the day the release plane landed.
+const RELEASES_RECHECKED_AT: &str = "2026-08-25";
 
 const PLAN_SOURCES: &[(&str, &str)] = &[
     (
@@ -88,6 +112,10 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
     (
         "GH-REST-WORKFLOW-JOBS",
         "https://docs.github.com/en/rest/actions/workflow-jobs",
+    ),
+    (
+        "GH-REST-RELEASES",
+        "https://docs.github.com/en/rest/releases/releases",
     ),
     (
         "GH-REST-DEPLOYMENTS",
@@ -242,6 +270,40 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
         "https://docs.stripe.com/api/payouts/create",
     ),
     (
+        "STRIPE-CUSTOMER-CREATE",
+        "https://docs.stripe.com/api/customers/create",
+    ),
+    (
+        "STRIPE-PRODUCT-CREATE",
+        "https://docs.stripe.com/api/products/create",
+    ),
+    (
+        "STRIPE-PRICE-CREATE",
+        "https://docs.stripe.com/api/prices/create",
+    ),
+    (
+        "STRIPE-INVOICE-CREATE",
+        "https://docs.stripe.com/api/invoices/create",
+    ),
+    (
+        "STRIPE-WEBHOOK-CREATE",
+        "https://docs.stripe.com/api/webhook_endpoints/create",
+    ),
+    (
+        "STRIPE-PAYMENT-METHOD-ATTACH",
+        "https://docs.stripe.com/api/payment_methods/attach",
+    ),
+    (
+        "STRIPE-SUBSCRIPTION-CREATE",
+        "https://docs.stripe.com/api/subscriptions/create",
+    ),
+    (
+        "STRIPE-CHARGE-CREATE",
+        "https://docs.stripe.com/api/charges/create",
+    ),
+    ("STRIPE-DISPUTE-LIST", "https://docs.stripe.com/api/disputes/list"),
+    ("STRIPE-TEST-TOKENS", "https://docs.stripe.com/testing"),
+    (
         "VERCEL-API-CREATE-DEPLOYMENT",
         "https://vercel.com/docs/rest-api/reference/endpoints/deployments/create-a-new-deployment",
     ),
@@ -252,6 +314,18 @@ const PLAN_SOURCES: &[(&str, &str)] = &[
     (
         "VERCEL-API-LIST-PROJECTS",
         "https://vercel.com/docs/rest-api/reference/endpoints/projects/retrieve-a-list-of-projects",
+    ),
+    (
+        "STRIPE-INVOICE-FINALIZE",
+        "https://docs.stripe.com/api/invoices/finalize",
+    ),
+    (
+        "STRIPE-WEBHOOK-DELETE",
+        "https://docs.stripe.com/api/webhook_endpoints/delete",
+    ),
+    (
+        "STRIPE-WEBHOOK-LIST",
+        "https://docs.stripe.com/api/webhook_endpoints/list",
     ),
 ];
 
@@ -268,7 +342,11 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
         .iter()
         .map(|source| {
             // Later corpus/provider batches retain their own exact source-review date.
-            let expected_date = if source.id.starts_with("STRIPE-") {
+            let expected_date = if STRIPE_SETUP_SOURCES.contains(&source.id.as_str()) {
+                STRIPE_SETUP_RECHECKED_AT
+            } else if STRIPE_LIFECYCLE_SOURCES.contains(&source.id.as_str()) {
+                STRIPE_LIFECYCLE_RECHECKED_AT
+            } else if source.id.starts_with("STRIPE-") {
                 STRIPE_RECHECKED_AT
             } else if source.id == "VERCEL-API-LIST-PROJECTS" {
                 VERCEL_LIST_RECHECKED_AT
@@ -282,6 +360,8 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
                 WORKFLOWS_RECHECKED_AT
             } else if source.id == "GH-REST-WORKFLOW-JOBS" {
                 WORKFLOW_JOBS_RECHECKED_AT
+            } else if source.id == "GH-REST-RELEASES" {
+                RELEASES_RECHECKED_AT
             } else {
                 RECHECKED_AT
             };
@@ -291,7 +371,7 @@ fn official_registry_is_the_exact_plan_source_set_with_stable_ids() {
         .collect::<BTreeMap<_, _>>();
     let expected = PLAN_SOURCES.iter().copied().collect::<BTreeMap<_, _>>();
 
-    assert_eq!(PLAN_SOURCES.len(), 58);
+    assert_eq!(PLAN_SOURCES.len(), 72);
     assert_eq!(actual, expected);
     assert_eq!(registry.len(), PLAN_SOURCES.len());
     assert!(!registry.is_empty());

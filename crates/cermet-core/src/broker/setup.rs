@@ -527,8 +527,8 @@ impl Broker {
             })?;
             return Err(Error::Invalid(format!(
                 "cannot connect `{provider}`: no ratified provider descriptor is loaded for it — a \
-                 credential is only ever vaulted for a descriptor-backed provider (add and ratify a \
-                 providers.d/{provider}.yaml descriptor first)"
+                 credential is only ever vaulted for a descriptor-backed provider, and this build \
+                 ships none for `{provider}`"
             )));
         };
         // Connect honesty: vaulting a token for a provider that brokers no credential is meaningless.

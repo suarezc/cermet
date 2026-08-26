@@ -61,7 +61,8 @@ agent uid.
 **The socket dirs differ by platform**, and everything below that names one is showing the macOS
 arm: Linux uses `/run/cermetd` (operator + git) and `/run/cermetd-agents` (agent bridge); macOS uses
 `/var/cermetd` and `/var/cermetd-agents`. Substitute accordingly. The install prefix differs too —
-macOS publishes into `/opt/cermet/bin`, the Linux package into `/usr/bin`.
+macOS publishes into `/opt/cermet/bin`, the Linux package into `/usr/bin`. The verb catalog is
+compiled into the binary — there is no catalog directory on disk to seed, edit, or keep in sync.
 
 It also chooses this box's **vault-key custody**, and tells you which it chose. Cermet takes the
 strongest mechanism the machine can actually carry, and never one it cannot:
@@ -349,7 +350,7 @@ sentence is one `+` line:
 +++ document
 @@ -3,1 +3,2 @@
  allow stripe.search_customers
-+allow stripe.refund where amount <= 5000
++allow stripe.refund where amount <= 5000 and mode = "test"
 ```
 
 Only the managed block is authority input. Prose in CERMET.md is guidance, never policy.
@@ -450,7 +451,9 @@ allowed now (22 verbs) — a standing sentence admits each of these; request it 
   vercel.deploy(project:str, target:str, team?:str) [relay] — allowed by: allow vercel.deploy where project = "cermet-site" and target = "preview" | ...
 ```
 
-`?` marks an optional field; provider-resolved fields are omitted because the broker fills them.
+`?` marks an optional field; fields the broker fills itself are omitted — what it reads back from
+the provider, and what it derives from the credential (Stripe's `mode`, from the key's own prefix:
+`and mode = "test"` in a sentence keeps a rule on the test book).
 `cermet catalog --all` is the full dictionary, every entry stamped with its authority status.
 
 Two prerequisites worth knowing up front:

@@ -4,8 +4,9 @@ provider: stripe
 action: list_active_prices
 fields:
   - { name: product, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [product]
-execution_targets: [product]
+execution_targets: [product, mode]
 http:
   steps:
     - id: list

@@ -11,6 +11,9 @@ use cermet_core::contract::{AllowBinding, FieldClass};
 use cermet_core::templates::{TemplateRegistry, VENDORED_CATALOG};
 use cermet_core::{OntologyArtifacts, OntologyCatalog, SourceRegistry, VENDORED_ONTOLOGY};
 
+mod common;
+use common::VENDORED_ONTOLOGY_RECORDS;
+
 /// A registry loaded with the whole vendored catalog. `TemplateRegistry::new()` already carries the
 /// vendored provider ceilings (github/vercel/shell/sqlite), so a resolved contract is what a real
 /// broker carries.
@@ -169,13 +172,13 @@ fn github_vendored_records_parse_and_hash_join_green() {
     // This GitHub-focused test asserts all twenty-two GitHub records in the vendored set.
     assert_eq!(
         VENDORED_ONTOLOGY.len(),
-        48,
-        "twenty-three GitHub (git-native `push` + `fetch`, plus `dispatch_workflow`, `read_workflow_run_jobs`, and `read_job_log`) + twenty-three Stripe + two Vercel verbs (relay deploy + scoped list read)"
+        VENDORED_ONTOLOGY_RECORDS,
+        "the vendored corpus is whole before this suite checks its own slice"
     );
     let sources = SourceRegistry::official().unwrap();
     let catalog = OntologyCatalog::check(VENDORED_ONTOLOGY, &sources)
         .expect("all vendored records parse, obey caps, and resolve their sources");
-    assert_eq!(catalog.len(), 48);
+    assert_eq!(catalog.len(), VENDORED_ONTOLOGY_RECORDS);
 
     // Every declared bind hash equals the SHA-256 of the real vendored artifact bytes — a one-byte
     // template/descriptor drift (including a stale post-API-version-bump github descriptor hash)
@@ -204,7 +207,11 @@ fn github_vendored_records_parse_and_hash_join_green() {
         "request_deployment",
         "create_pull_request",
         "read_secret_scanning_alerts_open",
+        "read_releases",
+        "read_workflow_runs",
+        "publish_release",
         "push",
+        "push_tag",
         "fetch",
     ] {
         assert!(
@@ -266,6 +273,9 @@ fn wire_purity_read_band_is_one_bodiless_get_write_band_mutates() {
         "request_workflow_cancel",
         "dispatch_workflow",
         "request_deployment",
+        "read_releases",
+        "read_workflow_runs",
+        "publish_release",
     ] {
         let record = catalog
             .get("github", action)

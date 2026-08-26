@@ -1,0 +1,23 @@
+# Create one customer addressed by an exact email. Metadata, payment sources, tax ids, and an
+# implicit default payment method are absent: this is the record only.
+provider: stripe
+action: create_customer
+fields:
+  - { name: email, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,  type: str, required: true, class: free_payload, binding: unbound, max_chars: 200 }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [email, name]
+execution_targets: [email, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/customers
+      body_encoding: form
+      body:
+        email: "{email}"
+        name: "{name}"
+      success_statuses: [200]
+      require: [id, object, email, name, livemode]
+      expect_eq: { email: email }
+      expect_literal: { object: customer }

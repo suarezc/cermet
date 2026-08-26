@@ -86,6 +86,25 @@ impl ResourceEquality {
 enum OutcomeAssertion {
     None,
     ConfirmPaymentIntent,
+    /// A capture of `amount` from a PaymentIntent whose pre-state the grant froze as
+    /// `(intent_amount, amount_capturable)`. The proof has two conjuncts.
+    ///
+    /// First, the exact approved amount was received: `amount_received` must equal
+    /// `(intent_amount - amount_capturable) + amount` — anything already received before this
+    /// capture, plus this capture and nothing more.
+    ///
+    /// Second, the intent came to rest in one of exactly TWO states terminal for this capture:
+    ///
+    /// - FINAL — `amount_capturable == 0` and `status == "succeeded"`. Nothing is left to
+    ///   capture. This is the shipped default: without multicapture a capture is always final,
+    ///   so capturing less than the hold releases the uncaptured remainder rather than leaving
+    ///   it capturable.
+    /// - MULTICAPTURE-CONTINUING — `amount_capturable == amount_capturable_before - amount`
+    ///   (a positive remainder) and `status == "requires_capture"`. The intent admits further
+    ///   captures and is still holding the remainder.
+    ///
+    /// Any other pairing of state and remainder is Unproved, including a capture request larger
+    /// than the capturable amount.
     CapturePaymentIntent,
     CancelPaymentIntent,
     InvoicePaid,
@@ -123,7 +142,10 @@ impl OutcomeAssertion {
                 else {
                     return false;
                 };
-                let Some(expected_capturable) = before_capturable.checked_sub(requested) else {
+                let Some(remainder) = before_capturable
+                    .checked_sub(requested)
+                    .filter(|remainder| *remainder >= 0)
+                else {
                     return false;
                 };
                 let Some(expected_received) = intent_amount
@@ -132,13 +154,15 @@ impl OutcomeAssertion {
                 else {
                     return false;
                 };
-                after_capturable == expected_capturable
-                    && after_received == expected_received
-                    && match body.get("status").and_then(Value::as_str) {
-                        Some("requires_capture") => expected_capturable > 0,
-                        Some("succeeded") => expected_capturable == 0,
-                        _ => false,
-                    }
+                if after_received != expected_received {
+                    return false;
+                }
+                let status = body.get("status").and_then(Value::as_str);
+                let final_capture = after_capturable == 0 && status == Some("succeeded");
+                let multicapture_continuing = remainder > 0
+                    && after_capturable == remainder
+                    && status == Some("requires_capture");
+                final_capture || multicapture_continuing
             }
             Self::CancelPaymentIntent => body
                 .get("canceled_at")

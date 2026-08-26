@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_customer
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: bcf2c1782a31a654035889fb28ee829aea78dd4f55fe9022aef76ed8f5a1fc86
+semantics:
+  resource_family: customer
+  provider_operation: customer_create
+  risk_class: external_state_change
+  sensitivity: personal
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one customer record addressed by an exact email, with a free-text display name.
+  cautions:
+    - Repeating the request creates a SECOND customer; Stripe enforces no email uniqueness.
+    - The email is the pinnable identity; the name carries no authority and is audited verbatim.
+    - Metadata, tax ids, addresses, payment sources, and a default payment method are absent.
+    - mode is derived from the connected key's prefix, so a test-only sentence cannot create a live customer.
+sources:
+  - STRIPE-CUSTOMER-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

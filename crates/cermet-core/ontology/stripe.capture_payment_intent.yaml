@@ -2,7 +2,7 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: capture_payment_intent
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
   action_template_sha256: 0ebaeaf30b9f380886fc8892065eef02693ba2a1c91e5d2e56ba4fe5f106f140
 semantics:
   resource_family: payment_intent
@@ -13,14 +13,15 @@ semantics:
   completion: terminal
   idempotency: idempotent
 review:
-  summary: Capture one bounded funds_collect amount from an exact manual PaymentIntent while freezing final_capture false.
+  summary: Capture one bounded funds_collect amount from an exact manual PaymentIntent; the request omits final_capture, which such an intent refuses.
   cautions:
     - Evidence and the fresh precondition require manual capture, requires_capture, a positive bound, and unchanged total and capturable amounts.
     - Routing, future-use, hooks, and method-level capture overrides must be absent before mint and immediately before mutation.
-    - The canonical amount is sent only as amount_to_capture; final_capture is false and no second side effect exists.
-    - Raw success proof requires exact post-capture capturable and received arithmetic plus the corresponding requires_capture or succeeded status.
+    - The canonical amount is sent only as amount_to_capture; final_capture is omitted and no second side effect exists.
+    - Raw success proof requires amount_received to equal the pre-capture received amount plus the exact captured amount.
+    - It also requires a state terminal for that capture, either succeeded with nothing left capturable, or requires_capture with exactly the uncaptured remainder still capturable.
+    - Without multicapture a capture is final, so capturing less than the capturable amount releases the remainder rather than leaving it capturable.
     - Refund is a separate grant; capture neither executes nor implies compensation.
-    - Sandbox proof must establish incremental capture support and final_capture false behavior for the connected account and payment method.
 sources:
   - STRIPE-ACCOUNT-RETRIEVE
   - STRIPE-PAYMENT-INTENT-RETRIEVE

@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: issue_credit_note_adjustment_no_email
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 28717341cf6fb46a1062f0ceba4cc13effa5682b1b648090f66ed79141feac79
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 06de8d76572b4a6376bcb0e4781c7ff030df2ed4ab13fe417ed1f0de040cb6b0
 semantics:
   resource_family: credit_note
   provider_operation: credit_note_issue_pre_payment

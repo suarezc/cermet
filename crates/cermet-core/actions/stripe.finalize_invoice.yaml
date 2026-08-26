@@ -1,0 +1,23 @@
+# Finalize one exact draft invoice into an issued one. auto_advance is frozen false so Stripe
+# attempts no collection of its own: the effect is "make it open", and paying it is a separate one.
+# Stripe settles a zero-amount invoice at finalization instead of opening it, so the open
+# postcondition refuses that outcome rather than calling this effect done.
+provider: stripe
+action: finalize_invoice
+fields:
+  - { name: invoice, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [invoice]
+execution_targets: [invoice, mode]
+http:
+  steps:
+    - id: finalize
+      method: POST
+      path: /v1/invoices/{invoice}/finalize
+      body_encoding: form
+      body:
+        auto_advance: false
+      success_statuses: [200]
+      require: [id, object, status]
+      expect_eq: { id: invoice }
+      expect_literal: { object: invoice, status: open }

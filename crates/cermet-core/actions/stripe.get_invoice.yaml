@@ -5,8 +5,9 @@ provider: stripe
 action: get_invoice
 fields:
   - { name: invoice, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [invoice]
-execution_targets: [invoice]
+execution_targets: [invoice, mode]
 http:
   steps:
     - id: get

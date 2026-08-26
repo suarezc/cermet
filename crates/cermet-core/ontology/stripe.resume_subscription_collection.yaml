@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: resume_subscription_collection
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 05fb54e63b1b60e779e2bbcd219e0fef7ffed327597926ed8fd9e302363b147a
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 9c3e056bc71c0df6f19bee14476e1ad7ff81443cb227552e9a49c06d892e6ded
 semantics:
   resource_family: subscription
   provider_operation: subscription_resume_collection

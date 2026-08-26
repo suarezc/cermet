@@ -411,12 +411,10 @@ impl RelayBindMismatch {
 /// frozen predicate admits instead. A shape is matched on METHOD and PATH alone — that pair is what
 /// identifies WHICH effect a hop is — so this refusal means the verb has no such effect at all.
 ///
-/// The admitted shapes are DESCRIPTOR TEXT — the ratified verb's own `method`/`path` patterns, read
-/// out of a document the installer publishes WORLD-READABLE under the shared catalog directory
-/// (`.../share/cermet/catalog/actions.d/<provider>.<action>.yaml`). Anyone who can reach the
-/// loopback door can already read them, so naming them here discloses nothing new. (`cermet
-/// catalog` is NOT the surface that carries them: it projects a verb's fields and bounds, not its
-/// relay predicate.)
+/// The admitted shapes are DESCRIPTOR TEXT — the ratified verb's own `method`/`path` patterns,
+/// vendored into the world-readable `cermet` binary. Anyone who can reach the loopback door can
+/// already read them, so naming them here discloses nothing new. (`cermet catalog` is NOT the
+/// surface that carries them: it projects a verb's fields and bounds, not its relay predicate.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayShapeMiss {
     /// The method this hop used.

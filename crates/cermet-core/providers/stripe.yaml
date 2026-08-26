@@ -6,3 +6,13 @@ egress:
 auth: bearer
 headers:
   Stripe-Version: 2026-06-24.dahlia
+# A Stripe secret or restricted key spells its own book in its prefix, so the daemon names the
+# credential's mode without asking Stripe. `mode` is derived at request freeze and never supplied
+# by an agent.
+credential_mode:
+  field: mode
+  by_prefix:
+    sk_test_: test
+    rk_test_: test
+    sk_live_: live
+    rk_live_: live

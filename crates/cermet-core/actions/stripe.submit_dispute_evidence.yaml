@@ -4,8 +4,9 @@ provider: stripe
 action: submit_dispute_evidence
 fields:
   - { name: dispute, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [dispute]
-execution_targets: [dispute]
+execution_targets: [dispute, mode]
 http:
   steps:
     - id: submit

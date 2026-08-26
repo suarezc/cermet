@@ -1,0 +1,26 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: delete_webhook_endpoint
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 4481b6bc96e5c17e99484b2984f917bc78f40868e869bab99aad6c57a1dc197e
+semantics:
+  resource_family: webhook_endpoint
+  provider_operation: webhook_endpoint_delete
+  risk_class: provider_control_change
+  sensitivity: security
+  reversibility: irreversible
+  completion: terminal
+  idempotency: idempotent
+review:
+  summary: Delete one exact webhook endpoint, ending event delivery to its URL and destroying its signing secret.
+  cautions:
+    - Stripe destroys the endpoint's signing secret with it and reissues nothing, so a later create is a different endpoint with a different secret, not a restoration.
+    - Event delivery to that URL stops immediately, and events Stripe would have delivered while the endpoint is gone are not replayed by this or any other verb.
+    - T1 - a steered agent aimed at the operator's production receiver is stopped by the sentence, which pins the endpoint id and the credential's own book before any request is built.
+    - Deleting an endpoint that is already gone is a provider refusal, not a silent success.
+    - Stripe documents App webhook_write as sensitive; the LIKELY RAK ceiling is Webhook Endpoints Write.
+sources:
+  - STRIPE-WEBHOOK-DELETE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

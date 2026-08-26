@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: list_disputes
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: ead020a004b6044d50515c61883e93002e1ec8abbac53e7189e5e4430eac04f6
+semantics:
+  resource_family: dispute
+  provider_operation: dispute_list
+  risk_class: sensitive_observation
+  sensitivity: personal
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: List the first ten disputes raised against one exact charge.
+  cautions:
+    - A dispute is created asynchronously by the card network, so an empty list is an observation about now, not a conclusion that none will exist.
+    - The page is capped at ten with no cursor; has_more false is asserted, so an eleventh dispute on one charge is a terminal failure rather than a silently truncated answer.
+    - Each row carries the cardholder's dispute reason and evidence status; get_dispute_summary is the exact-one read.
+sources:
+  - STRIPE-DISPUTE-LIST
+  - STRIPE-DISPUTE-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

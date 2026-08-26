@@ -4,8 +4,9 @@ action: refund
 fields:
   - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
   - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [charge, amount]
-execution_targets: [charge]
+execution_targets: [charge, mode]
 http:
   steps:
     - id: refund

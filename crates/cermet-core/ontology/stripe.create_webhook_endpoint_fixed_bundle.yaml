@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: create_webhook_endpoint_fixed_bundle
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: a2747d6d0ee13cba6cfa9dc8080b13bd8b8ebab930cf37c297b3a5c15d6345f4
+semantics:
+  resource_family: webhook_endpoint
+  provider_operation: webhook_endpoint_create
+  risk_class: provider_control_change
+  sensitivity: operational
+  reversibility: compensatable
+  completion: terminal
+  idempotency: non_idempotent
+review:
+  summary: Create one webhook endpoint at an exact HTTPS URL subscribed to a frozen two-event bundle.
+  cautions:
+    - The URL is where provider event bodies will be delivered, so it is an exact pinned identity and https-shaped.
+    - enabled_events is frozen to the same bundle the update verb pins; no caller-chosen event list exists.
+    - Stripe returns the endpoint's signing secret on creation and nowhere else; the response, that secret included, rides the receipt and the durable audit record, and a sentence granting this verb grants sight of it.
+    - retention none caps only the artifact copy; it is not a claim that nothing is stored.
+sources:
+  - STRIPE-WEBHOOK-CREATE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

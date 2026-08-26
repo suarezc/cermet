@@ -1,14 +1,7 @@
-# Action template for github.create_branch (external_state_change). Create ONE
-# new Git ref on the frozen repository, pointing at an EXACT immutable source OID. The envelope:
-# owner/name plus the fully-qualified `new_ref` (e.g. `refs/heads/feature`) and the
-# `source_oid` the branch is created at — all exact-pinned identity execution targets. GitHub's create-
-# ref endpoint refuses an ALREADY-EXISTING ref with 422 (no optional_ok tolerates it), so a request to
-# recreate an existing branch fails closed rather than silently moving it.
-#
-# `new_ref` and `source_oid` ride the body (the endpoint's `ref`/`sha`), so both are pinned execution
-# targets an allow must anchor — a create can never land at a name or commit the approval did not fix.
-# `source_oid` carries `format: git_oid` (canonical lowercase 40/64-hex), refusing a branch NAME as the
-# source. the response returns created ref name and OID. 201 is the created evidence.
+# GitHub's create-ref endpoint refuses an ALREADY-EXISTING ref with 422 and no `optional_ok`
+# tolerates it, so a request to recreate a branch fails closed rather than silently moving it.
+# `new_ref` and `source_oid` ride the BODY and are still execution targets, so a create can never
+# land at a name or a commit the approval did not fix.
 provider: github
 action: create_branch
 fields:
@@ -23,8 +16,8 @@ http:
     - id: create
       method: POST
       path: /repos/{owner}/{name}/git/refs
-      success_statuses: [201]        # 201 Created is the only success; a non-201 fails closed.
-      require: [ref, object.sha]     # the created ref/OID must be present, never null.
+      success_statuses: [201]
+      require: [ref, object.sha]
       body:
         ref: "{new_ref}"
         sha: "{source_oid}"

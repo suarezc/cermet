@@ -2,8 +2,8 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: mark_invoice_uncollectible
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
-  action_template_sha256: 68b74858df90e8e41407b9f4ae1c3d37e68e7ea433e87b74df5f591d258158cc
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 24f5175e02364a6e887b4579f7250fa0fc328469f304620418e5eb1150b61d38
 semantics:
   resource_family: invoice
   provider_operation: invoice_mark_uncollectible

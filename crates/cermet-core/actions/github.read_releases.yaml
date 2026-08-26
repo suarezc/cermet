@@ -1,0 +1,22 @@
+# Lists DRAFTS, which a push-scoped token sees and an anonymous reader does not. That is why the
+# verb exists: a draft has no by-tag address (GitHub answers 404 there), so this list is the only
+# way to learn the `release_id` that `publish_release` needs.
+# `per_page=20` is a fixed literal with no cursor: one bounded page. A draft older than the twenty
+# newest releases is not reachable through this verb — a declared limit, not a defect.
+# The response is a JSON ARRAY, so there are no object keys for `require` to prove (the engine's
+# dotted lookups are object-only); the status set is the whole outcome contract.
+provider: github
+action: read_releases
+fields:
+  - { name: owner, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: name,  type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [owner, name]
+execution_targets: [owner, name]
+http:
+  steps:
+    - id: releases
+      method: GET
+      path: /repos/{owner}/{name}/releases
+      query:
+        per_page: "20"
+      success_statuses: [200]

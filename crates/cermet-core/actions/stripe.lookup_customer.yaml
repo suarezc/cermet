@@ -2,8 +2,9 @@ provider: stripe
 action: lookup_customer
 fields:
   - { name: customer, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [customer]
-execution_targets: [customer]
+execution_targets: [customer, mode]
 http:
   steps:
     - id: lookup

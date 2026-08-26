@@ -1,0 +1,17 @@
+# List the endpoints the credential's own account delivers events to. The credential IS the
+# account, so there is no finer resource to pin than the book the key names.
+provider: stripe
+action: list_webhook_endpoints
+fields:
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: []
+execution_targets: [mode]
+scope: account
+http:
+  steps:
+    - id: list
+      method: GET
+      path: /v1/webhook_endpoints
+      query: { limit: "100" }
+      success_statuses: [200]
+      require: [object, data]

@@ -57,9 +57,6 @@ fn language_guide_inventory_exactly_matches_typed_vendored_templates() {
         let template: ActionTemplate = serde_yaml::from_str(source).unwrap_or_else(|error| {
             panic!("vendored template is not typed YAML: {error}\n{source}")
         });
-        if CatalogClass::from_action(&template.action) == CatalogClass::Setup {
-            continue;
-        }
         formats.extend(
             template
                 .fields
@@ -74,11 +71,12 @@ fn language_guide_inventory_exactly_matches_typed_vendored_templates() {
                 }),
         );
 
-        if template.execution_targets.is_empty() {
-            assert_eq!(
-                template.scope,
-                Some(ScopeMode::Account),
-                "{}.{} is targetless without declaring `scope: account`",
+        if template.scope == Some(ScopeMode::Account) {
+            assert!(
+                template.execution_targets.iter().all(|target| template
+                    .field(target)
+                    .is_some_and(|field| field.source == Some(FieldSource::Credential))),
+                "{}.{} claims account scope while naming an agent-pinnable execution target",
                 template.provider,
                 template.action
             );
@@ -207,13 +205,13 @@ fn vendored_catalog_actions_have_execution_targets_or_the_one_bounded_read_filte
     // author layer depends on, plus the closed census of the scoped set.
     let scoped_census = [
         ("stripe", "search_customers"),
-        ("stripe", "fixture_account_discover"),
+        ("stripe", "read_account"),
         ("vercel", "list_projects"),
     ];
-    for doc in VENDORED_CATALOG {
+    for doc in crate::templates::vendored_action_templates() {
         let reg = TemplateRegistry::new();
         let (provider, action) = reg
-            .load(doc)
+            .load(&doc)
             .unwrap_or_else(|e| panic!("vendored catalog doc failed to load: {e}"));
         let contract = reg
             .resolve(&provider, &action)
@@ -284,13 +282,14 @@ fn vendors_the_complete_stripe_support_catalog() {
         });
         assert_eq!(contract.provider, "stripe");
         assert_eq!(contract.action, action);
+        assert!(!contract.execution_targets.is_empty());
         if action == "search_customers" {
-            assert!(contract.execution_targets.is_empty());
+            // Account-scoped: the only thing a sentence can pin is the credential's own mode,
+            // which the daemon derives. The filter itself stays unbound.
+            assert_eq!(contract.execution_targets, ["mode"]);
             let filter = contract.field_decl("email_contains").unwrap();
             assert_eq!(filter.class, FieldClass::ReadFilter);
             assert_eq!(filter.binding, AllowBinding::Unbound);
-        } else {
-            assert!(!contract.execution_targets.is_empty());
         }
     }
 
@@ -864,112 +863,13 @@ fn validator_requires_consumes_to_match_used_fields() {
 }
 
 #[test]
-fn fixture_named_template_refuses_money_metadata_before_other_money_validation() {
-    let doc = golden()
-        .replace("action: template_put_file", "action: fixture_put_file")
-        .replace(
-            "fields:",
-            "money:\n  preconditions: [not_a_real_precondition]\nfields:",
-        );
-    let error = TemplateRegistry::new()
-        .load(&doc)
-        .expect_err("setup-class actions may never carry money metadata");
-    assert!(
-        error.contains("setup-class action may not declare `money`"),
-        "{error}"
-    );
-}
-
-#[test]
-fn fixture_named_template_refuses_secret_fields_before_wire_validation() {
-    let doc = golden()
-        .replace("action: template_put_file", "action: fixture_put_file")
-        .replace(
-            "  - { name: message, type: str, required: true,  class: free_payload, binding: unbound }",
-            "  - { name: message, type: str, required: true,  class: secret, binding: unbound }",
-        );
-    let error = TemplateRegistry::new()
-        .load(&doc)
-        .expect_err("setup-class actions may never carry secret fields");
-    assert!(
-        error.contains("setup-class action may not declare secret field `message`"),
-        "{error}"
-    );
-}
-
-#[test]
-fn fixture_discovery_may_add_allowlisted_prior_step_captures() {
+fn a_read_after_a_mutation_is_refused_however_it_is_bound() {
+    // Verification reads are ONE LEADING PREFIX. A read placed after a mutation cannot be a
+    // preflight and cannot make the earlier effect safe, and there is no shape of it — capture-keyed
+    // or not — that the grammar admits.
     let doc = "\
 provider: stripe
-action: fixture_projection_probe_discover
-fields: []
-consumes: []
-execution_targets: []
-scope: account
-http:
-  steps:
-    - id: account
-      method: GET
-      path: /v1/account
-      success_statuses: [200]
-      require: [id]
-      capture: { account_id: \"$.id\" }
-      retention: none
-    - id: mode
-      method: GET
-      path: /v1/balance
-      success_statuses: [200]
-      require: [livemode]
-      expect_literal: { livemode: false }
-      result_captures: { account_id: account_id }
-      retention: none
-";
-    TemplateRegistry::new()
-        .load(doc)
-        .expect("setup discovery may ADD an explicitly allowlisted prior capture to the body");
-}
-
-#[test]
-fn fixture_setup_may_project_allowlisted_prior_mutation_capture() {
-    let doc = "\
-provider: stripe
-action: fixture_payment_intents_create
-fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-  - { name: amount, type: int, required: true, class: side_effect, binding: bounded }
-consumes: [account, amount]
-execution_targets: [account]
-http:
-  steps:
-    - id: unconfirmed
-      method: POST
-      path: /v1/payment_intents
-      body_encoding: form
-      body: { amount: \"{amount}\", account: \"{account}\" }
-      success_statuses: [200]
-      require: [id]
-      capture: { confirmation_payment_intent: \"$.id\" }
-      retention: none
-    - id: manual
-      method: POST
-      path: /v1/payment_intents
-      body_encoding: form
-      body: { amount: \"{amount}\" }
-      success_statuses: [200]
-      require: [id]
-      result_captures: { confirmation_payment_intent: confirmation_payment_intent }
-      retention: none
-";
-    TemplateRegistry::new()
-        .load(doc)
-        .expect("setup may return one allowlisted earlier mutation identity");
-}
-
-#[test]
-fn fixture_setup_may_end_with_capture_bound_reconciliation_read() {
-    let doc = "\
-provider: stripe
-action: fixture_dispute_create
+action: dispute_create
 fields:
   - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
 consumes: [account]
@@ -993,80 +893,52 @@ http:
       expect_literal: { has_more: false }
       retention: none
 ";
-    TemplateRegistry::new()
+    let error = TemplateRegistry::new()
         .load(doc)
-        .expect("setup may reconcile its one captured mutation in a terminal bounded read");
+        .expect_err("a trailing reconciliation read must be refused");
+    assert!(error.contains("must form a leading prefix"), "{error}");
 }
 
 #[test]
-fn fixture_setup_may_bound_a_capture_reconciliation_poll() {
-    let doc = "\
+fn result_captures_and_poll_are_not_grammar() {
+    // Both existed only for the setup vocabulary that has left the tree. They are not keys the
+    // parser knows any more, so a document reaching for either is refused before any rule runs
+    // rather than admitted by a name.
+    let base = "\
 provider: stripe
-action: fixture_dispute_create
+action: probe_read
 fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-consumes: [account]
-execution_targets: [account]
+  - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
+consumes: [charge]
+execution_targets: [charge]
 http:
   steps:
-    - id: create
-      method: POST
-      path: /v1/charges
-      body: { account: \"{account}\" }
-      success_statuses: [200]
-      require: [id]
-      capture: { created_charge: \"$.id\" }
-      retention: none
-    - id: reconcile
+    - id: get
       method: GET
-      path: /v1/disputes
-      query: { charge: \"{created_charge}\", limit: \"10\" }
+      path: /v1/charges/{charge}
       success_statuses: [200]
-      require: [data, has_more]
-      expect_literal: { has_more: false }
-      poll: { attempts: 3, delay_ms: 1, until_nonempty: [data] }
-      result_captures: { created_charge: created_charge }
-      retention: none
 ";
     TemplateRegistry::new()
-        .load(doc)
-        .expect("setup may bound its final capture-keyed reconciliation read");
-    for invalid in [
-        doc.replace("attempts: 3", "attempts: 1"),
-        doc.replace("attempts: 3", "attempts: 6"),
-        doc.replace("delay_ms: 1", "delay_ms: 0"),
-        doc.replace("delay_ms: 1", "delay_ms: 1001"),
-        doc.replace("until_nonempty: [data]", "until_nonempty: [unretained]"),
-        doc.replace("action: fixture_dispute_create", "action: dispute_create"),
+        .load(base)
+        .expect("the base document loads");
+    for key in [
+        "      result_captures: { charge: charge }\n",
+        "      poll: { attempts: 3, delay_ms: 1, until_nonempty: [data] }\n",
     ] {
         TemplateRegistry::new()
-            .load(&invalid)
-            .expect_err("unbounded or non-setup polling must fail closed");
+            .load(&format!("{base}{key}"))
+            .expect_err("a retired grammar key is an unknown field, not a relaxation");
     }
 }
 
 #[test]
-fn fixture_discovery_may_filter_a_final_collection_by_a_frozen_prefix() {
-    let doc = "\
-provider: github
-action: fixture_prefix_probe_discover
-fields: []
-consumes: []
-execution_targets: []
-scope: account
-http:
-  steps:
-    - id: repositories
-      method: POST
-      path: /graphql
-      success_statuses: [200]
-      graphql_query: \"query fixturePrefixProbe { viewer { repositories(first: 20) { nodes { name } } } }\"
-      require: [data.viewer.repositories.nodes]
-      retention: none
-";
+fn a_name_no_longer_relaxes_any_rule() {
+    // The `fixture_` prefix used to gate four load rules. Nothing gates on a name now: a
+    // fixture-named document is an ordinary verb and is judged by the ordinary rules.
+    let doc = golden().replace("action: template_put_file", "action: fixture_put_file");
     TemplateRegistry::new()
-        .load(doc)
-        .expect("setup discovery may enforce one frozen response prefix before projection");
+        .load(&doc)
+        .expect("a fixture-named document is just a document");
 }
 
 // ---- The `{field|omit:<literal>}` body transform ----
@@ -1348,13 +1220,17 @@ fn retention_none_survives_only_where_a_stated_justification_does() {
         "refund_charge_bounded",
         "retry_invoice_payment",
     ];
-    // The two non-money survivors, each carrying a stated, still-valid reason rather than a
+    // The non-money survivors, each carrying a stated, still-valid reason rather than a
     // leftover (`github` is not product-enabled either way):
     //   - read_secret_scanning_alerts_open: its response space IS other people's leaked credentials,
     //     so keeping no durable copy is the point.
     //   - read_job_log: the minted-URL shape answers `302` with an EMPTY body, so there is no body
     //     to store. The mint itself rides the broker envelope into the receipt.
     const JUSTIFIED: &[&str] = &["read_secret_scanning_alerts_open", "read_job_log"];
+    //   - create_webhook_endpoint_fixed_bundle: Stripe returns the endpoint's signing secret in
+    //     this response and only in this one. The requester needs it; Cermet keeping a copy would
+    //     put it in an artifact nothing in the flow reads.
+    const JUSTIFIED_STRIPE: &[&str] = &["create_webhook_endpoint_fixed_bundle"];
 
     let mut declaring: Vec<String> = Vec::new();
     for doc in VENDORED_CATALOG {
@@ -1377,6 +1253,7 @@ fn retention_none_survives_only_where_a_stated_justification_does() {
 
     let mut expected: Vec<String> = MONEY_FLOOR
         .iter()
+        .chain(JUSTIFIED_STRIPE)
         .map(|action| format!("stripe.{action}"))
         .chain(JUSTIFIED.iter().map(|action| format!("github.{action}")))
         .collect();
@@ -2063,6 +1940,64 @@ fn each_git_push_slot_must_carry_the_class_binding_and_format_the_runner_assumes
     assert!(error.contains("git.push.mirror_old_oid field"), "{error}");
 }
 
+/// The push step moves ONE ref, and it names which namespace it moves it in: `branch:` or `tag:`.
+/// Declaring both would make one verb two effects under one sentence — a branch authority silently
+/// admitting tags; declaring neither leaves the runner with no ref to move at all.
+#[test]
+fn a_git_push_step_names_exactly_one_of_branch_and_tag() {
+    let both = GIT_TEMPLATE.replace("    branch: branch\n", "    branch: branch\n    tag: tag\n");
+    let error = git_registry()
+        .check_load(&both)
+        .expect_err("branch and tag are alternatives, not a pair");
+    assert!(
+        error.contains(
+            "exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+        ),
+        "{error}"
+    );
+
+    let neither = GIT_TEMPLATE.replace("    branch: branch\n", "");
+    let error = git_registry()
+        .check_load(&neither)
+        .expect_err("a push step with no ref names no effect");
+    assert!(
+        error.contains(
+            "exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+        ),
+        "{error}"
+    );
+}
+
+/// The tag alternative is a first-class push step: same remote path, same oid slots, its own
+/// `git_tag_name` admission shape on the ref component.
+#[test]
+fn a_git_push_step_may_name_a_tag_instead_of_a_branch() {
+    let doc = GIT_TEMPLATE
+        .replace(
+            "  - { name: branch,  type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_branch_name }",
+            "  - { name: tag,     type: str, required: true,  class: identity, binding: exact_resource_pin, format: git_tag_name }",
+        )
+        .replace(
+            "consumes: [owner, name, branch, new_oid, mirror_old_oid]",
+            "consumes: [owner, name, tag, new_oid, mirror_old_oid]",
+        )
+        .replace(
+            "execution_targets: [owner, name, branch]",
+            "execution_targets: [owner, name, tag]",
+        )
+        .replace("    branch: branch\n", "    tag: tag\n");
+    git_registry()
+        .check_load(&doc)
+        .expect("a tag push step is a valid git verb");
+
+    // And the slot pins its own shape: a branch-shaped format on the tag slot is refused.
+    let wrong = doc.replace("format: git_tag_name", "format: git_branch_name");
+    let error = git_registry()
+        .check_load(&wrong)
+        .expect_err("the tag slot pins the tag shape");
+    assert!(error.contains("git.push.tag field"), "{error}");
+}
+
 #[test]
 fn a_git_template_consumes_exactly_what_its_step_references() {
     let doc = GIT_TEMPLATE.replace(
@@ -2120,6 +2055,44 @@ fn the_vendored_push_verb_carries_no_carrier_vocabulary() {
     assert_eq!(response.returns, "receipt");
     assert_eq!(response.retention, "none");
     assert_eq!(response.errors, "refusal");
+}
+
+/// `push_tag` is a SEPARATE verb, not a widening of `push`. Sentence bounds are conjunctive over a
+/// verb's own fields, so a standing `allow github.push where …` can only ever admit branches: the
+/// tag namespace needs its own word, and that word carries the tag's own admission shape.
+#[test]
+fn the_vendored_tag_verb_is_a_separate_word_pinning_a_bare_tag_name() {
+    let registry = crate::templates::vendored_registry();
+    let loaded = registry
+        .loaded("github", "push_tag")
+        .expect("github.push_tag is vendored");
+    let spec = loaded
+        .template
+        .git_spec()
+        .expect("push_tag declares the git execution kind");
+    let push = spec.push.as_ref().expect("push_tag declares a push step");
+    assert!(spec.fetch.is_none(), "one verb, one effect");
+    assert_eq!(push.branch, None, "a tag verb moves no branch");
+    assert_eq!(push.tag.as_deref(), Some("tag"));
+
+    let fields: Vec<&str> = loaded.contract.schema.iter().map(|f| f.name).collect();
+    assert_eq!(
+        fields,
+        vec!["owner", "name", "tag", "new_oid", "mirror_old_oid"]
+    );
+    let tag = loaded
+        .template
+        .format_fields()
+        .into_iter()
+        .find(|(name, _)| *name == "tag")
+        .expect("the tag field declares a format");
+    assert_eq!(tag.1, FieldFormat::GitTagName);
+
+    // `push` and `push_tag` share nothing on the sentence axis: `push` has no `tag` field for a
+    // branch sentence to be widened onto, and vice versa.
+    let branch_verb = registry.loaded("github", "push").expect("push is vendored");
+    assert!(branch_verb.contract.schema.iter().all(|f| f.name != "tag"));
+    assert!(loaded.contract.schema.iter().all(|f| f.name != "branch"));
 }
 
 // ---------------------------------------------------------------------------
@@ -3118,6 +3091,143 @@ fn a_step_may_declare_a_3xx_success_and_retain_the_header_it_carries() {
         assert!(
             error.to_string().contains(expected),
             "{why}: refusal must name `{expected}`, got: {error}"
+        );
+    }
+}
+
+/// `source: credential` says the DAEMON fills this field from the vaulted credential's own shape.
+/// The load rules make that claim structural: it is pinnable by a sentence, it is never present on
+/// the wire, and it is optional because a box with no credential connected has nothing to derive.
+#[test]
+fn a_credential_sourced_field_is_pinnable_wire_free_and_optional() {
+    let base = |field: &str, targets: &str| {
+        format!(
+            "provider: stripe\naction: probe_read\nfields:\n  - {{ name: charge, type: str, \
+             required: true, class: identity, binding: exact_resource_pin }}\n{field}consumes: \
+             [charge]\nexecution_targets: [{targets}]\nhttp:\n  steps:\n    - id: get\n      \
+             method: GET\n      path: /v1/charges/{{charge}}\n      success_statuses: [200]\n"
+        )
+    };
+    let good = base(
+        "  - { name: mode, type: str, required: false, class: identity, binding: \
+         exact_resource_pin, source: credential }\n",
+        "charge, mode",
+    );
+    TemplateRegistry::new()
+        .load(&good)
+        .expect("the shipped shape loads");
+
+    for (why, doc) in [
+        (
+            "required would refuse every request on a box with no credential connected",
+            base(
+                "  - { name: mode, type: str, required: true, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n",
+                "charge, mode",
+            ),
+        ),
+        (
+            "an unpinnable derived field is authority nothing can constrain",
+            base(
+                "  - { name: mode, type: str, required: false, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n",
+                "charge",
+            ),
+        ),
+        (
+            "a free_payload derived field is not exactly comparable",
+            base(
+                "  - { name: mode, type: str, required: false, class: free_payload, binding: \
+                 unbound, source: credential }\n",
+                "charge, mode",
+            ),
+        ),
+        (
+            "two derived fields: a descriptor decides exactly one",
+            base(
+                "  - { name: mode, type: str, required: false, class: identity, binding: \
+                 exact_resource_pin, source: credential }\n  - { name: book, type: str, required: \
+                 false, class: identity, binding: exact_resource_pin, source: credential }\n",
+                "charge, mode, book",
+            ),
+        ),
+    ] {
+        assert!(
+            TemplateRegistry::new().load(&doc).is_err(),
+            "must refuse ({why}): {doc}"
+        );
+    }
+}
+
+/// Every shipped Stripe verb carries the derived field, and none of them lets it reach the wire.
+#[test]
+fn every_stripe_verb_pins_the_credentials_own_mode() {
+    let mut seen = 0;
+    for doc in VENDORED_CATALOG {
+        let template: ActionTemplate = serde_yaml::from_str(doc).unwrap();
+        if template.provider != "stripe" {
+            continue;
+        }
+        seen += 1;
+        let mode = template
+            .field("mode")
+            .unwrap_or_else(|| panic!("stripe.{} declares no `mode`", template.action));
+        assert_eq!(mode.class, TemplateClass::Identity);
+        assert_eq!(mode.binding, TemplateBinding::ExactResourcePin);
+        assert!(
+            template.execution_targets.iter().any(|t| t == "mode"),
+            "stripe.{} does not let a sentence pin `mode`",
+            template.action
+        );
+        assert!(
+            !template.effective_consumes().iter().any(|c| c == "mode"),
+            "stripe.{} would send `mode` to the provider",
+            template.action
+        );
+    }
+    assert_eq!(seen, 46, "every vendored stripe verb was checked");
+}
+
+/// One catalog, and the setup vocabulary that used to live beside it is now IN it. The verbs a
+/// harness drives to build a provider account into a known state are ordinary product verbs a
+/// sentence names and a receipt records — there is no second set, no name that relaxes a load
+/// rule, and no build flag that changes what a box can serve.
+#[test]
+fn the_catalog_is_one_set_with_no_setup_vocabulary_beside_it() {
+    let mut actions: Vec<(String, String)> = Vec::new();
+    for doc in VENDORED_CATALOG {
+        let template: ActionTemplate = serde_yaml::from_str(doc).unwrap();
+        assert!(
+            !template.action.starts_with("fixture_"),
+            "{}.{} is setup vocabulary in the product catalog",
+            template.provider,
+            template.action
+        );
+        actions.push((template.provider.clone(), template.action.clone()));
+    }
+    assert_eq!(
+        actions.len(),
+        vendored_action_templates().len(),
+        "the vendored set and the set a daemon boots on are the same set"
+    );
+    // The effects the setup fixtures performed, now named as verbs.
+    for action in [
+        "create_customer",
+        "create_product",
+        "create_recurring_price",
+        "create_draft_invoice",
+        "create_webhook_endpoint_fixed_bundle",
+        "attach_payment_method",
+        "create_subscription",
+        "create_charge_from_source",
+        "list_disputes",
+        "read_account",
+    ] {
+        assert!(
+            actions
+                .iter()
+                .any(|(provider, candidate)| provider == "stripe" && candidate == action),
+            "stripe.{action} is not vendored"
         );
     }
 }

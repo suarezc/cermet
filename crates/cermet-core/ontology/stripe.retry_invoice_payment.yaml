@@ -2,7 +2,7 @@ schema: cermet.grounded-ontology/v1
 provider: stripe
 action: retry_invoice_payment
 binds:
-  provider_descriptor_sha256: f6f4e0bef96115d82365bfea71a2315dbff49e1e66036104f13e05d34c28ae5b
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
   action_template_sha256: 30cabd3639d893bfc7cc3872fa4f1b31738b14d6ecbd05bf57448f002ee5b85c
 semantics:
   resource_family: invoice

@@ -1,0 +1,25 @@
+schema: cermet.grounded-ontology/v1
+provider: stripe
+action: read_account
+binds:
+  provider_descriptor_sha256: 225acac27f68323cb8c43b45d93687f515f458cd9ad89464bb6f200cafc016e1
+  action_template_sha256: 88bf06578a3b32336ad2629ddffca1d2415e01036549d4a9867ff71ccac7ebb5
+semantics:
+  resource_family: account
+  provider_operation: account_retrieve
+  risk_class: observation
+  sensitivity: operational
+  reversibility: not_applicable
+  completion: terminal
+  idempotency: read
+review:
+  summary: Read the connected account's own id, settlement currency, and payout eligibility.
+  cautions:
+    - The credential IS the account, so the only thing a sentence can pin is the book the key names.
+    - The response is Stripe's account body verbatim, which includes the business profile and capability states the key can see.
+    - External accounts are NOT visible here - the property is omitted for this key class even under expand - so a payout destination can never be discovered through this read.
+sources:
+  - STRIPE-ACCOUNT-RETRIEVE
+  - STRIPE-EXTERNAL-ACCOUNT-RETRIEVE
+  - STRIPE-RESTRICTED-KEYS
+  - STRIPE-APP-PERMISSIONS

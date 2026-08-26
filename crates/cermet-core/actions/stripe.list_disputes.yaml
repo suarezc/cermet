@@ -1,0 +1,18 @@
+# List the first ten disputes raised against one exact charge. A dispute arrives asynchronously, so
+# an empty list means "none yet observed", never "none will exist".
+provider: stripe
+action: list_disputes
+fields:
+  - { name: charge, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [charge]
+execution_targets: [charge, mode]
+http:
+  steps:
+    - id: list
+      method: GET
+      path: /v1/disputes
+      query: { charge: "{charge}", limit: "10" }
+      success_statuses: [200]
+      require: [data, has_more]
+      expect_literal: { has_more: false }

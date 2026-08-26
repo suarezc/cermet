@@ -964,6 +964,103 @@ impl Broker {
         )
     }
 
+    /// Fill the one field the DAEMON owns: the value the vaulted credential itself decides.
+    ///
+    /// Stripe issues a separate key per book and spells the book in the key's prefix, so which book
+    /// a request can touch is a property of the credential, not of anything the agent says. The
+    /// daemon opens the credential inside the core, matches the descriptor's prefix table, drops
+    /// the plaintext, and freezes the derived `"test"`/`"live"` string into the resource BEFORE the
+    /// sentence judges it — so `mode = "test"` in a sentence is a real bound and not a claim the
+    /// requester makes about itself.
+    ///
+    /// Adversary: T2 — the operator connected the live key while a test-only sentence stood, and
+    /// nothing else in the request can tell. T1 — a steered agent asserting the book it wants.
+    /// Both land in the same place: the agent cannot write this field, and an unrecognized
+    /// credential resolves to nothing and refuses.
+    #[allow(clippy::too_many_arguments)]
+    fn derive_credential_field(
+        &self,
+        session: &str,
+        request_id: &str,
+        req: &CapabilityRequest,
+        provider: &dyn crate::provider::Provider,
+        mut folded: Value,
+        secrets: &[String],
+        principal: &str,
+        authority_kind: AuthorityKind,
+        authority_fingerprint: &str,
+    ) -> Result<std::result::Result<Value, RequestOutcome>> {
+        let Some(field) = self
+            .templates
+            .loaded(&req.provider, &req.action)
+            .and_then(|loaded| loaded.template.credential_sourced_field())
+        else {
+            return Ok(Ok(folded));
+        };
+        if folded.get(field).is_some() {
+            let reason = format!(
+                "{}.{}: `{field}` is derived by the daemon from the connected {} credential and \
+                 may not be supplied in a request",
+                req.provider, req.action, req.provider
+            );
+            return Ok(Err(self.deny(
+                session,
+                request_id,
+                req,
+                &reason,
+                "invalid",
+                None,
+                None,
+                secrets,
+                principal,
+                authority_kind,
+                authority_fingerprint,
+                // This refusal precedes sentence evaluation: no typed reason exists.
+                None,
+            )?));
+        }
+        // NO credential connected is not an error here: there is nothing to derive from, so the
+        // field freezes as ABSENCE. A sentence pinning it then admits nothing (fail closed), and a
+        // sentence that does not pin it is judged exactly as it was before this field existed —
+        // the request still needs a credential to execute, and that door is unchanged.
+        let Ok(secret) = self.vault.open_secret(&credential_ref(&req.provider)) else {
+            return Ok(Ok(folded));
+        };
+        let derived = provider
+            .credential_mode(secret.expose_secret())
+            .map(str::to_string);
+        drop(secret);
+        // A credential we HOLD and cannot classify is different: something is enrolled, the
+        // request would execute against it, and we cannot say which book that is. Refuse.
+        let Some(derived) = derived else {
+            let reason = format!(
+                "{}.{}: the connected {} credential's `{field}` could not be determined from the \
+                 credential itself, so the request was not judged. Connect a credential of a kind \
+                 the {} descriptor recognises.",
+                req.provider, req.action, req.provider, req.provider
+            );
+            return Ok(Err(self.deny(
+                session,
+                request_id,
+                req,
+                &reason,
+                "invalid",
+                None,
+                None,
+                secrets,
+                principal,
+                authority_kind,
+                authority_fingerprint,
+                // This refusal precedes sentence evaluation: no typed reason exists.
+                None,
+            )?));
+        };
+        if let Some(object) = folded.as_object_mut() {
+            object.insert(field.to_string(), Value::String(derived));
+        }
+        Ok(Ok(folded))
+    }
+
     /// Request-time field canonicalization, run on the COMPLETE canonical resource just
     /// before anything judges it.
     ///
@@ -1666,10 +1763,13 @@ impl Broker {
         let loaded = self.templates.loaded(provider, action)?;
         let spec = loaded.template.git_spec()?;
         let wiring = cermet_lang::provider::GIT_WIRING_COMMAND;
-        Some(if spec.push.is_some() {
+        Some(if let Some(push) = spec.push.as_ref() {
+            // Name the ref namespace the verb actually moves: sending a tag verb's caller to
+            // `git push <remote> <branch>` points at the wrong command.
+            let ref_kind = if push.tag.is_some() { "tag" } else { "branch" };
             format!(
                 "{provider}.{action} is not requestable: a git push is decided by git's update \
-                 hook. Run `git push <remote> <branch>` in a repository whose remote is a \
+                 hook. Run `git push <remote> <{ref_kind}>` in a repository whose remote is a \
                  `cermet::` URL — wire one with `{wiring}` (or `git remote add origin \
                  cermet::github/<owner>/<repo>` in a fresh repo). The refusal, if any, arrives in \
                  git's own output."
@@ -2179,9 +2279,43 @@ impl Broker {
             }
             (complete, envelope.to_canonical_json())
         } else {
-            let resource = match canonical_resource(&req)
-                .and_then(|folded| provider.canonicalize(&req.action, &folded))
-            {
+            // The daemon's own field is filled BEFORE the closed-schema check, so a
+            // credential-sourced required field is never "absent" and never agent-writable.
+            let folded = match canonical_resource(&req) {
+                Ok(folded) => folded,
+                Err(error) => {
+                    return self.deny(
+                        &session,
+                        &request_id,
+                        &req,
+                        &error.to_string(),
+                        "invalid",
+                        None,
+                        None,
+                        &secrets,
+                        principal,
+                        authority_kind,
+                        authority_fingerprint,
+                        // This refusal precedes sentence evaluation: no typed reason exists.
+                        None,
+                    );
+                }
+            };
+            let folded = match self.derive_credential_field(
+                &session,
+                &request_id,
+                &req,
+                provider.as_ref(),
+                folded,
+                &secrets,
+                principal,
+                authority_kind,
+                authority_fingerprint,
+            )? {
+                Ok(folded) => folded,
+                Err(outcome) => return Ok(outcome),
+            };
+            let resource = match provider.canonicalize(&req.action, &folded) {
                 Ok(resource) => resource,
                 Err(error) => {
                     // An invalid request is still owed its next move. The canonicalize

@@ -1,0 +1,21 @@
+# Attach one exact PaymentMethod to one exact customer. Detaching, updating the instrument, and
+# setting it as the customer's default are separate effects and are absent.
+provider: stripe
+action: attach_payment_method
+fields:
+  - { name: payment_method, type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: customer,       type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [payment_method, customer]
+execution_targets: [payment_method, customer, mode]
+http:
+  steps:
+    - id: attach
+      method: POST
+      path: /v1/payment_methods/{payment_method}/attach
+      body_encoding: form
+      body: { customer: "{customer}" }
+      success_statuses: [200]
+      require: [id, object, customer, type, livemode]
+      expect_eq: { id: payment_method, customer: customer }
+      expect_literal: { object: payment_method }

@@ -21,6 +21,39 @@ fn observed_failure_class(error: &Error) -> EffectFailureClass {
     }
 }
 
+/// The credential-decided field frozen on the grant must still be what the credential decides.
+///
+/// The operator can replace the vaulted key between the decision and this claim, and the frozen
+/// value is the only record of which book the sentence was judged against. Re-deriving from the
+/// credential actually opened — one comparison, inside the runtime that already holds the
+/// plaintext — is what keeps "approved against test" from executing against live.
+///
+/// Adversary: T2 — the operator rotated or re-connected the credential mid-flight. A credential
+/// that no longer resolves refuses for the same reason it refuses at request time: never a guess.
+fn credential_mode_unchanged(
+    provider: &dyn crate::provider::Provider,
+    resource: &CanonicalResource,
+    token: &str,
+) -> Result<()> {
+    let Some(field) = provider.credential_mode_field() else {
+        return Ok(());
+    };
+    let Some(frozen) = resource.get_str(field) else {
+        return Ok(());
+    };
+    match provider.credential_mode(token) {
+        Some(current) if current == frozen => Ok(()),
+        Some(current) => Err(Error::Invalid(format!(
+            "the connected credential's `{field}` is now `{current}`, but this grant was approved \
+             against `{frozen}`; the credential changed after approval"
+        ))),
+        None => Err(Error::Invalid(format!(
+            "the connected credential's `{field}` can no longer be determined; this grant was \
+             approved against `{frozen}`"
+        ))),
+    }
+}
+
 /// What the executor tells the AGENT about that hop — THE single rendering, shared with the durable
 /// record's `error` field, so the two can never say different things. It is built from the CLASS and
 /// the effect handle alone: no adapter prose reaches the agent or the record through here.
@@ -986,7 +1019,13 @@ impl Broker {
             };
             match opened {
                 Ok(secret) => {
-                    let r = match self.enforce_not_locked_down("provider egress") {
+                    let r = match credential_mode_unchanged(
+                        provider.as_ref(),
+                        &resource,
+                        secret.expose_secret(),
+                    )
+                    .and_then(|()| self.enforce_not_locked_down("provider egress"))
+                    {
                         Ok(()) => {
                             mutation_invoked = true;
                             provider.execute(ProviderCall {

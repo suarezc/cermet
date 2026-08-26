@@ -1,0 +1,25 @@
+# Create one draft invoice for an exact customer. auto_advance is frozen false, so the invoice
+# never finalizes or collects on its own; finalizing and paying are separate effects.
+provider: stripe
+action: create_draft_invoice
+fields:
+  - { name: customer,    type: str, required: true, class: identity, binding: exact_resource_pin }
+  - { name: description, type: str, required: true, class: free_payload, binding: unbound, max_chars: 200 }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
+consumes: [customer, description]
+execution_targets: [customer, mode]
+http:
+  steps:
+    - id: create
+      method: POST
+      path: /v1/invoices
+      body_encoding: form
+      body:
+        customer: "{customer}"
+        description: "{description}"
+        auto_advance: false
+        collection_method: charge_automatically
+      success_statuses: [200]
+      require: [id, object, customer, status, auto_advance, collection_method, livemode]
+      expect_eq: { customer: customer }
+      expect_literal: { object: invoice, status: draft, auto_advance: false, collection_method: charge_automatically }

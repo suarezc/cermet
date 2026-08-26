@@ -62,6 +62,16 @@ An agent may safely:
 An agent must never claim that a file edit is live, invoke operator authority commands as approval,
 or ask for raw credentials.
 
+### 2a. The corpus invariant
+
+**Every verb a sentence can name is a verb the catalog lists.** The catalog projection hides nothing
+the broker loaded, and a build vendors exactly the verbs it can serve — so an agent can never read
+standing authority for a verb it cannot find in the dictionary, and then execute it by name anyway.
+The two sets are one set: no surface may narrow either without narrowing the other. A sentence
+naming a verb this build does not hold resolves no contract, so `doc check` and `doc apply` refuse
+the whole document (`unresolved verb <provider>.<action>`, with or without a `where` clause), and a
+request for it denies as an unknown verb rather than as an authority gap.
+
 ### 3. Sentence grammar
 
 One non-comment line is one rule:
@@ -191,6 +201,9 @@ allow stripe.get_charge where charge = "ch_3PabcXYZ"
 # Bounded side effect
 allow stripe.refund where amount <= 5000
 
+# The book the credential itself names — the daemon derives `mode`; the sentence bounds it
+allow stripe.refund where amount <= 5000 and mode = "test"
+
 # A finite set for one verb
 allow stripe.get_price where price in {"price_basic", "price_pro"}
 
@@ -263,9 +276,32 @@ field_formats:
   - git_branch_name
   - git_branch_ref
   - git_oid
+  - git_tag_name
   - https_url
   - uint
 targetless_query_shapes:
+  - verb: stripe.list_webhook_endpoints
+    method: GET
+    bodyless: true
+    retention: full
+    fields:
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
+    transforms: []
+  - verb: stripe.read_account
+    method: GET
+    bodyless: true
+    retention: full
+    fields:
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
+    transforms: []
   - verb: stripe.search_customers
     method: GET
     bodyless: true
@@ -276,6 +312,11 @@ targetless_query_shapes:
         required: true
         class: read_filter
         binding: unbound
+      - name: mode
+        type: str
+        required: false
+        class: identity
+        binding: exact_resource_pin
     transforms: [query_literal]
   - verb: vercel.list_projects
     method: GET
@@ -351,8 +392,8 @@ Each entry in `fields` is:
 - { name: project, type: str, required: true, class: identity, binding: exact_resource_pin }
 ```
 
-The five keys shown above are mandatory. `format`, `max_chars`, `max_int`, and `fixed` are optional
-field keys.
+The five keys shown above are mandatory. `format`, `max_chars`, `max_int`, `fixed`, and `source`
+are optional field keys.
 
 - **`name`** — a lowercase identifier: `[a-z0-9_]`, non-empty, at most 64 characters. It must be
   unique within the template. The names **`token`** and **`parameters`** are **reserved** and may
@@ -369,7 +410,27 @@ field keys.
   canonicalization before claim. This counts characters, not UTF-8 bytes, and does not replace the
   generic byte cap.
 
-One **optional** field key exists beyond those:
+Two **optional** field keys exist beyond those:
+
+- **`source`** — who supplies the value. Absent means the AGENT does, on the request, like every
+  other field. The one other value is **`credential`**: the DAEMON derives it from the vaulted
+  credential's own shape at request freeze, before the sentence judges anything. Which providers
+  have such a field, and how it is derived, is descriptor data — a provider whose keys carry the
+  answer declares `credential_mode: { field: <name>, by_prefix: { <prefix>: <value>, … } }`, and a
+  template that wants that answer as a pinnable target declares the field with `source: credential`.
+  Stripe issues one key per book and spells the book in the key's prefix, so every `stripe.*` verb
+  declares `mode`, and `mode = "test"` in a sentence is a real bound rather than something the
+  requester asserts about itself.
+
+  The load rules make the claim structural: the field must be an **optional**, exact-pinned `str`
+  `identity`, it must be an **execution target** (a derived value nothing can pin is authority
+  nothing constrains), and it must be absent from `consumes` and from every step placeholder — it
+  never reaches the provider. It is optional because a box with no credential connected has nothing
+  to derive from; the field then freezes as absence, a sentence pinning it admits nothing, and a
+  sentence that does not pin it is unaffected. A request that supplies the field itself is refused
+  as malformed. Boot refuses a template whose `source: credential` field the provider descriptor
+  does not declare. In the catalog the field's `origin` reads `credential_derived`, and the MCP verb
+  tools omit it exactly as they omit `provider_resolved` inputs.
 
 - **`format`** — a pure **admission predicate** on the field's scalar (reject-only, never a value
   rewrite): one of `git_oid` (a 40/64-char lowercase-hex Git object ID), `https_url` (an absolute
@@ -377,8 +438,10 @@ One **optional** field key exists beyond those:
   no whitespace, controls, backslash, or fragment), `uint`, `git_branch_ref` (requires
   `refs/heads/<branch>`), or
   `git_branch_name` (requires a bare same-repository branch and rejects GitHub's cross-repository
-  `user:branch` syntax). It tightens what a field will accept at admission; it adds no authority and
-  is not a policy input.
+  `user:branch` syntax), or `git_tag_name` (the component after `refs/tags/`: git's refname rules are
+  one set for every namespace, so the predicate is `git_branch_name`'s — the shape is separate
+  because the field addresses a different namespace and a refusal must name the right one). It
+  tightens what a field will accept at admission; it adds no authority and is not a policy input.
 
 ### Field classes (the authority axis)
 
@@ -434,26 +497,30 @@ handles that identify *which* resource is affected. It remains structural contra
 included in the frozen resource; sentence authors choose whether to constrain each field. Rules:
 
 1. Every execution target must be a **declared** field.
-2. Every execution target must be a **required** field.
-3. A template must name **at least one** execution target unless it declares **`scope: account`** —
-   "the pin is the verb": an account-scoped read has no finer resource
+2. Every execution target must be a **required** field, unless it is `source: credential` — a
+   daemon-derived value is optional by construction (§3), and its absence pins nothing.
+3. A template must name **at least one AGENT-nameable** execution target unless it declares
+   **`scope: account`** — "the pin is the verb": an account-scoped read has no finer resource
    than the credential itself, so the verb name is the complete authority quantum and a bare
    `allow provider.action` states it. The declaration is earned by boundedness, checked at
-   ratification: constructed `http` execution only, no `money`, only `read_filter` fields, and every
-   step a statused read (a bodyless GET, or a POST whose body is a frozen GraphQL `query`). A filter
-   placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a quoted
-   `query_literal` — injected filter content must never rewrite the query's meaning; a placeholder that
-   is the whole value has no DSL around it and rides plain.
+   ratification: constructed `http` execution only, no `money`, only `read_filter` fields (plus any
+   `source: credential` field, which describes the credential rather than a finer resource), and
+   every step a statused read (a bodyless GET, or a POST whose body is a frozen GraphQL `query`). A
+   filter placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a
+   quoted `query_literal` — injected filter content must never rewrite the query's meaning; a
+   placeholder that is the whole value has no DSL around it and rides plain.
 
-Shipped `scope: account` verbs: `stripe.search_customers` (embedded quoted filter),
-`stripe.fixture_account_discover` (fieldless discovery), `vercel.list_projects` (whole-value
-optional filter):
+Shipped `scope: account` verbs: `stripe.read_account` (no filter at all — the credential is the
+whole resource), `stripe.search_customers` (embedded quoted filter), and `vercel.list_projects`
+(whole-value optional filter):
 
 ```yaml
 fields:
   - { name: email_contains, type: str, required: true, class: read_filter, binding: unbound }
+  - { name: mode, type: str, required: false, class: identity, binding: exact_resource_pin, source: credential }
 consumes: [email_contains]
-execution_targets: []
+execution_targets: [mode]
+scope: account
 http:
   steps:
     - id: search
@@ -464,7 +531,9 @@ http:
 
 **Why optional targets are refused.** If an optional execution target were absent, a provider default
 could select authority not represented in the frozen resource. Therefore every target is required;
-the provider cannot silently execute an omitted target value.
+the provider cannot silently execute an omitted target value. A `source: credential` target is the
+one exception, and it is exempt for the reason the rule exists: the value never reaches the
+provider, so there is no omitted value for a provider default to fill.
 
 **Express an API default without an optional target.** If the provider requires a field but you
 usually want a fixed default, do *not* make it an optional target. Instead declare a **required**
@@ -644,7 +713,7 @@ unknown-field error, so the absence is enforced by the loader rather than merely
 | **success** | the provider's parsed JSON body, **unchanged** — array, object, or scalar |
 | **failure** | `{"status": <http status>, "error": <the provider's body>}` — the status is *added* evidence, never a narrowing |
 | **artifact** | the same bytes, stored under the step's `retention` (below) |
-| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a setup verb's declared `result_captures`, a GraphQL step's `outcome`/`conflict` verdict. Absent for an ordinary verb |
+| **`envelope`** | a SIBLING field, never inside the body: what the BROKER observed — a GraphQL step's `outcome`/`conflict` verdict, or a step's declared retained headers. Absent for an ordinary verb |
 | **postcondition failure** | `{"outcome": ..., "provider_proof": <the provider's body>}` — a mismatch after the effect boundary is exactly when you need everything the provider said |
 
 This holds for **money** verbs too. A money success returns the verified object — its own provider
@@ -657,10 +726,10 @@ not payment-method detail. If response filtering is ever wanted it arrives as a 
 operator enables in a rule** — never a descriptor-buried list invisible to the rule author — and
 today **zero such classes exist**.
 
-**Where broker-authored metadata goes.** Two things legitimately need to reach the agent next to
-the body: a setup verb's declared `result_captures` (values the broker observed on an EARLIER step,
-which are not in this body at all) and a GraphQL step's classified `outcome`/`conflict` verdict.
-They ride a **sibling `envelope` field on the receipt**, never inside the provider's JSON.
+**Where broker-authored metadata goes.** Some things legitimately need to reach the agent next to
+the body: a GraphQL step's classified `outcome`/`conflict` verdict, and a step's declared retained
+response headers. They ride a **sibling `envelope` field on the receipt**, never inside the
+provider's JSON.
 Writing them into the body would have made receipt result ≠ stored artifact ≠ wire body,
 which is exactly the divergence the wire tee exists to catch. Augmentation is still editing.
 
@@ -897,7 +966,7 @@ and names what to run instead.
 A `git:` template may extend only a provider whose ratified descriptor pins a git origin:
 
 ```yaml
-# providers.d/github.yaml
+# the vendored github provider descriptor
 git:
   origin: https://github.com          # a bare scheme+host[:port] https origin
   auth: basic:x-access-token          # how the vault credential is presented
@@ -912,7 +981,7 @@ so a read has something current to serve.
 git:
   push:
     remote_path: "/{owner}/{name}.git"   # a PATH under the descriptor's git origin, never an origin
-    branch:  branch                      # field naming the branch to advance
+    branch:  branch                      # field naming the branch to advance (or `tag:`, never both)
     new_oid: new_oid                     # field naming git's `new` from the hook tuple
     mirror_old_oid: mirror_old_oid       # OPTIONAL: git's `old` — the MIRROR's tip, not the upstream's
 ```
@@ -923,9 +992,17 @@ class/binding/format the validator enforces:
 | slot | required | type | class | binding | format |
 |---|---|---|---|---|---|
 | `remote_path` placeholders | yes | `str` | `identity` | `exact_resource_pin` | — |
-| `branch` | yes | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `branch` | one of | `str` | `identity` | `exact_resource_pin` | `git_branch_name` |
+| `tag` | one of | `str` | `identity` | `exact_resource_pin` | `git_tag_name` |
 | `new_oid` | yes | `str` | `identity` | `exact_resource_pin` | `git_oid` |
 | `mirror_old_oid` | **no** | `str` | `identity` | `exact_resource_pin` | `git_oid` |
+
+A push step names EXACTLY ONE of `branch` and `tag` — the two ref namespaces that have vocabulary —
+and the validator refuses both or neither. They are separate because sentence bounds are conjunctive
+over a verb's own fields: a standing `allow github.push where owner = … and name = …` is a BRANCH
+authority, and if tags rode the same word that sentence would silently start admitting them. A
+release's tag therefore needs its own sentence, naming its own version. Every other ref namespace
+(`refs/notes/`, `refs/pull/`, …) has no vocabulary at all, and the update hook refuses it by name.
 
 A `fetch` step declares only `remote_path`:
 

@@ -689,6 +689,73 @@ fn two_shot_full(
     (format!("http://{addr}"), handle)
 }
 
+/// A mock that serves `responses` in order and then WATCHES for a request it was never supposed to
+/// receive: once the script is exhausted it keeps accepting for a short window, so a step that
+/// should have been short-circuited by a failed precondition shows up as an EXTRA entry in the
+/// returned list instead of passing silently.
+fn scripted_full(
+    responses: &'static [(&'static str, &'static str)],
+) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        let read_request = |stream: &mut std::net::TcpStream| -> String {
+            let mut data = Vec::new();
+            let mut tmp = [0u8; 1024];
+            while let Ok(n) = stream.read(&mut tmp) {
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..pos]).to_lowercase();
+                    let want = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")
+                                .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    while data.len() < pos + 4 + want {
+                        match stream.read(&mut tmp) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => data.extend_from_slice(&tmp[..n]),
+                        }
+                    }
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&data).into_owned()
+        };
+        for (status_line, body) in responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            requests.push(read_request(&mut stream));
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+        // The watch window: anything arriving here is a hop the template promised not to make.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+                        .unwrap();
+                    requests.push(read_request(&mut stream));
+                }
+                Err(_) => thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+        requests
+    });
+    (format!("http://{addr}"), handle)
+}
+
 /// The canonical ratified `read_repo` template — the owner of the name; every read_repo test
 /// runs through the TEMPLATE path (the other arm survives only as the request oracle).
 const READ_REPO_TEMPLATE: &str = include_str!("../../actions/github.read_repo.yaml");
@@ -1948,88 +2015,6 @@ fn moneypath_preconditions_reject_non_utf8_and_duplicate_json_value_free() {
     }
 }
 
-/// End to end: the tee is a SECOND output channel next to the receipt/audit/artifact
-/// path, and the money hardening that folds the idempotency key into the broker's redaction set
-/// must also reach it. Stripe echoes that key back in its own `idempotency_error` bodies, so this is
-/// the realistic shape. Armed against a temp file, run a real money execution, read the file.
-/// The response contract says a template "never edits the response", and the wire-tee
-/// comparison says receipt result == artifact == teed body EXACTLY. Two paths broke that by
-/// ADDING keys to the provider's own JSON after the artifact bytes were already taken from the
-/// untouched body: `result_captures` on setup verbs, and the GraphQL `outcome` classification.
-/// Augmentation is still editing — the divergence it creates is the exact one the tee exists to
-/// catch. Both now ride a SIBLING envelope, so the provider's object is literally untouched.
-#[test]
-fn result_captures_ride_a_sibling_envelope_not_the_provider_body() {
-    const TEMPLATE: &str = r#"
-provider: stripe
-action: fixture_envelope_probe_create
-fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-consumes: [account]
-execution_targets: [account]
-http:
-  steps:
-    - id: look
-      method: GET
-      path: /v1/accounts/{account}/probes
-      success_statuses: [200]
-      require: [id]
-      capture: { seen: "$.id" }
-    - id: make
-      method: POST
-      path: /v1/probes
-      success_statuses: [200]
-      require: [object]
-      result_captures: { seen_probe: seen }
-"#;
-    const LOOKED: &str = r#"{"id":"probe_1","object":"probe"}"#;
-    const READ: &str = r#"{"object":"probe","data":[{"id":"probe_2"}]}"#;
-    let (base, server) = two_shot_full(&[("200 OK", LOOKED), ("200 OK", READ)]);
-    let descriptor = ProviderDescriptor::parse(
-        "name: stripe\negress:\n  - https://api.stripe.com\nauth: bearer\n",
-    )
-    .unwrap();
-    let registry = Arc::new(TemplateRegistry::new());
-    registry.load(TEMPLATE).expect("the probe template loads");
-    let provider = GenericProvider::from_descriptor_with_base(descriptor, base, registry);
-    let resource = provider
-        .canonicalize(
-            "fixture_envelope_probe_create",
-            &json!({"account":"acct_1"}),
-        )
-        .unwrap();
-    let response = provider
-        .execute(ProviderCall {
-            discipline: Default::default(),
-            git_mirror: None,
-            request_id: "",
-            action: "fixture_envelope_probe_create",
-            token: "sk_test_probe",
-            resource: &resource,
-        })
-        .unwrap();
-    server.join().unwrap();
-
-    assert!(response.ok);
-    assert_eq!(
-        response.result,
-        serde_json::from_str::<Value>(READ).unwrap(),
-        "the provider's terminal body is untouched — no capture key was inserted into it"
-    );
-    assert_eq!(
-        response.envelope.get("seen_probe"),
-        Some(&json!("probe_1")),
-        "the capture rides the sibling envelope: {:?}",
-        response.envelope
-    );
-    let retained = response.retained.expect("a default-retention step retains");
-    assert_eq!(
-        serde_json::from_slice::<Value>(&retained.bytes).unwrap(),
-        response.result,
-        "receipt result == stored artifact, which is what the wire-tee comparison asserts"
-    );
-}
-
 #[test]
 fn the_wire_tee_redacts_the_money_idempotency_key_it_could_see_echoed() {
     const KEY: &str = "money_key_private_canary";
@@ -2384,6 +2369,9 @@ fn github_m3(base: String) -> GenericProvider {
         include_str!("../../actions/github.read_secret_scanning_alerts_open.yaml"),
         include_str!("../../actions/github.merge_pull_request.yaml"),
         include_str!("../../actions/github.update_pull_request.yaml"),
+        include_str!("../../actions/github.read_releases.yaml"),
+        include_str!("../../actions/github.read_workflow_runs.yaml"),
+        include_str!("../../actions/github.publish_release.yaml"),
     ] {
         reg.load(doc).expect("a github template loads");
     }
@@ -3459,9 +3447,9 @@ fn create_issue_missing_proof_path_fails_closed() {
 }
 
 fn stripe_action(base: String, action: &str) -> GenericProvider {
-    let document = crate::templates::VENDORED_CATALOG
+    let documents = crate::templates::vendored_action_templates();
+    let document = documents
         .iter()
-        .copied()
         .find(|document| {
             document.contains("provider: stripe\n")
                 && document.contains(&format!("action: {action}\n"))
@@ -4560,220 +4548,6 @@ http:
 }
 
 #[test]
-fn stripe_setup_money_amounts_refuse_over_descriptor_ceiling() {
-    let cases = [
-        (
-            "fixture_bypass_pending_charge_create",
-            "amount",
-            json!({"account":"acct_1","amount":100,"currency":"usd"}),
-        ),
-        (
-            "fixture_dispute_charge_create",
-            "amount",
-            json!({"account":"acct_1","amount":100,"currency":"usd"}),
-        ),
-        (
-            "fixture_manual_capture_payment_intent_create",
-            "amount",
-            json!({
-                "account":"acct_1",
-                "customer":"cus_1",
-                "payment_method":"pm_1",
-                "amount":100,
-                "currency":"usd"
-            }),
-        ),
-        (
-            "fixture_price_create",
-            "unit_amount",
-            json!({
-                "account":"acct_1",
-                "product":"prod_1",
-                "unit_amount":100,
-                "currency":"usd"
-            }),
-        ),
-        (
-            "fixture_refundable_charge_create",
-            "amount",
-            json!({
-                "account":"acct_1",
-                "customer":"cus_1",
-                "payment_method":"pm_1",
-                "amount":100,
-                "currency":"usd"
-            }),
-        ),
-    ];
-    for (action, field, at_cap) in cases {
-        let stripe = stripe_action("http://127.0.0.1:9".into(), action);
-        stripe
-            .canonicalize(action, &at_cap)
-            .unwrap_or_else(|error| panic!("stripe.{action} at-cap request failed: {error}"));
-        let mut over_cap = at_cap;
-        over_cap[field] = json!(101);
-        let error = stripe
-            .canonicalize(action, &over_cap)
-            .expect_err("over-ceiling setup amount must fail before egress");
-        assert!(
-            error.to_string().contains("over the 100 integer cap"),
-            "stripe.{action}.{field}: {error}"
-        );
-    }
-}
-
-#[test]
-fn setup_reconciliation_poll_retries_until_nonempty_and_uses_created_capture() {
-    const TEMPLATE: &str = r#"
-provider: stripe
-action: fixture_dispute_create
-fields:
-  - { name: account, type: str, required: true, class: identity, binding: exact_resource_pin }
-consumes: [account]
-execution_targets: [account]
-http:
-  steps:
-    - id: create
-      method: POST
-      path: /v1/charges
-      body: { account: "{account}" }
-      success_statuses: [200]
-      require: [id]
-      capture: { created_charge: "$.id" }
-      retention: none
-    - id: reconcile
-      method: GET
-      path: /v1/disputes
-      query: { charge: "{created_charge}", limit: "10" }
-      success_statuses: [200]
-      require: [data, has_more]
-      expect_literal: { has_more: false }
-      poll: { attempts: 3, delay_ms: 1, until_nonempty: [data] }
-      result_captures: { created_charge: created_charge }
-      retention: none
-"#;
-    let responses = Box::leak(Box::new([
-        ("200 OK", r#"{"id":"ch_created"}"#),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-        (
-            "200 OK",
-            r#"{"data":[{"id":"dp_created","charge":"ch_created"}],"has_more":false}"#,
-        ),
-    ]));
-    let (base, server) = two_shot_full(responses);
-    let descriptor = ProviderDescriptor::parse(
-        "name: stripe\negress:\n  - https://api.stripe.com\nauth: bearer\n",
-    )
-    .unwrap();
-    let registry = Arc::new(TemplateRegistry::with_providers(HashSet::from([
-        "stripe".to_string()
-    ])));
-    registry
-        .load(TEMPLATE)
-        .expect("bounded setup reconciliation polling must load");
-    let provider = GenericProvider::from_descriptor_with_base(descriptor, base, registry);
-    let resource = provider
-        .canonicalize("fixture_dispute_create", &json!({"account":"acct_test"}))
-        .unwrap();
-    let response = provider
-        .execute(ProviderCall {
-            discipline: Default::default(),
-            git_mirror: None,
-            request_id: "",
-            action: "fixture_dispute_create",
-            token: "sk_test_POLL_SECRET",
-            resource: &resource,
-        })
-        .unwrap();
-    assert_eq!(
-        response.result,
-        json!({
-            "data": [{"id":"dp_created","charge":"ch_created"}],
-            "has_more": false
-        }),
-        "the reconciliation body is the provider's, verbatim"
-    );
-    assert_eq!(
-        response.envelope.get("created_charge"),
-        Some(&json!("ch_created")),
-        "the declared capture rides the sibling envelope"
-    );
-    let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 4);
-    assert!(
-        requests[1..]
-            .iter()
-            .all(|request| request.starts_with("GET /v1/disputes?")
-                && request.contains("charge=ch_created")),
-        "{requests:#?}"
-    );
-}
-
-#[test]
-fn setup_reconciliation_poll_exhaustion_stops_at_declared_bound() {
-    let responses = Box::leak(Box::new([
-        ("200 OK", r#"{"id":"acct_test"}"#),
-        ("200 OK", r#"{"object":"balance","livemode":false}"#),
-        (
-            "200 OK",
-            r#"{"id":"ch_committed","object":"charge","amount":100,"currency":"usd","paid":true,"status":"succeeded","livemode":false}"#,
-        ),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-        ("200 OK", r#"{"data":[],"has_more":false}"#),
-    ]));
-    let (base, server) = two_shot_full(responses);
-    let provider = stripe_action(base, "fixture_dispute_charge_create");
-    let resource = provider
-        .canonicalize(
-            "fixture_dispute_charge_create",
-            &json!({"account":"acct_test","amount":100,"currency":"usd"}),
-        )
-        .unwrap();
-    let response = provider
-        .execute(ProviderCall {
-            discipline: Default::default(),
-            git_mirror: None,
-            request_id: "",
-            action: "fixture_dispute_charge_create",
-            token: "sk_test_POLL_SECRET",
-            resource: &resource,
-        })
-        .unwrap();
-    assert_eq!(
-        response.result,
-        json!({ "data": [], "has_more": false }),
-        concat!(
-            "exhaustion must return the final empty reconciliation result so the sitting can ",
-            "honestly abort after the committed charge"
-        )
-    );
-    assert_eq!(
-        response.envelope.get("created_charge"),
-        Some(&json!("ch_committed")),
-        "the committed charge is still reported — in the envelope"
-    );
-    let requests = server.join().unwrap();
-    assert_eq!(
-        requests.len(),
-        7,
-        "two safety reads, one committed mutation, and exactly four reconciliation attempts"
-    );
-    assert!(requests[0].starts_with("GET /v1/account "));
-    assert!(requests[1].starts_with("GET /v1/balance "));
-    assert!(requests[2].starts_with("POST /v1/charges "));
-    assert!(
-        requests[3..]
-            .iter()
-            .all(|request| request.starts_with("GET /v1/disputes?")
-                && request.contains("charge=ch_committed")),
-        "{requests:#?}"
-    );
-}
-
-#[test]
 fn setup_reconciliation_query_renders_the_validated_scalar_capture() {
     let resource = CanonicalResource::from_map(BTreeMap::from([(
         "account".to_string(),
@@ -5548,6 +5322,97 @@ fn moneypath_cancel_success_requires_a_positive_integer_canceled_at() {
 }
 
 #[test]
+fn moneypath_capture_success_accepts_both_terminal_shapes() {
+    // A capture's proof is the exact received amount plus a terminal state consistent with it.
+    // Two states are terminal for one capture: FINAL (the intent has no capturable remainder left
+    // and reads `succeeded` — the shape a non-multicapture intent takes even when the captured
+    // amount is less than the hold, because the uncaptured remainder is released), and
+    // MULTICAPTURE-CONTINUING (the remainder is still capturable and the intent still reads
+    // `requires_capture`). Anything else proves nothing.
+    struct Case {
+        label: &'static str,
+        fields: Value,
+        response: &'static str,
+        proof: EffectProof,
+    }
+    let cases = [
+        Case {
+            // Partial capture of a non-multicapture intent: 1000 taken from a 1200 hold, the
+            // remaining 200 released. Money moved, and the proof must say so.
+            label: "final partial capture",
+            fields: json!({"payment_intent":"pi_2","amount":1000,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":1200,"amount_capturable":1200}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":1200,"amount_capturable":0,"amount_received":1000,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            label: "full capture of the whole capturable remainder",
+            fields: json!({"payment_intent":"pi_2","amount":600,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":0,"amount_received":900,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            label: "multicapture leaves the remainder capturable",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":400,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Proved,
+        },
+        Case {
+            // The received-amount equality is the approved-fields-equal-executed-fields claim.
+            label: "received amount off by one",
+            fields: json!({"payment_intent":"pi_2","amount":1000,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":1200,"amount_capturable":1200}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":1200,"amount_capturable":0,"amount_received":999,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "succeeded while a capturable remainder is still reported",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":400,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"succeeded","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "requires_capture with nothing left capturable",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":0,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+        Case {
+            label: "a capturable remainder that is neither released nor the exact remainder",
+            fields: json!({"payment_intent":"pi_2","amount":200,"account":"acct_1","mode":"test","currency":"usd","customer":"cus_1","status":"requires_capture","capture_method":"manual","intent_amount":900,"amount_capturable":600}),
+            response: r#"{"id":"pi_2","object":"payment_intent","amount":900,"amount_capturable":399,"amount_received":500,"currency":"usd","customer":"cus_1","livemode":false,"status":"requires_capture","capture_method":"manual"}"#,
+            proof: EffectProof::Unproved,
+        },
+    ];
+
+    for case in cases {
+        let (base, server) = one_shot_full("200 OK", case.response);
+        let provider = moneypath_action(base, "capture_payment_intent");
+        let resource = moneypath_complete(&provider, "capture_payment_intent", case.fields);
+        let response = provider
+            .execute(ProviderCall {
+                discipline: proving("hidden_money_key"),
+                git_mirror: None,
+                request_id: "",
+                action: "capture_payment_intent",
+                token: "rk_test_mutation_secret",
+                resource: &resource,
+            })
+            .unwrap();
+        let outcome = response
+            .proof
+            .expect("the proving discipline returns an observation");
+        assert_eq!(outcome, case.proof, "{}", case.label);
+        assert_eq!(
+            response.ok,
+            case.proof == EffectProof::Proved,
+            "{}",
+            case.label
+        );
+        assert!(response.retained.is_none(), "{}", case.label);
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn moneypath_invoice_success_uses_actual_typed_dahlia_fields_without_paid() {
     let invalid = [
         r#"{"id":"in_1","object":"invoice","status":"paid","currency":"usd","customer":"cus_1","livemode":false,"amount_remaining":0,"attempt_count":2}"#,
@@ -5659,81 +5524,6 @@ fn moneypath_payout_precondition_denies_balance_mode_mismatch() {
         crate::preconditions::PreconditionFailureClass::InsufficientBalance
     );
     assert_moneypath_requests(&[server.join().unwrap()], &["/v1/balance"]);
-}
-#[test]
-fn setup_result_capture_selection_is_explicit_and_narrow() {
-    // Captures build the SIBLING ENVELOPE, never the provider body. Only the declared
-    // outputs appear; an unlisted capture the broker happens to hold does not escape.
-    let captures = BTreeMap::from([
-        ("account_id".to_string(), json!("acct_fixture")),
-        ("unlisted".to_string(), json!("must-not-escape")),
-    ]);
-    let selected = BTreeMap::from([("account".to_string(), "account_id".to_string())]);
-    let envelope = envelope_captures(&selected, &captures).expect("the selected capture exists");
-    assert_eq!(
-        Value::Object(envelope),
-        json!({ "account": "acct_fixture" }),
-        "the envelope carries exactly the declared outputs and nothing else"
-    );
-    // A declared output naming a capture no prior step produced is an integrity refusal, not a
-    // silently absent key.
-    let dangling = BTreeMap::from([("account".to_string(), "never_captured".to_string())]);
-    assert!(envelope_captures(&dangling, &captures).is_err());
-}
-
-#[test]
-fn live_stripe_fixture_credential_stops_before_the_mutation() {
-    let (base, server) = two_shot_full(&[
-        (
-            "200 OK",
-            r#"{"id":"acct_live","object":"account","livemode":true}"#,
-        ),
-        ("200 OK", r#"{"object":"balance","livemode":true}"#),
-    ]);
-    let descriptor = ProviderDescriptor::parse(
-        "name: stripe\negress:\n  - https://api.stripe.com\nauth: bearer\n",
-    )
-    .unwrap();
-    let registry = Arc::new(TemplateRegistry::new());
-    registry
-        .load(include_str!(
-            "../../actions/stripe.fixture_customer_create.yaml"
-        ))
-        .expect("the Stripe customer fixture descriptor loads");
-    let provider = GenericProvider::from_descriptor_with_base(descriptor, base, registry);
-    let resource = provider
-        .canonicalize(
-            "fixture_customer_create",
-            &json!({
-                "account": "acct_live",
-                "name": "cermet-live-refusal",
-                "email": "live-refusal@example.invalid",
-            }),
-        )
-        .unwrap();
-
-    let response = provider
-        .execute(ProviderCall {
-            discipline: Default::default(),
-            git_mirror: None,
-            request_id: "",
-            action: "fixture_customer_create",
-            token: "sk_live_must_not_mutate",
-            resource: &resource,
-        })
-        .unwrap();
-    let requests = server.join().unwrap();
-
-    assert!(!response.ok);
-    assert_eq!(response.result["outcome"], json!("precondition_failed"));
-    assert_eq!(response.result["path"], json!("livemode"));
-    assert_eq!(requests.len(), 2, "the customer-create POST must not fire");
-    assert!(requests[0].starts_with("GET /v1/account "));
-    assert!(requests[1].starts_with("GET /v1/balance "));
-    assert!(
-        requests.iter().all(|request| !request.starts_with("POST ")),
-        "live-mode refusal emitted a mutation request: {requests:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -7034,4 +6824,574 @@ fn read_job_log_job_id_admits_only_the_canonical_uint() {
             "job_id `{bad}` must be refused at admission"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The release plane: two bounded reads and one verify-then-act publish.
+// ---------------------------------------------------------------------------
+
+/// A draft release body, echoing the tag the sentence pins.
+const DRAFT_BODY: &str = r#"{"id":991,"tag_name":"v0.1.2","draft":true,"name":"cermet v0.1.2","html_url":"https://github.invalid/acme/website/releases/tag/untagged-1","published_at":null}"#;
+
+fn publish_resource(gh: &GenericProvider, notes: &str) -> CanonicalResource {
+    gh.canonicalize(
+        "publish_release",
+        &json!({
+            "owner": "acme",
+            "name": "website",
+            "release_id": "991",
+            "tag": "v0.1.2",
+            "notes": notes,
+        }),
+    )
+    .expect("the publish resource canonicalizes")
+}
+
+fn publish(gh: &GenericProvider, resource: &CanonicalResource) -> Result<ProviderResponse> {
+    gh.execute(ProviderCall {
+        discipline: Default::default(),
+        git_mirror: None,
+        request_id: "",
+        action: "publish_release",
+        token: "ghp_broker_credential",
+        resource,
+    })
+}
+
+#[test]
+fn publish_release_proves_the_draft_then_patches_it_published_with_the_frozen_notes() {
+    let (base, server) = two_shot_full(&[
+        ("200 OK", DRAFT_BODY),
+        (
+            "200 OK",
+            r#"{"id":991,"tag_name":"v0.1.2","draft":false,"html_url":"https://github.invalid/acme/website/releases/tag/v0.1.2","published_at":"2026-08-25T00:00:00Z"}"#,
+        ),
+    ]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "what changed in this version");
+    let resp = publish(&gh, &resource).expect("a draft for the pinned tag publishes");
+    let requests = server.join().unwrap();
+
+    assert_eq!(requests.len(), 2, "verify then act, nothing else");
+    assert!(
+        requests[0].starts_with("GET /repos/acme/website/releases/991 "),
+        "step one reads the release it is about to change: {}",
+        requests[0]
+    );
+    assert!(
+        requests[1].starts_with("PATCH /repos/acme/website/releases/991 "),
+        "step two patches the SAME release: {}",
+        requests[1]
+    );
+    let body = requests[1]
+        .split_once("\r\n\r\n")
+        .expect("the PATCH carries a body")
+        .1;
+    let sent: Value = serde_json::from_str(body).expect("the body is JSON");
+    assert_eq!(sent["draft"], json!(false));
+    assert_eq!(sent["body"], json!("what changed in this version"));
+    assert!(
+        sent.get("tag_name").is_none() && sent.get("name").is_none(),
+        "the verb changes the draft bit and the notes and nothing else: {sent}"
+    );
+
+    assert!(resp.ok);
+    assert_eq!(resp.result["draft"], json!(false));
+    assert_eq!(
+        resp.result["published_at"],
+        json!("2026-08-25T00:00:00Z"),
+        "the receipt carries the provider's own account of the publication"
+    );
+}
+
+/// T2 — a stale `release_id` naming a release that was already published. The precondition catches
+/// it BEFORE the write: a second PATCH would rewrite the notes of a release the world has already
+/// fetched, under a sentence that was written to publish a draft.
+#[test]
+fn publish_release_refuses_an_already_published_release_without_writing() {
+    let (base, server) = scripted_full(&[(
+        "200 OK",
+        r#"{"id":991,"tag_name":"v0.1.2","draft":false,"html_url":"https://github.invalid/x","published_at":"2026-08-01T00:00:00Z"}"#,
+    )]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "notes");
+    let resp = publish(&gh, &resource).expect("the hop itself completed");
+    let requests = server.join().unwrap();
+
+    assert!(
+        !resp.ok,
+        "a published release is not a draft to publish: {:?}",
+        resp.result
+    );
+    assert_eq!(
+        requests.len(),
+        1,
+        "the mutation never left the box: {requests:?}"
+    );
+    assert_eq!(resp.result["outcome"], json!("precondition_failed"));
+    assert_eq!(
+        resp.result["path"],
+        json!("draft"),
+        "the refusal names the precondition that failed"
+    );
+}
+
+/// T1 — a steered agent supplying an id that belongs to a DIFFERENT release. The id is
+/// agent-supplied; the tag is what authority names, so the id alone is never trusted, and the
+/// mismatch fails closed before the PATCH.
+#[test]
+fn publish_release_refuses_a_release_whose_tag_is_not_the_pinned_one() {
+    let (base, server) = scripted_full(&[(
+        "200 OK",
+        r#"{"id":991,"tag_name":"v0.9.9","draft":true,"html_url":"https://github.invalid/x","published_at":null}"#,
+    )]);
+    let gh = github_m3(base);
+    let resource = publish_resource(&gh, "notes");
+    let resp = publish(&gh, &resource).expect("the hop itself completed");
+    let requests = server.join().unwrap();
+
+    assert!(
+        !resp.ok,
+        "the id must name the pinned tag's draft: {:?}",
+        resp.result
+    );
+    assert_eq!(
+        requests.len(),
+        1,
+        "no PATCH is sent when the id names another release: {requests:?}"
+    );
+    assert_eq!(resp.result["outcome"], json!("precondition_failed"));
+    assert_eq!(
+        resp.result["field"],
+        json!("tag"),
+        "the refusal names the frozen field the response disagreed with"
+    );
+    assert!(
+        !format!("{}", resp.result).contains("v0.9.9"),
+        "a precondition refusal stays value-free: {:?}",
+        resp.result
+    );
+}
+
+#[test]
+fn read_releases_reads_one_bounded_page_and_returns_the_body_verbatim() {
+    const BODY: &str = r#"[{"id":991,"tag_name":"v0.1.2","draft":true},{"id":990,"tag_name":"v0.1.1","draft":false}]"#;
+    let (base, server) = one_shot_full("200 OK", BODY);
+    let gh = github_m3(base);
+    let resource = gh
+        .canonicalize(
+            "read_releases",
+            &json!({ "owner": "acme", "name": "website" }),
+        )
+        .unwrap();
+    let resp = gh
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "read_releases",
+            token: "ghp_broker_credential",
+            resource: &resource,
+        })
+        .unwrap();
+    let request = server.join().unwrap();
+
+    assert!(
+        request.starts_with("GET /repos/acme/website/releases?"),
+        "{request}"
+    );
+    assert!(
+        request.contains("per_page=20"),
+        "the page bound is frozen on the wire: {request}"
+    );
+    assert!(resp.ok);
+    assert_eq!(
+        resp.result,
+        serde_json::from_str::<Value>(BODY).unwrap(),
+        "a list read returns the provider's array as it arrived"
+    );
+}
+
+#[test]
+fn read_workflow_runs_selects_by_head_sha_and_returns_the_body_verbatim() {
+    const BODY: &str = r#"{"total_count":1,"workflow_runs":[{"id":77,"status":"completed","conclusion":"success","head_branch":"v0.1.2"}]}"#;
+    let (base, server) = one_shot_full("200 OK", BODY);
+    let gh = github_m3(base);
+    let head_sha = "c".repeat(40);
+    let resource = gh
+        .canonicalize(
+            "read_workflow_runs",
+            &json!({ "owner": "acme", "name": "website", "head_sha": head_sha }),
+        )
+        .unwrap();
+    let resp = gh
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "read_workflow_runs",
+            token: "ghp_broker_credential",
+            resource: &resource,
+        })
+        .unwrap();
+    let request = server.join().unwrap();
+
+    assert!(
+        request.starts_with("GET /repos/acme/website/actions/runs?"),
+        "{request}"
+    );
+    assert!(
+        request.contains(&format!("head_sha={head_sha}")),
+        "{request}"
+    );
+    assert!(request.contains("per_page=20"), "{request}");
+    assert!(
+        !request.contains("branch="),
+        "a tag-triggered run reports the TAG as head_branch, so no branch pin rides here: {request}"
+    );
+    assert!(resp.ok);
+    assert_eq!(resp.result, serde_json::from_str::<Value>(BODY).unwrap());
+}
+
+/// A branch NAME is not an identity anything can be pinned to — GitHub would happily resolve one.
+#[test]
+fn read_workflow_runs_refuses_a_ref_name_as_head_sha() {
+    let gh = github_m3("http://127.0.0.1:9".to_string());
+    let error = gh
+        .canonicalize(
+            "read_workflow_runs",
+            &json!({ "owner": "acme", "name": "website", "head_sha": "main" }),
+        )
+        .expect_err("head_sha pins the git_oid shape");
+    assert!(format!("{error}").contains("head_sha"), "{error}");
+}
+
+/// The descriptor's credential-mode table is the ONLY place a prefix→book mapping is written, and
+/// it must resolve unambiguously: a table whose prefixes overlap would make the derived book depend
+/// on iteration order, and the derived book decides what a sentence admits.
+#[test]
+fn a_credential_mode_table_must_resolve_one_book_unambiguously() {
+    let ok = ProviderDescriptor::parse(
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    ak_test_: test\n    ak_live_: live\n",
+    )
+    .expect("a well-formed table parses");
+    let table = ok.credential_mode.expect("the table is carried");
+    assert_eq!(table.field, "mode");
+    assert_eq!(table.of("ak_test_abc"), Some("test"));
+    assert_eq!(table.of("ak_live_abc"), Some("live"));
+    // Unrecognized is never a guess.
+    assert_eq!(table.of("ak_abc"), None);
+    assert_eq!(table.of(""), None);
+
+    for bad in [
+        // One prefix extends another: which book `ak_test_x` names would depend on order.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    ak_: live\n    ak_test_: test\n",
+        // An empty prefix matches every credential, including one of a kind we cannot classify.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix:\n    '': test\n",
+        // An empty table can never resolve.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: mode\n  \
+         by_prefix: {}\n",
+        // The field name is an identifier, like every other declared name.
+        "name: acme\negress:\n  - https://api.acme.test\ncredential_mode:\n  field: Mode\n  \
+         by_prefix:\n    ak_test_: test\n",
+    ] {
+        assert!(
+            ProviderDescriptor::parse(bad).is_err(),
+            "must refuse: {bad}"
+        );
+    }
+}
+
+/// The shipped Stripe descriptor is what every Stripe verb's `mode` is derived from, so the exact
+/// key kinds it recognises are a reviewed property, not an implementation detail.
+#[test]
+fn the_shipped_stripe_descriptor_names_both_books_for_secret_and_restricted_keys() {
+    let stripe = VENDORED_PROVIDERS
+        .iter()
+        .map(|doc| ProviderDescriptor::parse(doc).expect("vendored descriptor parses"))
+        .find(|d| d.name == "stripe")
+        .expect("stripe is vendored");
+    let table = stripe
+        .credential_mode
+        .expect("stripe keys name their own book");
+    assert_eq!(table.field, "mode");
+    for (token, expected) in [
+        ("sk_test_abc", Some("test")),
+        ("rk_test_abc", Some("test")),
+        ("sk_live_abc", Some("live")),
+        ("rk_live_abc", Some("live")),
+        ("pk_test_abc", None),
+        ("whsec_abc", None),
+    ] {
+        assert_eq!(table.of(token), expected, "{token}");
+    }
+}
+
+/// The creation vocabulary that replaced the setup fixtures: each verb's exact wire shape, driven
+/// through the mock harness. The point is what is NOT there — no account-binding preflight, no
+/// mode-proving read, and no key the template did not freeze. `mode` is decided at request freeze
+/// from the credential, so it appears in no request here.
+#[test]
+fn stripe_setup_vocabulary_sends_only_its_reviewed_path_and_frozen_form() {
+    let cases = [
+        (
+            "create_customer",
+            json!({"email": "a@example.invalid", "name": "Acme", "mode": "test"}),
+            "/v1/customers",
+            "email=a%40example.invalid&name=Acme",
+            r#"{"id":"cus_1","object":"customer","email":"a@example.invalid","name":"Acme","livemode":false}"#,
+        ),
+        (
+            "create_product",
+            json!({"name": "Widget", "mode": "test"}),
+            "/v1/products",
+            "name=Widget",
+            r#"{"id":"prod_1","object":"product","name":"Widget","active":true,"livemode":false}"#,
+        ),
+        (
+            "create_recurring_price",
+            json!({"product": "prod_1", "unit_amount": 500, "currency": "usd", "interval": "month", "mode": "test"}),
+            "/v1/prices",
+            "currency=usd&product=prod_1&recurring%5Binterval%5D=month&unit_amount=500",
+            r#"{"id":"price_1","object":"price","product":"prod_1","unit_amount":500,"currency":"usd","active":true,"type":"recurring","recurring":{"interval":"month"},"livemode":false}"#,
+        ),
+        (
+            "create_draft_invoice",
+            json!({"customer": "cus_1", "description": "March", "mode": "test"}),
+            "/v1/invoices",
+            "auto_advance=false&collection_method=charge_automatically&customer=cus_1&description=March",
+            r#"{"id":"in_1","object":"invoice","customer":"cus_1","status":"draft","auto_advance":false,"collection_method":"charge_automatically","livemode":false}"#,
+        ),
+        (
+            "create_webhook_endpoint_fixed_bundle",
+            json!({"url": "https://hooks.example.invalid/stripe", "mode": "test"}),
+            "/v1/webhook_endpoints",
+            "enabled_events%5B%5D=charge.succeeded&enabled_events%5B%5D=charge.failed&url=https%3A%2F%2Fhooks.example.invalid%2Fstripe",
+            r#"{"id":"we_1","object":"webhook_endpoint","url":"https://hooks.example.invalid/stripe","status":"enabled","enabled_events":["charge.succeeded","charge.failed"],"livemode":false}"#,
+        ),
+        (
+            "attach_payment_method",
+            json!({"payment_method": "pm_1", "customer": "cus_1", "mode": "test"}),
+            "/v1/payment_methods/pm_1/attach",
+            "customer=cus_1",
+            r#"{"id":"pm_1","object":"payment_method","customer":"cus_1","type":"card","livemode":false}"#,
+        ),
+        (
+            "create_subscription",
+            json!({"customer": "cus_1", "payment_method": "pm_1", "price": "price_1", "mode": "test"}),
+            "/v1/subscriptions",
+            "collection_method=charge_automatically&customer=cus_1&default_payment_method=pm_1&items%5B%5D%5Bprice%5D=price_1&payment_behavior=error_if_incomplete",
+            r#"{"id":"sub_1","object":"subscription","customer":"cus_1","status":"active","items":{"data":[{"price":{"id":"price_1"}}]},"livemode":false}"#,
+        ),
+        (
+            "create_charge_from_source",
+            json!({"source": "tok_visa", "amount": 100, "currency": "usd", "mode": "test"}),
+            "/v1/charges",
+            "amount=100&currency=usd&source=tok_visa",
+            r#"{"id":"ch_1","object":"charge","amount":100,"currency":"usd","paid":true,"status":"succeeded","livemode":false}"#,
+        ),
+    ];
+
+    for (action, request_resource, path, expected_body, response_body) in cases {
+        let (base, server) = one_shot_full("200 OK", response_body);
+        let stripe = stripe_action(base, action);
+        let resource = stripe.canonicalize(action, &request_resource).unwrap();
+        let response = stripe
+            .execute(ProviderCall {
+                discipline: Default::default(),
+                git_mirror: None,
+                request_id: "",
+                action,
+                token: "sk_test_setup_vocabulary",
+                resource: &resource,
+            })
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with(&format!("POST {path} HTTP/1.1")),
+            "stripe.{action}: {request}"
+        );
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        assert_eq!(body, expected_body, "stripe.{action}");
+        assert!(
+            !body.contains("mode="),
+            "stripe.{action} sent the daemon-derived field to the provider: {body}"
+        );
+        assert!(response.ok, "stripe.{action}: {:?}", response.result);
+        assert_eq!(
+            response.result,
+            serde_json::from_str::<Value>(response_body).unwrap(),
+            "stripe.{action}: the response is the provider body, verbatim"
+        );
+    }
+}
+
+/// The two reads the setup fixtures' discovery halves became.
+#[test]
+fn stripe_setup_reads_are_one_bounded_get_each() {
+    for (action, resource, path, response_body) in [
+        (
+            "list_disputes",
+            json!({"charge": "ch_1", "mode": "test"}),
+            "/v1/disputes?charge=ch_1&limit=10",
+            r#"{"object":"list","data":[],"has_more":false}"#,
+        ),
+        (
+            "read_account",
+            json!({"mode": "test"}),
+            "/v1/account",
+            r#"{"id":"acct_1","object":"account","default_currency":"usd","payouts_enabled":true}"#,
+        ),
+    ] {
+        let (base, server) = one_shot_full("200 OK", response_body);
+        let stripe = stripe_action(base, action);
+        let canonical = stripe.canonicalize(action, &resource).unwrap();
+        let response = stripe
+            .execute(ProviderCall {
+                discipline: Default::default(),
+                git_mirror: None,
+                request_id: "",
+                action,
+                token: "sk_test_setup_vocabulary",
+                resource: &canonical,
+            })
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with(&format!("GET {path} HTTP/1.1")),
+            "stripe.{action}: {request}"
+        );
+        assert!(response.ok, "stripe.{action}: {:?}", response.result);
+    }
+}
+
+/// The three lifecycle verbs, each driven through the mock harness for the exact wire it sends.
+/// `finalize_invoice` freezes `auto_advance: false`, so the request that issues the invoice is also
+/// the request that declines to collect it; the delete carries no body at all; and the endpoint
+/// list is one bounded, targetless GET whose only pin is the credential's own book.
+#[test]
+fn stripe_lifecycle_vocabulary_sends_only_its_reviewed_wire() {
+    for (action, resource, request_line, expected_body, response_body) in [
+        (
+            "finalize_invoice",
+            json!({"invoice": "in_1", "mode": "test"}),
+            "POST /v1/invoices/in_1/finalize HTTP/1.1",
+            "auto_advance=false",
+            r#"{"id":"in_1","object":"invoice","status":"open","auto_advance":false}"#,
+        ),
+        (
+            "delete_webhook_endpoint",
+            json!({"endpoint": "we_1", "mode": "test"}),
+            "DELETE /v1/webhook_endpoints/we_1 HTTP/1.1",
+            "",
+            r#"{"id":"we_1","object":"webhook_endpoint","deleted":true}"#,
+        ),
+        (
+            "list_webhook_endpoints",
+            json!({"mode": "test"}),
+            "GET /v1/webhook_endpoints?limit=100 HTTP/1.1",
+            "",
+            r#"{"object":"list","data":[],"has_more":false}"#,
+        ),
+    ] {
+        let (base, server) = one_shot_full("200 OK", response_body);
+        let stripe = stripe_action(base, action);
+        let canonical = stripe.canonicalize(action, &resource).unwrap();
+        let response = stripe
+            .execute(ProviderCall {
+                discipline: Default::default(),
+                git_mirror: None,
+                request_id: "",
+                action,
+                token: "sk_test_lifecycle_vocabulary",
+                resource: &canonical,
+            })
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with(request_line),
+            "stripe.{action}: {request}"
+        );
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        assert_eq!(body, expected_body, "stripe.{action}");
+        assert!(
+            !request.contains("mode="),
+            "stripe.{action} sent the daemon-derived field to the provider: {request}"
+        );
+        assert!(response.ok, "stripe.{action}: {:?}", response.result);
+        assert_eq!(
+            response.result,
+            serde_json::from_str::<Value>(response_body).unwrap(),
+            "stripe.{action}: the response is the provider body, verbatim"
+        );
+    }
+}
+
+/// Both halves of the lifecycle batch's success proof, against a provider that answered 200 anyway.
+/// A finalize Stripe answered for a DIFFERENT invoice stops on `expect_eq` naming the frozen field;
+/// a delete whose own body says `deleted: false` stops on the frozen literal, and the observation
+/// is UNPROVED — the request crossed the effect boundary, so nobody knows what the endpoint is now.
+#[test]
+fn stripe_lifecycle_postconditions_stop_a_substituted_or_undone_effect() {
+    let substituted = r#"{"id":"in_other","object":"invoice","status":"open"}"#;
+    let (base, server) = one_shot_full("200 OK", substituted);
+    let stripe = stripe_action(base, "finalize_invoice");
+    let resource = stripe
+        .canonicalize("finalize_invoice", &json!({"invoice": "in_1"}))
+        .unwrap();
+    let response = stripe
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "finalize_invoice",
+            token: "sk_test_lifecycle_vocabulary",
+            resource: &resource,
+        })
+        .unwrap();
+    server.join().unwrap();
+    assert!(!response.ok);
+    assert_eq!(response.result["outcome"], "postcondition_failed");
+    assert_eq!(response.result["field"], "invoice");
+    assert_eq!(
+        response.result["provider_proof"],
+        serde_json::from_str::<Value>(substituted).unwrap(),
+        "the reconciliation proof is the body the provider sent, verbatim"
+    );
+
+    let undone = r#"{"id":"we_1","object":"webhook_endpoint","deleted":false}"#;
+    let (base, server) = one_shot_full("200 OK", undone);
+    let stripe = stripe_action(base, "delete_webhook_endpoint");
+    let resource = stripe
+        .canonicalize("delete_webhook_endpoint", &json!({"endpoint": "we_1"}))
+        .unwrap();
+    let response = stripe
+        .execute(ProviderCall {
+            discipline: Default::default(),
+            git_mirror: None,
+            request_id: "",
+            action: "delete_webhook_endpoint",
+            token: "sk_test_lifecycle_vocabulary",
+            resource: &resource,
+        })
+        .unwrap();
+    server.join().unwrap();
+    assert!(!response.ok);
+    assert_eq!(response.result["outcome"], "postcondition_failed");
+    assert_eq!(response.result["path"], "deleted");
+    assert_eq!(
+        response.result["provider_proof"],
+        serde_json::from_str::<Value>(undone).unwrap()
+    );
+    // The effect crossed the boundary and contradicted the approval, so the observation proves
+    // nothing about the endpoint: this is the UNPROVED arm, not a refusal the caller may retry.
+    assert_eq!(
+        response.failure_class,
+        Some(EffectFailureClass::of(
+            FailureSignal::ApprovedOutcomeContradicted
+        ))
+    );
 }

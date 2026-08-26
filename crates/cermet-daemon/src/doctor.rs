@@ -70,17 +70,6 @@ fn mode_of(path: &Path) -> Option<u32> {
         .map(|metadata| metadata.permissions().mode() & 0o777)
 }
 
-fn count_action_templates(home: &Path) -> usize {
-    let dir = home.join("actions.d");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return 0;
-    };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("yaml"))
-        .count()
-}
-
 /// In service mode a collapse condition is a hard refuse; in dev mode it stays a loud
 /// warning so the single-uid dev daemon keeps serving.
 fn collapse_status(service_mode: bool) -> &'static str {
@@ -689,35 +678,6 @@ pub fn run_with_sentence_authority(
                 "same-uid: agent + approver + daemon all run as uid {daemon_uid} — NO OS boundary \
                  (dev/embedded: a same-uid process can reach the broker DBs and the ctl plane \
                  directly); the distinct-uid service install closes this"
-            ),
-        ));
-    }
-
-    // An unseeded daemon (empty or absent actions.d) loads ZERO action templates, so every real
-    // github/vercel request denies "unsupported action" with nothing explaining why. Zero capability
-    // is a legitimate fresh state — the root-blessed actions.d is the daemon's sole real-provider
-    // authority by design — so this is a loud WARN (surfaced at boot and over `cermetctl doctor`),
-    // never a refusal.
-    let actions_d = home.join("actions.d");
-    let templates_loaded = count_action_templates(home);
-    if templates_loaded == 0 {
-        checks.push(check(
-            "action_templates",
-            "warn",
-            format!(
-                "no action templates loaded from {} — every real github/vercel request will DENY \
-                 \"unsupported action\"; seed actions.d (propose → human ratify) to grant \
-                 real-provider capability",
-                actions_d.display()
-            ),
-        ));
-    } else {
-        checks.push(check(
-            "action_templates",
-            "ok",
-            format!(
-                "{templates_loaded} action template(s) loaded from {}",
-                actions_d.display()
             ),
         ));
     }

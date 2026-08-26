@@ -33,8 +33,6 @@ const MAX_TOOL_NAME_LEN: usize = 51;
 const MAX_STEPS: usize = 8;
 const MAX_KEEP: usize = 32;
 const MAX_CAPTURES_PER_STEP: usize = 8;
-const MAX_POLL_ATTEMPTS: u8 = 5;
-const MAX_POLL_DELAY_MS: u64 = 1_000;
 const MAX_STRING_CHARS: usize = 256 * 1024;
 
 // ---- Relay-predicate caps (a predicate is human-reviewed; keep it small) ----
@@ -205,12 +203,12 @@ impl<'de> Deserialize<'de> for ActionTemplate {
                     (Some(_), Some(_)) => {
                         return Err(Error::custom(
                             "a template declares exactly ONE execution kind; `http:` and `git:` are mutually exclusive",
-                        ))
+                        ));
                     }
                     (None, None) => {
                         return Err(Error::custom(
                             "a template must declare `http:` or `git:` (the supported execution kinds)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -296,6 +294,20 @@ pub struct TemplateField {
     /// Legal only on a required `str` field; the literal is `[a-z0-9_-]{1,64}`.
     #[serde(default, deserialize_with = "deserialize_present_fixed")]
     fixed: Option<String>,
+    /// Who supplies this field. Absent means the AGENT does, in the request, like every other
+    /// field. `credential` means the DAEMON does, deriving it from the vaulted credential's own
+    /// shape at request freeze — the agent may not supply it and no step may reference it.
+    #[serde(default)]
+    source: Option<FieldSource>,
+}
+
+/// The declared filler of a field. One variant: the credential itself. A provider whose keys carry
+/// an answer declares it in its descriptor (`credential_mode`); a template that wants that answer
+/// as a pinnable target declares the field here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FieldSource {
+    Credential,
 }
 
 /// One admitted request shape of a relay verb. The predicate is the ENTIRE
@@ -579,6 +591,11 @@ pub enum FieldFormat {
     /// `git_branch_ref`, but without the `refs/heads/` prefix. In particular `:` is refused, so a
     /// GitHub `user:branch` cross-repository address cannot enter a same-repository verb.
     GitBranchName,
+    /// A bare Git TAG name — the component after `refs/tags/`. Git's refname rules are one set for
+    /// every namespace, so the predicate is the same one `git_branch_name` uses; the shape exists
+    /// separately because the field it admits addresses a different namespace, and a refusal that
+    /// says "branch" about a tag sends the reader to the wrong place.
+    GitTagName,
     /// An absolute HTTPS URL with a host and no userinfo or fragment. Query strings, paths, and
     /// explicit ports are legal. Pure predicate: the approved bytes are never normalized.
     HttpsUrl,
@@ -673,7 +690,7 @@ impl FieldFormat {
             FieldFormat::GitBranchRef => value
                 .strip_prefix("refs/heads/")
                 .is_some_and(is_valid_branch_name),
-            FieldFormat::GitBranchName => {
+            FieldFormat::GitBranchName | FieldFormat::GitTagName => {
                 !value.starts_with("refs/") && is_valid_branch_name(value)
             }
             FieldFormat::HttpsUrl => {
@@ -709,6 +726,9 @@ impl FieldFormat {
             }
             FieldFormat::GitBranchName => {
                 "a valid bare Git branch name, not a qualified ref or cross-repository `user:branch`"
+            }
+            FieldFormat::GitTagName => {
+                "a valid bare Git tag name, not a qualified `refs/tags/` ref"
             }
             FieldFormat::HttpsUrl => {
                 "an exact lowercase `https://` ASCII URL with a nonempty host authority and no whitespace, controls, backslash, userinfo, password, or fragment"
@@ -797,9 +817,16 @@ pub struct GitPushStep {
     /// `/{owner}/{name}.git`. A template carries PATHS only; the origin is descriptor data
     /// (the same rule the HTTP kind obeys).
     pub(crate) remote_path: String,
-    /// The field naming the branch to advance.
-    pub(crate) branch: String,
-    /// The field naming the object the branch must end up at — git's `new` in the update hook's
+    /// The field naming the branch to advance, for a verb in the `refs/heads/` namespace. Exactly
+    /// one of `branch` and `tag` is declared: they are the two ref namespaces that have vocabulary,
+    /// and a verb that named both would be two effects under one sentence.
+    #[serde(default)]
+    pub(crate) branch: Option<String>,
+    /// The field naming the tag to move, for a verb in the `refs/tags/` namespace. The alternative
+    /// to `branch`, never its companion.
+    #[serde(default)]
+    pub(crate) tag: Option<String>,
+    /// The field naming the object the ref must end up at — git's `new` in the update hook's
     /// `(ref, old, new)`.
     pub(crate) new_oid: String,
     /// The field naming the MIRROR's tip for this ref — git's `old` in the update hook's
@@ -826,14 +853,6 @@ pub enum PathMode {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PollSpec {
-    pub(crate) attempts: u8,
-    pub(crate) delay_ms: u64,
-    pub(crate) until_nonempty: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct StepSpec {
     pub(crate) id: String,
     pub(crate) method: String,
@@ -849,16 +868,6 @@ pub struct StepSpec {
     /// Wire encoding for `body`. JSON remains the default; Stripe's v1 API uses form encoding.
     #[serde(default)]
     pub(crate) body_encoding: BodyEncoding,
-    /// Setup actions may ADD explicitly selected values captured from prior steps to the terminal
-    /// result. Keys are returned field names; values are prior capture names. This is augmentation,
-    /// never curation: the provider body itself is returned verbatim.
-    #[serde(default)]
-    pub(crate) result_captures: BTreeMap<String, String>,
-    /// Setup-only bounded reconciliation polling. The executor retries this one terminal,
-    /// capture-keyed GET while every selected collection is empty. The first call is immediate;
-    /// `delay_ms` applies only between attempts.
-    #[serde(default)]
-    pub(crate) poll: Option<PollSpec>,
     /// Whether the terminal provider body is retained as an artifact. `none` caps durable storage;
     /// it never narrows the returned response (a retention cap is not a projection).
     #[serde(default)]
@@ -1075,9 +1084,7 @@ impl TemplateBinding {
     }
 }
 
-pub use cermet_lang::templates::{
-    CatalogClass, CatalogEntry, CatalogField, CatalogShape, ResponseContract,
-};
+pub use cermet_lang::templates::{CatalogEntry, CatalogField, CatalogShape, ResponseContract};
 
 // ---------------------------------------------------------------------------
 // Placeholder grammar
@@ -1466,7 +1473,6 @@ impl ActionTemplate {
         CatalogEntry {
             provider: self.provider.clone(),
             action: self.action.clone(),
-            class: CatalogClass::from_action(&self.action),
             fields: self
                 .fields
                 .iter()
@@ -1476,7 +1482,9 @@ impl ActionTemplate {
                     required: f.required,
                     class: f.class.as_str().to_string(),
                     binding: f.binding.as_str().to_string(),
-                    origin: if self
+                    origin: if f.source == Some(FieldSource::Credential) {
+                        "credential_derived".to_string()
+                    } else if self
                         .evidence_profile()
                         .is_some_and(|profile| profile.is_output(&f.name))
                     {
@@ -1653,6 +1661,15 @@ impl ActionTemplate {
         out
     }
 
+    /// The field this template has the DAEMON fill from the vaulted credential, if it declared one.
+    /// The agent may never supply it and no step may reference it.
+    pub(crate) fn credential_sourced_field(&self) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|f| f.source == Some(FieldSource::Credential))
+            .map(|f| f.name.as_str())
+    }
+
     /// The declared fields carrying a canonical-value `format` shape, for the request-time resource
     /// validator (`provider::validate_template_resource`) to enforce at admission.
     pub(crate) fn format_fields(&self) -> Vec<(&str, FieldFormat)> {
@@ -1798,24 +1815,6 @@ impl ActionTemplate {
                 self.action
             ));
         }
-        if CatalogClass::from_action(&self.action) == CatalogClass::Setup {
-            if self.money.is_some() {
-                return Err(format!(
-                    "{ctx}: setup-class action may not declare `money`; fixture vocabulary is \
-                     excluded from the money corpus"
-                ));
-            }
-            if let Some(field) = self
-                .fields
-                .iter()
-                .find(|field| field.class == TemplateClass::Secret)
-            {
-                return Err(format!(
-                    "{ctx}: setup-class action may not declare secret field `{}`",
-                    field.name
-                ));
-            }
-        }
         // The generated MCP tool name is `provider-action`; refuse anything a model provider would
         // truncate/drop so an over-length verb can never reach the catalog (fail closed here, not in
         // the MCP layer).
@@ -1902,6 +1901,53 @@ impl ActionTemplate {
                     ));
                 }
             }
+            // A credential-sourced field is filled by the daemon from the vaulted credential's
+            // own shape and pinned by a sentence. It must be exactly comparable, and it must never
+            // reach the wire: nothing an agent writes decides it, and nothing this template
+            // constructs carries it.
+            if f.source == Some(FieldSource::Credential) {
+                // OPTIONAL on purpose: with no credential connected there is nothing to derive
+                // from, and absence is the honest answer. A sentence pinning the field then admits
+                // nothing — the fail-closed outcome — while a sentence that does not pin it is
+                // unaffected, exactly as for any other unconstrained field.
+                if f.required
+                    || f.ty != TemplateType::Str
+                    || f.class != TemplateClass::Identity
+                    || f.binding != TemplateBinding::ExactResourcePin
+                {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is not an optional \
+                         exact-pinned Str Identity",
+                        f.name
+                    ));
+                }
+                if !self.execution_targets.contains(&f.name) {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is not an execution \
+                         target; a daemon-derived field exists to be pinned by a sentence",
+                        f.name
+                    ));
+                }
+                if self.effective_consumes().contains(&f.name) {
+                    return Err(format!(
+                        "{ctx}: field `{}` is `source: credential` but is listed in consumes; \
+                         the derived value is never sent to the provider",
+                        f.name
+                    ));
+                }
+            }
+        }
+        if self
+            .fields
+            .iter()
+            .filter(|f| f.source == Some(FieldSource::Credential))
+            .count()
+            > 1
+        {
+            return Err(format!(
+                "{ctx}: more than one field declares `source: credential`; a provider \
+                 descriptor decides exactly one such field"
+            ));
         }
 
         // Request-time canonicalization. The document names one compiled profile; what it
@@ -2237,11 +2283,28 @@ impl ActionTemplate {
         // authority quantum. The claim must be DECLARED (`scope: account`) and earned (a bounded
         // read, checked below) — never inferred from request shape, which is how this concept used
         // to leak out as two provider-shaped special cases.
-        match (self.execution_targets.is_empty(), self.scope) {
+        // An account-scoped verb may still name execution targets the DAEMON fills from the
+        // credential: those describe the credential itself, which is exactly what the account claim
+        // says the resource is. A target the AGENT names still contradicts the claim.
+        let agent_named_targets: Vec<&String> = self
+            .execution_targets
+            .iter()
+            .filter(|t| {
+                self.field(t)
+                    .is_none_or(|f| f.source != Some(FieldSource::Credential))
+            })
+            .collect();
+        match (agent_named_targets.is_empty(), self.scope) {
             (false, Some(ScopeMode::Account)) => {
                 return Err(format!(
-                    "{ctx}: `scope: account` contradicts named execution_targets; the account claim \
-                     is that the credential IS the resource — pin the targets or drop the scope"
+                    "{ctx}: `scope: account` contradicts agent-named execution_targets `{}`; the \
+                     account claim is that the credential IS the resource — pin the targets or \
+                     drop the scope",
+                    agent_named_targets
+                        .iter()
+                        .map(|t| t.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             (true, None) => {
@@ -2269,9 +2332,11 @@ impl ActionTemplate {
     }
 
     /// `scope: account` is EARNED by boundedness (rule 6): constructed `http` execution only, no
-    /// money, only `read_filter` fields (an identity/side_effect field on a verb nothing can pin
-    /// would be unpinned authority), and every step a statused read — a bodyless GET, or a POST
-    /// whose body is a frozen GraphQL `query` (fixture discoveries reconcile through those).
+    /// money, only `read_filter` and `source: credential` fields (an AGENT-supplied
+    /// identity/side_effect field on a verb nothing can pin would be unpinned authority; a
+    /// daemon-derived one describes the credential, which is what the claim says the resource is),
+    /// and every step a statused read — a bodyless GET, or a POST whose body is a frozen GraphQL
+    /// `query`.
     /// One injection rule survives from the shapes this replaced, on its true rationale: an unbound
     /// filter placeholder EMBEDDED inside a composite query value (a provider search DSL) must be a
     /// `query_literal` flanked by literal quotes — filter content must never rewrite the query's
@@ -2288,11 +2353,16 @@ impl ActionTemplate {
             return Err(format!("{ctx}: `scope: account` refuses a money template"));
         }
         for field in &self.fields {
-            if field.class != TemplateClass::ReadFilter {
+            // A credential-sourced field is the DAEMON's account of the credential, not something
+            // the agent names, so it does not contradict the claim that the credential is the
+            // resource — it refines which credential-book the sentence admits.
+            if field.class != TemplateClass::ReadFilter
+                && field.source != Some(FieldSource::Credential)
+            {
                 return Err(format!(
-                    "{ctx}: `scope: account` field `{}` must be class `read_filter`; an account-\
-                     scoped verb has nothing a sentence can pin, so no identity/side_effect/\
-                     free_payload field may ride it",
+                    "{ctx}: `scope: account` field `{}` must be class `read_filter` or \
+                     `source: credential`; an account-scoped verb has nothing an AGENT can pin, so \
+                     no agent-supplied identity/side_effect/free_payload field may ride it",
                     field.name
                 ));
             }
@@ -2903,6 +2973,7 @@ impl ActionTemplate {
                     match format {
                         FieldFormat::GitOid => "git_oid",
                         FieldFormat::GitBranchName => "git_branch_name",
+                        FieldFormat::GitTagName => "git_tag_name",
                         _ => "…",
                     }
                 ));
@@ -2911,13 +2982,25 @@ impl ActionTemplate {
             Ok(())
         };
         if let Some(step) = &git.push {
+            // ONE ref namespace per verb. Sentence bounds are conjunctive over a verb's own fields,
+            // so a branch authority can only widen onto branches — the tag namespace needs its own
+            // word, and a step declaring both would let one sentence move either.
+            let (slot, field, format) = match (&step.branch, &step.tag) {
+                (Some(branch), None) => ("branch", branch, FieldFormat::GitBranchName),
+                (None, Some(tag)) => ("tag", tag, FieldFormat::GitTagName),
+                _ => {
+                    return Err(format!(
+                        "{ctx}: git.push must name exactly one of `branch` and `tag` (the two ref namespaces that have vocabulary)"
+                    ));
+                }
+            };
             check(
-                "branch",
-                &step.branch,
+                slot,
+                field,
                 true,
                 TemplateClass::Identity,
                 TemplateBinding::ExactResourcePin,
-                FieldFormat::GitBranchName,
+                format,
             )?;
             check(
                 "new_oid",
@@ -3094,35 +3177,13 @@ impl ActionTemplate {
         // GraphQL query cannot be a preflight and cannot make the earlier effect safe, regardless of
         // whether the read declares a response assertion. This also makes the final-step boundary
         // structural: only a final non-verification step can carry reconciliation evidence.
-        //
-        // Setup has one narrow exception: a FINAL bounded read may reconcile the identity captured
-        // from the setup's ONE mutation. It authorizes no later effect and does not make the earlier
-        // effect safe; it merely returns the child identity needed by the sitting runner.
         if let Some(first_mutating) = http.steps.iter().position(|s| !is_verification_read(s)) {
-            if let Some((_read_index, read)) = http.steps.iter().enumerate().find(|(i, step)| {
-                if *i <= first_mutating || !is_verification_read(step) {
-                    return false;
-                }
-                let prior_mutations: Vec<_> = http.steps[..*i]
-                    .iter()
-                    .filter(|prior| !is_verification_read(prior))
-                    .collect();
-                let captured: HashSet<&str> = prior_mutations
-                    .iter()
-                    .flat_map(|prior| prior.capture.keys().map(String::as_str))
-                    .collect();
-                let capture_bound = std::iter::once(step.path.as_str())
-                    .chain(step.query.values().map(String::as_str))
-                    .filter_map(|source| parse_placeholders(source).ok())
-                    .flatten()
-                    .any(|placeholder| captured.contains(placeholder.name.as_str()));
-                let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                    == CatalogClass::Setup
-                    && *i == last
-                    && prior_mutations.len() == 1
-                    && capture_bound;
-                !terminal_setup_reconciliation
-            }) {
+            if let Some((_read_index, read)) = http
+                .steps
+                .iter()
+                .enumerate()
+                .find(|(i, step)| *i > first_mutating && is_verification_read(step))
+            {
                 return Err(format!(
                     "{ctx}: verification read step `{}` follows mutation step `{}`; every GET or \
                      frozen GraphQL query must form a leading prefix and PRECEDE every mutation",
@@ -3184,66 +3245,6 @@ impl ActionTemplate {
         let mut used_fields: HashSet<String> = HashSet::new();
         for (i, step) in http.steps.iter().enumerate() {
             let is_final = i == last;
-
-            if !step.result_captures.is_empty() {
-                if !is_final {
-                    return Err(format!(
-                        "{ctx}: non-final step `{}` declares result_captures; only the terminal \
-                         result can project prior captures",
-                        step.id
-                    ));
-                }
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup {
-                    return Err(format!(
-                        "{ctx}: step `{}` declares result_captures outside a fixture_* setup \
-                         action",
-                        step.id
-                    ));
-                }
-                if step.result_captures.len() > MAX_KEEP {
-                    return Err(format!(
-                        "{ctx}: step `{}` result_captures has {} entries, over the cap of {MAX_KEEP}",
-                        step.id,
-                        step.result_captures.len()
-                    ));
-                }
-                for (output, capture) in &step.result_captures {
-                    if !is_ident(output) || !is_ident(capture) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures `{output}: {capture}` must use \
-                             lowercase identifiers",
-                            step.id
-                        ));
-                    }
-                    if vendored_secret_field_names().contains(output.as_str()) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures output `{output}` names a secret field",
-                            step.id
-                        ));
-                    }
-                    if !captures_before[i].contains(capture) {
-                        return Err(format!(
-                            "{ctx}: step `{}` result_captures references `{capture}`, which is not \
-                             produced by a prior step",
-                            step.id
-                        ));
-                    }
-                    if let Some(pointer) = http.steps[..i]
-                        .iter()
-                        .find_map(|prior| prior.capture.get(capture))
-                    {
-                        for segment in pointer.trim_start_matches("$.").split('.') {
-                            if vendored_secret_field_names().contains(segment) {
-                                return Err(format!(
-                                    "{ctx}: step `{}` result_captures source `{capture}` captures \
-                                     secret field `{segment}`",
-                                    step.id
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
 
             if !matches!(
                 step.method.as_str(),
@@ -3359,67 +3360,6 @@ impl ActionTemplate {
                         {
                             return Err(format!(
                                 "{ctx}: require entry `{r}` names a secret field `{seg}`"
-                            ));
-                        }
-                    }
-                }
-            }
-            if let Some(poll) = &step.poll {
-                let capture_bound = step.query.values().any(|value| {
-                    parse_placeholders(value).is_ok_and(|placeholders| {
-                        placeholders
-                            .iter()
-                            .any(|placeholder| all_captures.contains(&placeholder.name))
-                    })
-                });
-                if CatalogClass::from_action(&self.action) != CatalogClass::Setup
-                    || !is_final
-                    || step.method != "GET"
-                    || step.graphql_query.is_some()
-                    || !step.expect_eq.is_empty()
-                    || !capture_bound
-                {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll is legal only on a setup action's final \
-                         capture-keyed GET reconciliation read",
-                        step.id
-                    ));
-                }
-                if !(2..=MAX_POLL_ATTEMPTS).contains(&poll.attempts) {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll attempts {} is outside 2..={MAX_POLL_ATTEMPTS}",
-                        step.id, poll.attempts
-                    ));
-                }
-                if poll.delay_ms == 0 || poll.delay_ms > MAX_POLL_DELAY_MS {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll delay_ms {} is outside 1..={MAX_POLL_DELAY_MS}",
-                        step.id, poll.delay_ms
-                    ));
-                }
-                if poll.until_nonempty.is_empty() || poll.until_nonempty.len() > MAX_KEEP {
-                    return Err(format!(
-                        "{ctx}: step `{}` poll until_nonempty must list 1..={MAX_KEEP} paths",
-                        step.id
-                    ));
-                }
-                let own_secrets = self.secret_field_names();
-                for path in &poll.until_nonempty {
-                    if !is_dotted_path(path)
-                        || !step.require.iter().any(|required| required == path)
-                    {
-                        return Err(format!(
-                            "{ctx}: step `{}` poll path `{path}` must be a required dotted path",
-                            step.id
-                        ));
-                    }
-                    for segment in path.split('.') {
-                        if own_secrets.iter().any(|secret| secret == segment)
-                            || vendored_secret_field_names().contains(segment)
-                        {
-                            return Err(format!(
-                                "{ctx}: step `{}` poll path `{path}` names secret field `{segment}`",
-                                step.id
                             ));
                         }
                     }
@@ -3582,25 +3522,9 @@ impl ActionTemplate {
                             step.id, ph.name
                         ));
                     }
-                    // A query param is authority-bearing (it can steer the executed
-                    // target). A capture in a query would normally let provider RESPONSE data steer
-                    // a later request. The sole exception mirrors rule 13d: a setup action's final
-                    // read may reconcile the child from its one prior mutation. No later effect can
-                    // consume that provider-selected value.
+                    // A query param is authority-bearing: it can steer the executed target. A
+                    // capture in a query would let provider RESPONSE data steer a later request.
                     if all_captures.contains(&ph.name) {
-                        let prior_mutations: Vec<_> = http.steps[..i]
-                            .iter()
-                            .filter(|prior| !is_verification_read(prior))
-                            .collect();
-                        let terminal_setup_reconciliation = CatalogClass::from_action(&self.action)
-                            == CatalogClass::Setup
-                            && is_final
-                            && is_verification_read(step)
-                            && prior_mutations.len() == 1
-                            && prior_mutations[0].capture.contains_key(&ph.name);
-                        if terminal_setup_reconciliation {
-                            continue;
-                        }
                         return Err(format!(
                             "{ctx}: step `{}` query placeholder `{}` names a capture; provider \
                              response data must never steer a query",
@@ -4371,6 +4295,13 @@ pub use cermet_lang::templates::vendored_response_contract;
 /// non-broker [`DefaultContractSource`](crate::policy::DefaultContractSource) resolve. Adding a
 /// vendored template is a one-line addition here.
 pub use cermet_lang::templates::VENDORED_CATALOG;
+
+/// Every action template this build vendors, as owned documents. This is the whole set a daemon
+/// boots on — there is no on-disk catalog — so what a build compiles in is exactly what its catalog
+/// can list.
+pub fn vendored_action_templates() -> Vec<String> {
+    VENDORED_CATALOG.iter().map(|doc| doc.to_string()).collect()
+}
 
 /// The `catalog` verb's per-verb schema, deduplicated by `(provider, action)`: every template LOADED
 /// in `reg` (marked `requestable: true`) UNIONed with the vendored stdlib catalog (a vendored verb
