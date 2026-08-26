@@ -587,6 +587,10 @@ impl OntologyArtifacts {
             include_str!("../actions/stripe.create_draft_invoice.yaml"),
         );
         templates.insert(
+            ("stripe", "create_webhook_endpoint_fixed_bundle"),
+            include_str!("../actions/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
+        );
+        templates.insert(
             ("stripe", "attach_payment_method"),
             include_str!("../actions/stripe.attach_payment_method.yaml"),
         );
@@ -697,6 +701,7 @@ pub const VENDORED_ONTOLOGY: &[&str] = &[
     include_str!("../ontology/stripe.create_product.yaml"),
     include_str!("../ontology/stripe.create_recurring_price.yaml"),
     include_str!("../ontology/stripe.create_draft_invoice.yaml"),
+    include_str!("../ontology/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
     include_str!("../ontology/stripe.attach_payment_method.yaml"),
     include_str!("../ontology/stripe.create_subscription.yaml"),
     include_str!("../ontology/stripe.create_charge_from_source.yaml"),

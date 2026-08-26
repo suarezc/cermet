@@ -180,6 +180,7 @@ pub const VENDORED_CATALOG: &[&str] = &[
     include_str!("../../cermet-core/actions/stripe.create_product.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_recurring_price.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_draft_invoice.yaml"),
+    include_str!("../../cermet-core/actions/stripe.create_webhook_endpoint_fixed_bundle.yaml"),
     include_str!("../../cermet-core/actions/stripe.attach_payment_method.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_subscription.yaml"),
     include_str!("../../cermet-core/actions/stripe.create_charge_from_source.yaml"),

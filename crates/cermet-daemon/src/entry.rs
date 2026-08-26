@@ -843,10 +843,10 @@ mod tests {
             vendored.len(),
             "every verb this build vendors boots"
         );
-        // The RELEASE claim: there is ONE catalog, the 71 shipped verbs, and it is the same set
+        // The RELEASE claim: there is ONE catalog, the 72 shipped verbs, and it is the same set
         // under every cfg. What an installed box can serve — and therefore what a sentence can
         // name — is exactly this.
-        assert_eq!(vendored.len(), 71, "the shipped product catalog");
+        assert_eq!(vendored.len(), 72, "the shipped product catalog");
 
         let broker = cermet_core::Broker::open(cermet_core::BrokerConfig {
             git: cermet_core::git::GitConfig::at(home.path().join("mirrors")),

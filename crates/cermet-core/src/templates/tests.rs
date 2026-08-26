@@ -1227,7 +1227,10 @@ fn retention_none_survives_only_where_a_stated_justification_does() {
     //   - read_job_log: the minted-URL shape answers `302` with an EMPTY body, so there is no body
     //     to store. The mint itself rides the broker envelope into the receipt.
     const JUSTIFIED: &[&str] = &["read_secret_scanning_alerts_open", "read_job_log"];
-    const JUSTIFIED_STRIPE: &[&str] = &[];
+    //   - create_webhook_endpoint_fixed_bundle: Stripe returns the endpoint's signing secret in
+    //     this response and only in this one. The requester needs it; Cermet keeping a copy would
+    //     put it in an artifact nothing in the flow reads.
+    const JUSTIFIED_STRIPE: &[&str] = &["create_webhook_endpoint_fixed_bundle"];
 
     let mut declaring: Vec<String> = Vec::new();
     for doc in VENDORED_CATALOG {
@@ -3182,7 +3185,7 @@ fn every_stripe_verb_pins_the_credentials_own_mode() {
             template.action
         );
     }
-    assert_eq!(seen, 42, "every vendored stripe verb was checked");
+    assert_eq!(seen, 43, "every vendored stripe verb was checked");
 }
 
 /// One catalog, and the setup vocabulary that used to live beside it is now IN it. The verbs a
@@ -3213,6 +3216,7 @@ fn the_catalog_is_one_set_with_no_setup_vocabulary_beside_it() {
         "create_product",
         "create_recurring_price",
         "create_draft_invoice",
+        "create_webhook_endpoint_fixed_bundle",
         "attach_payment_method",
         "create_subscription",
         "create_charge_from_source",
